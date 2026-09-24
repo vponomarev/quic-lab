@@ -86,6 +86,8 @@ class VpnActivity : Activity() {
     private fun button(panel: LinearLayout, title: String, action: () -> Unit) {
         panel.addView(
             Button(this).apply {
+                stateListAnimator = null
+                elevation = 0f
                 text = title
                 isAllCaps = false
                 textSize = 16f
@@ -140,6 +142,8 @@ class VpnActivity : Activity() {
             }
         toolbar.addView(
             Button(this).apply {
+                stateListAnimator = null
+                elevation = 0f
                 text = "‹"
                 textSize = 32f
                 setTextColor(accent)
@@ -163,6 +167,8 @@ class VpnActivity : Activity() {
         )
         toolbar.addView(
             Button(this).apply {
+                stateListAnimator = null
+                elevation = 0f
                 text = "⋮"
                 textSize = 26f
                 setTextColor(ink)
@@ -243,7 +249,7 @@ class VpnActivity : Activity() {
 
                 override fun getItemId(position: Int) = position.toLong()
 
-                private fun row(position: Int, dropdown: Boolean): android.view.View {
+                private fun row(position: Int): android.view.View {
                     val profile = profiles[position]
                     val settings = VpnProfiles.preferences(this@VpnActivity, profile.id)
                     val selected = profile.id == selectedProfile.id
@@ -292,16 +298,6 @@ class VpnActivity : Activity() {
                             },
                             LinearLayout.LayoutParams(0, -2, 1f),
                         )
-                        if (!dropdown)
-                            addView(
-                                TextView(this@VpnActivity).apply {
-                                    text = "⌄"
-                                    textSize = 24f
-                                    setTextColor(secondary)
-                                    importantForAccessibility =
-                                        android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                                }
-                            )
                     }
                 }
 
@@ -309,13 +305,13 @@ class VpnActivity : Activity() {
                     position: Int,
                     convertView: android.view.View?,
                     parent: android.view.ViewGroup,
-                ) = row(position, false)
+                ) = row(position)
 
                 override fun getDropDownView(
                     position: Int,
                     convertView: android.view.View?,
                     parent: android.view.ViewGroup,
-                ) = row(position, true)
+                ) = row(position)
             }
         profileChoice.setSelection(profiles.indexOfFirst { it.id == selectedProfile.id })
         profileChoice.isEnabled = !LabVpnService.active
