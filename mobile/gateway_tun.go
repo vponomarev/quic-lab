@@ -15,8 +15,18 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/fdbased"
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"quiclab/internal/gateway"
 )
+
+// Both explicit shutdown and Stack.Wait close the link endpoint. FD.Close in
+// tun2socks is not idempotent: a second close can hit a reused Android FD.
+type ownedLinkEndpoint struct {
+	stack.LinkEndpoint
+	once sync.Once
+}
+
+func (e *ownedLinkEndpoint) Close() { e.once.Do(e.LinkEndpoint.Close) }
 
 // Attach duplicates a borrowed Android TUN fd. The service retains its original.
 func (g *Gateway) Attach(fd int) error {
@@ -35,6 +45,7 @@ func (g *Gateway) Attach(fd int) error {
 		unix.Close(dup)
 		return e
 	}
+	link := &ownedLinkEndpoint{LinkEndpoint: dev}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &tunHandler{g: g, ctx: ctx, slots: make(chan struct{}, gateway.MaxFlows)}
 	go func() {
@@ -49,10 +60,10 @@ func (g *Gateway) Attach(fd int) error {
 			}
 		}
 	}()
-	s, e := core.CreateStack(&core.Config{LinkEndpoint: dev, TransportHandler: h})
+	s, e := core.CreateStack(&core.Config{LinkEndpoint: link, TransportHandler: h})
 	if e != nil {
 		cancel()
-		dev.Close()
+		link.Close()
 		return e
 	}
 	g.tunStop = func() {
@@ -61,7 +72,7 @@ func (g *Gateway) Attach(fd int) error {
 		h.mu.Unlock()
 		cancel()
 		s.Close()
-		dev.Close()
+		link.Close()
 		s.Wait()
 		h.wg.Wait()
 	}

@@ -140,11 +140,12 @@ func TestTUNDNSRoundTripAndStop(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	cs, e := core.CreateStack(&core.Config{LinkEndpoint: device, TransportHandler: rejectInbound{}})
+	clientLink := &ownedLinkEndpoint{LinkEndpoint: device}
+	cs, e := core.CreateStack(&core.Config{LinkEndpoint: clientLink, TransportHandler: rejectInbound{}})
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer func() { cs.Close(); device.Close(); cs.Wait() }()
+	defer func() { cs.Close(); clientLink.Close(); cs.Wait() }()
 	var nic tcpip.NICID
 	for id := range cs.NICInfo() {
 		nic = id

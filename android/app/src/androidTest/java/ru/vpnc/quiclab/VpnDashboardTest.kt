@@ -20,6 +20,10 @@ class VpnDashboardTest {
    views(a.window.decorView).filterIsInstance<Button>().first{it.text==name}.performClick()
   } }
   Thread.sleep(2500)
+  repeat(args.getString("cycles","1")!!.toInt()) { cycle ->
+  val prefs=inst.targetContext.getSharedPreferences("vpn",0)
+  val transport=if(cycle%2==0) "quic" else "https"
+  prefs.edit().putString("transport",transport).putString("endpoint",prefs.getString("${transport}_endpoint","")).commit()
   click("Start VPN")
   val until=System.currentTimeMillis()+30000
   while(System.currentTimeMillis()<until && (LabVpnService.lastEcho==0L || !LabVpnService.active)) Thread.sleep(200)
@@ -34,5 +38,6 @@ class VpnDashboardTest {
   Thread.sleep(1200)
   assertFalse(LabVpnService.active)
   assertEquals(0.0,LabVpnService.txRate,0.001)
+  }
  }
 }
