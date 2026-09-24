@@ -7,3 +7,5 @@ Local changes are documented in `third_party/README.md` and `migration-fixes.pat
 Go and Android dependency versions are pinned in go.mod/go.sum and Gradle files.
 They retain their respective upstream licenses. The Gradle Wrapper is distributed
 under the Apache License 2.0; see https://github.com/gradle/gradle/blob/master/LICENSE.
+
+VPN uses tun2socks core (MIT), gVisor netstack (Apache-2.0), smux (MIT), and coder/websocket (ISC). Bundled license texts are in android/app/src/main/assets/licenses and are included in the APK.

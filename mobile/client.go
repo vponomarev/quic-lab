@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"quiclab/internal/gateway"
 	"quiclab/internal/protocol"
 )
 
@@ -42,6 +43,8 @@ type preparedPath struct {
 }
 
 type Client struct {
+	gatewayTLS *tls.Config
+
 	prepared   *preparedPath
 	parked     *preparedPath // retain another candidate while both networks recover
 	retirement sync.WaitGroup
@@ -150,6 +153,9 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 	if err != nil {
 		return err
 	}
+	if c.gatewayTLS != nil {
+		cfg = c.gatewayTLS.Clone()
+	}
 	t, err := c.newTransport(addr.IP, binder, c.pathUnavailable)
 	if err != nil {
 		return err
@@ -167,6 +173,23 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 		conn.CloseWithError(1, "stream failed")
 		t.close()
 		return err
+	}
+	if c.gatewayTLS != nil {
+		stream.SetDeadline(time.Now().Add(10 * time.Second))
+		err = gateway.WriteJSON(stream, gateway.Request{Network: "echo"})
+		if err == nil {
+			var reply gateway.Reply
+			err = gateway.ReadJSON(stream, &reply)
+			if err == nil && reply.Error != "" {
+				err = errors.New(reply.Error)
+			}
+		}
+		if err != nil {
+			conn.CloseWithError(1, "gateway echo failed")
+			t.close()
+			return err
+		}
+		stream.SetDeadline(time.Time{})
 	}
 	ctx, c.cancel = context.WithCancel(context.Background())
 	c.conn = conn

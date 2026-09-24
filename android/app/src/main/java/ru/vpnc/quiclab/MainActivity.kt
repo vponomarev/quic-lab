@@ -87,6 +87,10 @@ class MainActivity : Activity() {
             insets
         }
         setContentView(scroll)
+        panel.addView(button("VPN / Exit node") {
+            if (running) { android.widget.Toast.makeText(this,"Сначала остановите echo-опыт",android.widget.Toast.LENGTH_SHORT).show() }
+            else startActivity(android.content.Intent(this,VpnActivity::class.java))
+        })
         panel.addView(text("NETWORK LAB  /  04", 12f, teal, true))
         space(panel, 8)
         panel.addView(text("Связь в движении", 28f, ink, true))
@@ -214,6 +218,8 @@ class MainActivity : Activity() {
     }
 
     private fun startExperiment() {
+        if (LabVpnService.active) { android.widget.Toast.makeText(this,"Сначала остановите VPN",android.widget.Toast.LENGTH_SHORT).show(); return }
+
         val kind = if (QuicSession.WIFI in available) QuicSession.WIFI else QuicSession.CELLULAR
         if (kind !in available) { Toast.makeText(this, "Подключите Wi-Fi или мобильную сеть", Toast.LENGTH_SHORT).show(); return }
         if (compare.isChecked && hostname.text.isBlank()) { Toast.makeText(this, "Для HTTPS нужен публичный домен", Toast.LENGTH_SHORT).show(); return }
