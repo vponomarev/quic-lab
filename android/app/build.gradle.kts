@@ -17,6 +17,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    // CaptureManager uses ContextCompat and ActivityCompat at runtime.
+    implementation("androidx.core:core:1.16.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("com.google.zxing:core:3.5.3")
     implementation(files("libs/quiclab.aar"))
