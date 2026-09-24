@@ -21,7 +21,15 @@ class LabVpnService : VpnService() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == "move") {
+            if (active) {
+                val p=getSharedPreferences("vpn",MODE_PRIVATE)
+                session?.startOrMigrate(intent.getIntExtra("network",VpnSession.WIFI),p.getString("endpoint","")!!,p.getString("hostname","")!!,"",100)
+            }
+            return START_NOT_STICKY
+        }
         if (session != null) return START_NOT_STICKY
+        resetMetrics(getSharedPreferences("vpn",MODE_PRIVATE).getString("transport","quic")!!)
         connection = "—"
         rtt = 0.0
         val manager = getSystemService(NotificationManager::class.java)
@@ -137,6 +145,7 @@ class LabVpnService : VpnService() {
         tun?.close()
         tun = null
         starting = false
+        txRate=0.0; rxRate=0.0
         connection = "—"
         rtt = 0.0
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -153,12 +162,46 @@ class LabVpnService : VpnService() {
         @Volatile var status = "VPN выключен"
         @Volatile var rtt = 0.0
         @Volatile var connection = "—"
+        @Volatile var transport = "quic"
+        @Volatile var startedAt = 0L
+        @Volatile var lastEcho = 0L
+        @Volatile var network = "—"
+        @Volatile var txBytes = 0L
+        @Volatile var rxBytes = 0L
+        @Volatile var txRate = 0.0
+        @Volatile var rxRate = 0.0
+        @Volatile var lastTransition = 0L
+        private var trafficAt = 0L
+        private var stats = TransportStats()
         private val events = ArrayDeque<String>()
+        @Synchronized private fun resetMetrics(value:String) {
+            transport=value; startedAt=android.os.SystemClock.elapsedRealtime()
+            lastEcho=0; network="—"; txBytes=0; rxBytes=0; txRate=0.0; rxRate=0.0
+            lastTransition=0; trafficAt=startedAt; stats=TransportStats(); events.clear()
+        }
+        @Synchronized fun quality(now:Long):String {
+            val jitter=stats.maxJitter(now)?.let{"%.1f мс".format(it)} ?: "—"
+            val gap=if(lastEcho==0L) "—" else "%.0f мс".format(maxOf(stats.maxGap,if(active)(now-lastEcho).toDouble() else 0.0))
+            return "Jitter max · 15 с: $jitter   ·   Пауза макс.: $gap\nСеансов: ${stats.sessions.size}"
+        }
 
         @Synchronized
         fun record(e: JSONObject) {
             val kind = e.optString("event")
+            val now=android.os.SystemClock.elapsedRealtime()
+            if(kind=="traffic") {
+                val tx=e.optLong("tx_bytes"); val rx=e.optLong("rx_bytes")
+                val seconds=(now-trafficAt).coerceAtLeast(1)/1000.0
+                txRate=(tx-txBytes).coerceAtLeast(0)/seconds
+                rxRate=(rx-rxBytes).coerceAtLeast(0)/seconds
+                txBytes=tx; rxBytes=rx; trafficAt=now
+                return
+            }
+            stats.accept(e,now)
+            if(kind=="active_network") network=e.optString("detail")
+            if(kind in listOf("active_network","path_switched","network_lost")) lastTransition=now
             if (kind == "echo") {
+                lastEcho=now
                 rtt = e.optDouble("rtt_ms")
                 connection = e.optString("connection_id", connection)
                 return

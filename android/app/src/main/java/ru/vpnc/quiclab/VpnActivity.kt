@@ -162,6 +162,7 @@ class VpnActivity : Activity() {
             )
         }
         ca = field(panel, "CA сервера PEM (пусто для публичного сертификата)", "ca")
+        button(panel, "Сохранить настройки") { save(); finish() }
         button(panel, "Запустить VPN") {
             save()
             val request = VpnService.prepare(this)

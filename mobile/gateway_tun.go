@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xjasonlyu/tun2socks/v2/core"
@@ -36,6 +37,18 @@ func (g *Gateway) Attach(fd int) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &tunHandler{g: g, ctx: ctx, slots: make(chan struct{}, gateway.MaxFlows)}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				g.emit("traffic", map[string]any{"tx_bytes": h.tx.Load(), "rx_bytes": h.rx.Load()})
+			}
+		}
+	}()
 	s, e := core.CreateStack(&core.Config{LinkEndpoint: dev, TransportHandler: h})
 	if e != nil {
 		cancel()
@@ -56,6 +69,7 @@ func (g *Gateway) Attach(fd int) error {
 }
 
 type tunHandler struct {
+	tx, rx atomic.Int64
 	mu     sync.Mutex
 	closed bool
 	g      *Gateway
@@ -94,7 +108,7 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 			return
 		}
 		h.g.emit("flow_open", map[string]any{"destination": dst})
-		up, down := gateway.Relay(h.ctx, s, c)
+		up, down := gateway.Relay(h.ctx, trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}, c)
 		h.g.emit("flow_closed", map[string]any{"destination": dst, "up": up, "down": down})
 	}()
 }
@@ -131,6 +145,7 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 		if e != nil {
 			return
 		}
+		s = trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}
 		defer s.Close()
 		stop := context.AfterFunc(h.ctx, func() { c.Close(); s.Close() })
 		defer stop()
