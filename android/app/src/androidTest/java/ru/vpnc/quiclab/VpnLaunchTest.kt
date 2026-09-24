@@ -34,6 +34,30 @@ class VpnLaunchTest {
   val deadline=System.currentTimeMillis()+90000
   while(System.currentTimeMillis()<deadline && (LabVpnService.connection=="—" || !LabVpnService.active))Thread.sleep(500)
   assertTrue("VPN consent and authenticated echo expected: ${LabVpnService.status}",LabVpnService.active && LabVpnService.connection!="—")
+  if (args.getString("stop_restart") == "true") {
+   repeat(2) { cycle ->
+    inst.runOnMainSync {
+     val a=ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<VpnActivity>().first()
+     views(a.window.decorView).filterIsInstance<Button>().first{it.text=="Остановить VPN"}.performClick()
+    }
+    val until=System.currentTimeMillis()+10000
+    while(System.currentTimeMillis()<until && LabVpnService.active) Thread.sleep(100)
+    Thread.sleep(1000)
+    assertFalse("Stop must release service state",LabVpnService.active)
+    assertEquals("—",LabVpnService.connection)
+    val nm=inst.targetContext.getSystemService(android.app.NotificationManager::class.java)
+    assertFalse("Foreground notification removed",nm.activeNotifications.any{it.id==42})
+    if(cycle==0) {
+     inst.runOnMainSync {
+      val a=ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<VpnActivity>().first()
+      views(a.window.decorView).filterIsInstance<Button>().first{it.text=="Запустить VPN"}.performClick()
+     }
+     val restartDeadline=System.currentTimeMillis()+30000
+     while(System.currentTimeMillis()<restartDeadline && (LabVpnService.connection=="—" || !LabVpnService.active)) Thread.sleep(200)
+     assertTrue("VPN reconnects after Stop",LabVpnService.active && LabVpnService.connection!="—")
+    }
+   }
+  }
   if (args.getString("browser") == "true") {
    val hostname = prefs.getString("hostname", "")!!
    require(hostname.matches(Regex("[A-Za-z0-9.-]+")))

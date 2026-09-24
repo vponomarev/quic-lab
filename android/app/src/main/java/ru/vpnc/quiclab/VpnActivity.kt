@@ -3,7 +3,6 @@ package ru.vpnc.quiclab
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.VpnService
 import android.os.Bundle
@@ -168,7 +167,7 @@ class VpnActivity : Activity() {
             val request = VpnService.prepare(this)
             if (request != null) startActivityForResult(request, 12) else startVPN()
         }
-        button(panel, "Остановить VPN") { stopService(Intent(this, LabVpnService::class.java)) }
+        button(panel, "Остановить VPN") { startService(Intent(this, LabVpnService::class.java).setAction("stop")) }
         label(
             panel,
             "Смена транспорта или маршрутов: остановите VPN, измените настройки и запустите снова. Текущие соединения завершатся.",
@@ -214,32 +213,19 @@ class VpnActivity : Activity() {
     }
 
     private fun chooseApps() {
-        val choices =
-            packageManager
-                .getInstalledApplications(PackageManager.GET_META_DATA)
-                .filter { it.packageName != packageName }
-                .sortedBy { packageManager.getApplicationLabel(it).toString().lowercase() }
-        val selected = apps.toMutableSet()
-        AlertDialog.Builder(this)
-            .setTitle("Приложения (${choices.size})")
-            .setMultiChoiceItems(
-                choices
-                    .map { "${packageManager.getApplicationLabel(it)}\n${it.packageName}" }
-                    .toTypedArray(),
-                choices.map { it.packageName in apps }.toBooleanArray(),
-            ) { _, i, on ->
-                if (on) selected.add(choices[i].packageName)
-                else selected.remove(choices[i].packageName)
-            }
-            .setPositiveButton("Сохранить") { _, _ -> apps = selected }
-            .setNegativeButton("Отмена", null)
-            .show()
+        startActivityForResult(Intent(this, AppSelectionActivity::class.java)
+            .putStringArrayListExtra("apps", ArrayList(apps)), 13)
     }
 
     @Deprecated("Activity result compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
+        if (requestCode == 13) {
+            apps = (data?.getStringArrayListExtra("apps") ?: return).toMutableSet()
+            prefs.edit().putStringSet("apps", apps).apply()
+            return
+        }
         if(requestCode==ProfileImport.REQUEST){recreate();return}
         if (requestCode == 12) {
             startVPN()

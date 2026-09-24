@@ -75,11 +75,11 @@ internal class VpnSession(
     }
 
     private fun submit(action: () -> Unit) {
-        synchronized(worker) { if (!closed) worker.execute(action) }
+        synchronized(worker) { if (!closed) worker.execute { if (!closed) action() } }
     }
 
     private fun event(kind: String, detail: String) {
-        output(JSONObject().put("event", kind).put("detail", detail))
+        if (!closed) output(JSONObject().put("event", kind).put("detail", detail))
     }
 
     fun setAutomatic(enabled: Boolean) = submit {
@@ -383,7 +383,9 @@ internal class VpnSession(
         synchronized(worker) {
             if (closed) return
             closed = true
-            callbacks.forEach { cm.unregisterNetworkCallback(it) }
+            callbacks.forEach { callback ->
+                try { cm.unregisterNetworkCallback(callback) } catch (_: IllegalArgumentException) { }
+            }
             worker.execute { stopInternal() }
             worker.shutdown()
         }

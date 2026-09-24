@@ -19,6 +19,7 @@
             <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false" />
         </service>
         <activity android:name=".ProfileScanActivity" android:exported="false" />
+        <activity android:name=".AppSelectionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".VpnActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

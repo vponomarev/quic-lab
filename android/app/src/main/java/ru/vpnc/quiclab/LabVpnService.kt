@@ -17,6 +17,7 @@ class LabVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "stop") {
+            shutdown()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -100,7 +101,7 @@ class LabVpnService : VpnService() {
                     availability = { _, kind, up ->
                         if (up)
                             handler.post {
-                                if (!starting) {
+                                if (active && !starting) {
                                     starting = true
                                     session?.startOrMigrate(kind, endpoint, hostname, "", 100)
                                 }
@@ -116,23 +117,34 @@ class LabVpnService : VpnService() {
             status = "Подключаем ${cfg.optString("transport").uppercase()}…"
         } catch (e: Exception) {
             status = "Ошибка: ${e.message}"
+            shutdown()
             stopSelf()
         }
         return START_NOT_STICKY
     }
 
     override fun onRevoke() {
+        shutdown()
         stopSelf()
     }
 
-    override fun onDestroy() {
+    // Android may keep VpnService bound after stopSelf; release the VPN explicitly.
+    private fun shutdown() {
+        active = false
+        handler.removeCallbacksAndMessages(null)
         session?.close()
         session = null
         tun?.close()
         tun = null
-        active = false
-        handler.removeCallbacksAndMessages(null)
+        starting = false
+        connection = "—"
+        rtt = 0.0
+        stopForeground(STOP_FOREGROUND_REMOVE)
         if (!status.startsWith("Ошибка")) status = "VPN остановлен"
+    }
+
+    override fun onDestroy() {
+        shutdown()
         super.onDestroy()
     }
 
