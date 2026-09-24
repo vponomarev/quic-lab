@@ -10,12 +10,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- VPN app selector must include apps without launcher activities. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application android:label="QUIC Lab" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
         <!-- User-approved VPN is eligible for systemExempted without alarm permissions. -->
         <service tools:ignore="ForegroundServicePermission" android:name=".LabVpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false" android:foregroundServiceType="systemExempted">
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
             <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false" />
         </service>
+        <activity android:name=".ProfileScanActivity" android:exported="false" />
         <activity android:name=".VpnActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

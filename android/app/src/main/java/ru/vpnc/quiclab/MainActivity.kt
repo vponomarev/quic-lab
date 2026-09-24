@@ -87,6 +87,10 @@ class MainActivity : Activity() {
             insets
         }
         setContentView(scroll)
+        panel.addView(button("Сканировать QR") {
+            if(running || LabVpnService.active) android.widget.Toast.makeText(this,"Сначала остановите опыт / VPN",android.widget.Toast.LENGTH_SHORT).show()
+            else startActivityForResult(android.content.Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST)
+        })
         panel.addView(button("VPN / Exit node") {
             if (running) { android.widget.Toast.makeText(this,"Сначала остановите echo-опыт",android.widget.Toast.LENGTH_SHORT).show() }
             else startActivity(android.content.Intent(this,VpnActivity::class.java))
@@ -214,6 +218,15 @@ class MainActivity : Activity() {
             sessions.text = "Сеансов   ${model.sessions.size}"
             network.text = model.network.replace("LTE/Cellular", "Мобильная")
             box.alpha = if (enabled) 1f else 0.45f
+        }
+    }
+
+    @Deprecated("Activity result compatibility")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:android.content.Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==ProfileImport.REQUEST && resultCode==RESULT_OK) {
+            if(data?.getStringExtra("kind")=="vpn") startActivity(android.content.Intent(this,VpnActivity::class.java))
+            else {val p=getSharedPreferences("server",MODE_PRIVATE);endpoint.setText(p.getString("endpoint",""));hostname.setText(p.getString("hostname",""));pin.setText(p.getString("pin",""));compare.isChecked=true}
         }
     }
 

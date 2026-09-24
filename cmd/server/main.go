@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"quiclab/internal/admin"
 	"quiclab/internal/echo"
 	"quiclab/internal/gateway"
 	"quiclab/internal/labcert"
@@ -29,6 +30,7 @@ func main() {
 	clientCA := flag.String("client-ca", "", "trusted client CA PEM; required for gateway")
 	allow := flag.String("gateway-allow", "", "required comma-separated IPv4 destination CIDRs")
 	demoListen := flag.String("demo-listen", "", "optional HTTP download demo, bind loopback behind nginx")
+	adminFile := flag.String("admin-config", "", "optional admin JSON config; enables managed client CA")
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	var cert tls.Certificate
@@ -59,13 +61,42 @@ func main() {
 	log.Info("listening", "address", ln.Addr().String(), "certificate_sha256", labcert.Fingerprint(cert))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	var managed *admin.Store
+	if *adminFile != "" {
+		cfg, e := admin.ReadConfig(*adminFile)
+		if e != nil {
+			log.Error("admin_config", "error", e)
+			os.Exit(1)
+		}
+		managed, e = admin.OpenStore(cfg.DataDir)
+		if e != nil {
+			log.Error("admin_store", "error", e)
+			os.Exit(1)
+		}
+		ui := admin.NewWeb(cfg, managed)
+		as := &http.Server{Addr: cfg.Listen, Handler: ui.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		defer as.Close()
+		go func() {
+			if e := as.ListenAndServe(); e != nil && e != http.ErrServerClosed {
+				log.Error("admin_listen", "error", e)
+				cancel()
+			}
+		}()
+	}
 	if *gatewayQUIC != "" || *gatewayHTTPS != "" {
 		gw, e := gateway.New(*allow, log)
 		if e != nil {
 			log.Error("gateway_policy", "error", e)
 			os.Exit(1)
 		}
-		mtls, e := gateway.TLS(cert, *clientCA)
+		var mtls *tls.Config
+		if managed != nil {
+			mtls = managed.TLS(cert)
+			mtls.NextProtos = []string{gateway.ALPN}
+			gw.Register = managed.Register
+		} else {
+			mtls, e = gateway.TLS(cert, *clientCA)
+		}
 		if e != nil {
 			log.Error("gateway_tls", "error", e)
 			os.Exit(1)

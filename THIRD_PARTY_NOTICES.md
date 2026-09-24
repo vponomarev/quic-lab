@@ -9,3 +9,5 @@ They retain their respective upstream licenses. The Gradle Wrapper is distribute
 under the Apache License 2.0; see https://github.com/gradle/gradle/blob/master/LICENSE.
 
 VPN uses tun2socks core (MIT), gVisor netstack (Apache-2.0), smux (MIT), and coder/websocket (ISC). Bundled license texts are in android/app/src/main/assets/licenses and are included in the APK.
+
+QR generation uses skip2/go-qrcode (MIT). Android scanning uses JourneyApps ZXing Android Embedded and ZXing core (Apache-2.0). License texts are bundled in the APK.

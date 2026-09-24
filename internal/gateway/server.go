@@ -27,9 +27,10 @@ import (
 )
 
 type Server struct {
-	Allowed []netip.Prefix
-	Log     *slog.Logger
-	slots   chan struct{}
+	Register func(tls.ConnectionState, func()) (func(), error)
+	Allowed  []netip.Prefix
+	Log      *slog.Logger
+	slots    chan struct{}
 }
 
 func New(allow string, log *slog.Logger) (*Server, error) {
@@ -89,6 +90,13 @@ func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
 			defer c.CloseWithError(0, "gateway closed")
 			stop := context.AfterFunc(ctx, func() { c.CloseWithError(0, "server stopped") })
 			defer stop()
+			if s.Register != nil {
+				release, e := s.Register(c.ConnectionState().TLS, func() { c.CloseWithError(1, "client revoked") })
+				if e != nil {
+					return
+				}
+				defer release()
+			}
 			s.serve(c.Context(), "quic", func() (Stream, error) {
 				v, e := c.AcceptStream(c.Context())
 				if e != nil {
@@ -109,6 +117,13 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.CloseNow()
+	if s.Register != nil {
+		release, e := s.Register(*r.TLS, func() { c.CloseNow() })
+		if e != nil {
+			return
+		}
+		defer release()
+	}
 	c.SetReadLimit(1 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

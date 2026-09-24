@@ -104,6 +104,7 @@ class VpnActivity : Activity() {
             ins
         }
         label(panel, "VPN · QUIC Lab").textSize = 28f
+        button(panel,"Сканировать QR") {check(!LabVpnService.active){"Сначала остановите VPN"};startActivityForResult(Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST)}
         label(
             panel,
             "Дополнение к echo-стенду. IPv4, TCP и DNS. Остальной UDP и IPv6 в туннеле пока недоступны.",
@@ -118,6 +119,12 @@ class VpnActivity : Activity() {
             )
         endpoint = field(panel, "Адрес туннеля: домен:порт (QUIC 4434 / HTTPS 8443)", "endpoint")
         hostname = field(panel, "TLS hostname", "hostname")
+        transport.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener {
+            private var initial=true
+            override fun onNothingSelected(parent:android.widget.AdapterView<*>?) {}
+            override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:android.view.View?,position:Int,id:Long){if(initial){initial=false;return};prefs.getString(if(position==0)"quic_endpoint" else "https_endpoint",null)?.let{endpoint.setText(it)}}
+        }
+
         mode =
             choice(
                 panel,
@@ -233,6 +240,7 @@ class VpnActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
+        if(requestCode==ProfileImport.REQUEST){recreate();return}
         if (requestCode == 12) {
             startVPN()
             return

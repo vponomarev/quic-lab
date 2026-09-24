@@ -21,6 +21,8 @@ class LabVpnService : VpnService() {
             return START_NOT_STICKY
         }
         if (session != null) return START_NOT_STICKY
+        connection = "—"
+        rtt = 0.0
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel("vpn", "QUIC Lab VPN", NotificationManager.IMPORTANCE_LOW)

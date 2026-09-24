@@ -55,6 +55,12 @@ internal object VpnIdentity {
                 .put("subject", cert.subjectX500Principal.name)
                 .toString()
                 .toByteArray()
+        save(context, content)
+        password.fill('\u0000')
+        return cert.subjectX500Principal.name
+    }
+
+    private fun save(context: Context, content: ByteArray) {
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         val encrypted = cipher.iv + cipher.doFinal(content)
@@ -64,7 +70,25 @@ internal object VpnIdentity {
             "Не удалось сохранить сертификат"
         }
         content.fill(0)
-        password.fill('\u0000')
+    }
+
+    fun importProfile(context: Context, profile: JSONObject): String {
+        val certificate = profile.getString("certificate")
+        val privateKey = profile.getString("key")
+        val cert = java.security.cert.CertificateFactory.getInstance("X.509")
+            .generateCertificate(certificate.byteInputStream()) as java.security.cert.X509Certificate
+        cert.checkValidity()
+        require(cert.extendedKeyUsage?.contains("1.3.6.1.5.5.7.3.2") == true) { "Нужен клиентский сертификат TLS" }
+        val rawKey = privateKey.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").replace(Regex("\\s"), "")
+        val key = java.security.KeyFactory.getInstance("EC").generatePrivate(java.security.spec.PKCS8EncodedKeySpec(Base64.decode(rawKey, Base64.DEFAULT)))
+        val challenge = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val signer = java.security.Signature.getInstance("SHA256withECDSA")
+        signer.initSign(key); signer.update(challenge); val signature = signer.sign()
+        signer.initVerify(cert.publicKey); signer.update(challenge)
+        require(signer.verify(signature)) { "Ключ не соответствует сертификату" }
+        val content = JSONObject().put("certificate",certificate).put("key",privateKey)
+            .put("subject",cert.subjectX500Principal.name).toString().toByteArray()
+        save(context,content)
         return cert.subjectX500Principal.name
     }
 
