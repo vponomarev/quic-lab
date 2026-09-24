@@ -155,3 +155,30 @@ func TestExpiredAndSupersededQR(t *testing.T) {
 		t.Fatal("identity not persisted")
 	}
 }
+
+func TestLoginOriginPolicy(t *testing.T) {
+	c := config(t)
+	store, err := OpenStore(c.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewWeb(c, store).Handler()
+	page := call(h, "GET", "/login", "", nil)
+	if page.Header().Get("Referrer-Policy") != "same-origin" {
+		t.Fatal("form POST must preserve same-origin Origin")
+	}
+	for _, origin := range []string{"", "null", "https://evil.example", "https://lab.example"} {
+		r := httptest.NewRequest("POST", "https://lab.example/login", strings.NewReader(url.Values{"username": {c.Username}, "password": {c.Password}}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := 403
+		if origin == "https://lab.example" {
+			want = 303
+		}
+		if w.Code != want {
+			t.Fatalf("origin %q: got %d, want %d", origin, w.Code, want)
+		}
+	}
+}

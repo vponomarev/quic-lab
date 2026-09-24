@@ -52,7 +52,8 @@ func (w *Web) Handler() http.Handler {
 		rw.Header().Set("Cache-Control", "no-store")
 		rw.Header().Set("Pragma", "no-cache")
 		rw.Header().Set("X-Content-Type-Options", "nosniff")
-		rw.Header().Set("Referrer-Policy", "no-referrer")
+		// Preserve Origin on same-origin form POSTs; disclose no referrer cross-origin.
+		rw.Header().Set("Referrer-Policy", "same-origin")
 		rw.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		r.Body = http.MaxBytesReader(rw, r.Body, 16384)
 		m.ServeHTTP(rw, r)
