@@ -23,13 +23,13 @@ class LabVpnService : VpnService() {
         }
         if (intent?.action == "move") {
             if (active) {
-                val p=getSharedPreferences("vpn",MODE_PRIVATE)
+                val p=VpnProfiles.preferences(this)
                 session?.startOrMigrate(intent.getIntExtra("network",VpnSession.WIFI),p.getString("endpoint","")!!,p.getString("hostname","")!!,"",100)
             }
             return START_NOT_STICKY
         }
         if (session != null) return START_NOT_STICKY
-        resetMetrics(getSharedPreferences("vpn",MODE_PRIVATE).getString("transport","quic")!!)
+        resetMetrics(VpnProfiles.preferences(this).getString("transport","quic")!!)
         connection = "—"
         rtt = 0.0
         val manager = getSystemService(NotificationManager::class.java)
@@ -62,9 +62,9 @@ class LabVpnService : VpnService() {
                 .build(),
         )
         try {
-            val prefs = getSharedPreferences("vpn", MODE_PRIVATE)
+            val prefs = VpnProfiles.preferences(this)
             val mode = prefs.getInt("mode", 0)
-            val apps = prefs.getStringSet("apps", emptySet())!!.filter { it != packageName }
+            val apps = VpnProfiles.apps(this).filter { it != packageName }
             val builder =
                 Builder()
                     .setSession("QUIC Lab VPN")

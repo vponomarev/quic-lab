@@ -46,13 +46,19 @@ internal object ProfileImport {
         if(kind=="echo") { check(context.getSharedPreferences("server",Context.MODE_PRIVATE).edit()
             .putString("endpoint",p.getString("endpoint")).putString("hostname",p.getString("hostname"))
             .putString("pin",p.optString("pin")).putBoolean("compare",true).commit()) }
-        else {VpnIdentity.importProfile(context,p)
-            check(context.getSharedPreferences("vpn",Context.MODE_PRIVATE).edit()
+        else {
+            val previous=VpnProfiles.current(context).id
+            val added=VpnProfiles.create(context,(p.optString("name","VPN")+" · "+p.getString("hostname")).take(100))
+            try { VpnIdentity.importProfile(context,p)
+            check(VpnProfiles.preferences(context).edit()
                 .putString("transport","quic").putString("endpoint",p.getString("quic"))
                 .putString("quic_endpoint",p.getString("quic")).putString("https_endpoint",p.getString("https"))
                 .putString("hostname",p.getString("hostname")).putString("ca",p.optString("ca"))
                 .putString("dns",p.optString("dns","1.1.1.1")).putInt("mode",p.optInt("mode",0))
                 .putString("routes",p.optString("routes")).putStringSet("apps",emptySet()).commit())
+            } catch(e:Exception) {
+                VpnProfiles.delete(context,added.id); VpnProfiles.select(context,previous); throw e
+            }
         }
         return kind
     }

@@ -23,8 +23,10 @@ class VpnActivity : Activity() {
     private lateinit var identity: TextView
     private lateinit var state: TextView
     private lateinit var logs: TextView
+    private lateinit var useGlobalApps: CheckBox
+    private lateinit var appsSummary: TextView
     private var apps = mutableSetOf<String>()
-    private val prefs by lazy { getSharedPreferences("vpn", MODE_PRIVATE) }
+    private val prefs by lazy { VpnProfiles.preferences(this) }
 
     private fun label(panel: LinearLayout, value: String): TextView =
         TextView(this).also {
@@ -103,6 +105,30 @@ class VpnActivity : Activity() {
             ins
         }
         label(panel, "VPN · QUIC Lab").textSize = 28f
+        val profiles=VpnProfiles.list(this)
+        val selectedProfile=VpnProfiles.current(this)
+        val profileChoice=choice(panel,"Профиль сервера",profiles.map{it.name}.toTypedArray(),profiles.indexOfFirst{it.id==selectedProfile.id})
+        profileChoice.isEnabled=!LabVpnService.active
+        profileChoice.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent:AdapterView<*>?) {}
+            override fun onItemSelected(parent:AdapterView<*>?,view:android.view.View?,position:Int,id:Long) {
+                if(profiles[position].id!=selectedProfile.id) {
+                    try { VpnProfiles.select(this@VpnActivity,profiles[position].id); recreate() }
+                    catch(e:Exception){error(e);profileChoice.setSelection(profiles.indexOf(selectedProfile))}
+                }
+            }
+        }
+        button(panel,"Добавить профиль") { profileNameDialog(false) }
+        button(panel,"Переименовать профиль") { profileNameDialog(true) }
+        button(panel,"Удалить профиль") {
+            check(!LabVpnService.active){"Сначала остановите VPN"}
+            AlertDialog.Builder(this).setTitle("Удалить ${selectedProfile.name}?")
+                .setMessage("Настройки и сертификат этого профиля будут удалены с телефона. Общий список приложений сохранится.")
+                .setNegativeButton("Отмена",null).setPositiveButton("Удалить"){_,_->
+                    try { VpnProfiles.delete(this);recreate() }catch(e:Exception){error(e)}
+                }.show()
+        }
+        label(panel,"Сейчас активен один профиль. Сохраните изменения перед переключением сервера.")
         button(panel,"Сканировать QR") {check(!LabVpnService.active){"Сначала остановите VPN"};startActivityForResult(Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST)}
         label(
             panel,
@@ -136,7 +162,18 @@ class VpnActivity : Activity() {
                 ),
                 prefs.getInt("mode", 0),
             )
-        apps = prefs.getStringSet("apps", emptySet())!!.toMutableSet()
+        apps = VpnProfiles.apps(this).toMutableSet()
+        useGlobalApps=CheckBox(this).apply {
+            text="Использовать общий список приложений"
+            isChecked=prefs.getBoolean("global_apps",false)
+        }
+        panel.addView(useGlobalApps)
+        appsSummary=label(panel,"")
+        updateAppsSummary()
+        useGlobalApps.setOnCheckedChangeListener { _, global ->
+            apps=(if(global) VpnProfiles.globalApps(this) else prefs.getStringSet("apps",emptySet())!!).toMutableSet()
+            updateAppsSummary()
+        }
         button(panel, "Выбрать приложения") { chooseApps() }
         routes = field(panel, "Подсети для Network routing, по одной IPv4 CIDR на строку", "routes")
         dns = field(panel, "DNS для режимов приложений (IPv4)", "dns", "1.1.1.1")
@@ -202,7 +239,8 @@ class VpnActivity : Activity() {
             .putString("endpoint", endpoint.text.toString().trim())
             .putString("hostname", hostname.text.toString().trim())
             .putInt("mode", mode.selectedItemPosition)
-            .putStringSet("apps", apps)
+            .putBoolean("global_apps",useGlobalApps.isChecked)
+            .putStringSet("apps",if(useGlobalApps.isChecked) prefs.getStringSet("apps",emptySet()) else apps)
             .putString("routes", routes.text.toString())
             .putString("dns", dns.text.toString().trim())
             .putString("ca", ca.text.toString())
@@ -213,9 +251,22 @@ class VpnActivity : Activity() {
         startForegroundService(Intent(this, LabVpnService::class.java))
     }
 
+    private fun updateAppsSummary() {
+        appsSummary.text="${if(useGlobalApps.isChecked) "Общий список" else "Список профиля"}: ${apps.size} приложений"
+    }
+    private fun profileNameDialog(rename:Boolean) {
+        check(!LabVpnService.active){"Сначала остановите VPN"}
+        val name=EditText(this).apply{setSingleLine();if(rename)setText(VpnProfiles.current(this@VpnActivity).name)}
+        AlertDialog.Builder(this).setTitle(if(rename)"Название профиля" else "Новый профиль").setView(name)
+            .setNegativeButton("Отмена",null).setPositiveButton("Сохранить"){_,_->
+                try { if(rename)VpnProfiles.rename(this,name.text.toString()) else VpnProfiles.create(this,name.text.toString());recreate() }
+                catch(e:Exception){error(e)}
+            }.show()
+    }
     private fun chooseApps() {
         startActivityForResult(Intent(this, AppSelectionActivity::class.java)
-            .putStringArrayListExtra("apps", ArrayList(apps)), 13)
+            .putStringArrayListExtra("apps", ArrayList(apps))
+            .putExtra("title",if(useGlobalApps.isChecked) "Общие приложения" else "Приложения · ${VpnProfiles.current(this).name}"), 13)
     }
 
     @Deprecated("Activity result compatibility")
@@ -224,7 +275,9 @@ class VpnActivity : Activity() {
         if (resultCode != RESULT_OK) return
         if (requestCode == 13) {
             apps = (data?.getStringArrayListExtra("apps") ?: return).toMutableSet()
-            prefs.edit().putStringSet("apps", apps).apply()
+            if(useGlobalApps.isChecked) VpnProfiles.setGlobalApps(this,apps)
+            else prefs.edit().putStringSet("apps",apps).apply()
+            updateAppsSummary()
             return
         }
         if(requestCode==ProfileImport.REQUEST){recreate();return}

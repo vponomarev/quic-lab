@@ -54,7 +54,7 @@ class AppSelectionActivity : Activity() {
         }
         panel.addView(
             TextView(this).apply {
-                text = "Приложения для VPN"
+                text = intent.getStringExtra("title") ?: "Приложения для VPN"
                 textSize = 25f
             }
         )
@@ -240,6 +240,7 @@ class AppSelectionActivity : Activity() {
                 (system.isChecked || !it.system || it.id in selected) &&
                     (it.name.contains(query, true) || it.id.contains(query, true))
             }
+        visible = visible.sortedBy { if(it.id in selected) 0 else 1 }
         status.text =
             "Выбрано: ${selected.size} · Найдено: ${visible.size}" +
                 if (visible.isEmpty()) " — ничего не найдено" else ""

@@ -34,7 +34,7 @@ class ProfileScanActivity : Activity() {
     private fun review(p:JSONObject){val kind=ProfileImport.validate(p)
         val address=if(kind=="echo")p.getString("endpoint") else "QUIC: ${p.getString("quic")}\nHTTPS: ${p.getString("https")}"
         AlertDialog.Builder(this).setTitle(if(kind=="echo")"Настройки echo" else "VPN: ${p.optString("name")}")
-            .setMessage("$address\nTLS: ${p.getString("hostname")}\nЗаменить текущие настройки этого режима?")
+            .setMessage("$address\nTLS: ${p.getString("hostname")}\n${if(kind=="vpn") "Добавить новый VPN-профиль?" else "Заменить настройки echo?"}")
             .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Сохранить"){_,_->try{
                 val saved=ProfileImport.save(this,p);setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
             }catch(e:Exception){fail(e)}}.show()

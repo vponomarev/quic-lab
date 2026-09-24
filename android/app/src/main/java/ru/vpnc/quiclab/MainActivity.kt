@@ -292,7 +292,7 @@ class MainActivity : Activity() {
         if(LabVpnService.active) { startService(android.content.Intent(this,LabVpnService::class.java).setAction("stop")); return }
         if(running) { Toast.makeText(this,"Сначала остановите Echo",Toast.LENGTH_SHORT).show(); return }
         try {
-            val p=getSharedPreferences("vpn",MODE_PRIVATE)
+            val p=VpnProfiles.preferences(this)
             require(!p.getString("endpoint","").isNullOrBlank()) { "Импортируйте VPN-профиль или заполните настройки" }
             VpnIdentity.load(this)
             val consent=android.net.VpnService.prepare(this)
@@ -361,7 +361,7 @@ class MainActivity : Activity() {
             if (destroyed) return
             val time = SystemClock.elapsedRealtime()
             val vpn=LabVpnService.active || (!running && LabVpnService.startedAt>0)
-            vpnChoice.text="VPN: ${if(LabVpnService.active) LabVpnService.transport.uppercase() else getSharedPreferences("vpn",MODE_PRIVATE).getString("transport","quic")!!.uppercase()} · Настроить ›"
+            vpnChoice.text="${VpnProfiles.current(this@MainActivity).name} · VPN: ${if(LabVpnService.active) LabVpnService.transport.uppercase() else VpnProfiles.preferences(this@MainActivity).getString("transport","quic")!!.uppercase()} · Настроить ›"
             vpnButton.text=if(LabVpnService.active) "Stop VPN" else "Start VPN"
             vpnButton.isEnabled=!running
             startButton.isEnabled=!LabVpnService.active

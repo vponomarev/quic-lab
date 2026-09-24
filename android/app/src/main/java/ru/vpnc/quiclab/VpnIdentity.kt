@@ -64,9 +64,10 @@ internal object VpnIdentity {
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         val encrypted = cipher.iv + cipher.doFinal(content)
-        val temp = File(context.filesDir, "vpn-identity.tmp")
+        val destination = VpnProfiles.identityFile(context)
+        val temp = File(context.filesDir, destination.name + ".tmp")
         temp.writeBytes(encrypted)
-        check(temp.renameTo(File(context.filesDir, "vpn-identity.enc"))) {
+        check(temp.renameTo(destination)) {
             "Не удалось сохранить сертификат"
         }
         content.fill(0)
@@ -93,7 +94,7 @@ internal object VpnIdentity {
     }
 
     fun load(context: Context): JSONObject {
-        val bytes = File(context.filesDir, "vpn-identity.enc").readBytes()
+        val bytes = VpnProfiles.identityFile(context).readBytes()
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))

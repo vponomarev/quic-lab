@@ -21,7 +21,7 @@ class VpnDashboardTest {
   } }
   Thread.sleep(2500)
   repeat(args.getString("cycles","1")!!.toInt()) { cycle ->
-  val prefs=inst.targetContext.getSharedPreferences("vpn",0)
+  val prefs=VpnProfiles.preferences(inst.targetContext)
   val transport=if(cycle%2==0) "quic" else "https"
   prefs.edit().putString("transport",transport).putString("endpoint",prefs.getString("${transport}_endpoint","")).commit()
   click("Start VPN")

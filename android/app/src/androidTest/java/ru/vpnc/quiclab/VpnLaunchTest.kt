@@ -13,7 +13,7 @@ class VpnLaunchTest {
   val args = InstrumentationRegistry.getArguments()
   org.junit.Assume.assumeTrue("Explicit device test only", args.getString("vpn_ui") == "true")
   val inst=InstrumentationRegistry.getInstrumentation()
-  val prefs = inst.targetContext.getSharedPreferences("vpn", 0)
+  val prefs = VpnProfiles.preferences(inst.targetContext)
   val transport = args.getString("transport", "quic")!!
   require(transport == "quic" || transport == "https")
   prefs.edit().putString("transport", transport)
