@@ -94,6 +94,7 @@ func main() {
 			mtls = managed.TLS(cert)
 			mtls.NextProtos = []string{gateway.ALPN}
 			gw.Register = managed.Register
+			gw.Track = managed.Track
 		} else {
 			mtls, e = gateway.TLS(cert, *clientCA)
 		}

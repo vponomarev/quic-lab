@@ -27,6 +27,7 @@ import (
 )
 
 type Server struct {
+	Track    func(tls.ConnectionState, string, func() string) (func(int, int), func())
 	Register func(tls.ConnectionState, func()) (func(), error)
 	Allowed  []netip.Prefix
 	Log      *slog.Logger
@@ -97,13 +98,15 @@ func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
 				}
 				defer release()
 			}
+			count, done := s.track(c.ConnectionState().TLS, "QUIC", func() string { return c.RemoteAddr().String() })
+			defer done()
 			s.serve(c.Context(), "quic", func() (Stream, error) {
 				v, e := c.AcceptStream(c.Context())
 				if e != nil {
 					return nil, e
 				}
 				return QStream{v}, nil
-			}, func() { c.CloseWithError(1, "closed") })
+			}, func() { c.CloseWithError(1, "closed") }, count)
 		}()
 	}
 }
@@ -132,15 +135,17 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.Close()
+	count, done := s.track(*r.TLS, "HTTPS / WebSocket", func() string { return r.RemoteAddr })
+	defer done()
 	s.serve(ctx, "https", func() (Stream, error) {
 		v, e := m.AcceptStream()
 		if e != nil {
 			return nil, e
 		}
 		return NewMStream(v), nil
-	}, func() { m.Close() })
+	}, func() { m.Close() }, count)
 }
-func (s *Server) serve(ctx context.Context, transport string, accept func() (Stream, error), closeSession func()) {
+func (s *Server) serve(ctx context.Context, transport string, accept func() (Stream, error), closeSession func(), counters ...func(int, int)) {
 	id := identity()
 	log := s.Log.With("session", id, "transport", transport)
 	log.Info("gateway_open")
@@ -172,12 +177,17 @@ func (s *Server) serve(ctx context.Context, transport string, accept func() (Str
 			continue
 		}
 		wg.Add(1)
-		go func() { defer wg.Done(); defer func() { <-slots; <-s.slots }(); s.handle(ctx, st, id, log) }()
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots; <-s.slots }()
+			s.handle(ctx, st, id, log, counters...)
+		}()
 	}
 }
-func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Logger) {
+func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Logger, counters ...func(int, int)) {
 	defer st.Close()
-	stop := context.AfterFunc(ctx, func() { st.Close() })
+	closeStream := st.Close
+	stop := context.AfterFunc(ctx, func() { closeStream() })
 	defer stop()
 	st.SetDeadline(time.Now().Add(10 * time.Second))
 	var req Request
@@ -235,6 +245,9 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 	if WriteJSON(st, Reply{Session: id}) != nil {
 		return
 	}
+	if len(counters) > 0 && counters[0] != nil {
+		st = countedStream{Stream: st, count: counters[0]}
+	}
 	st.SetDeadline(time.Time{})
 	flow := identity()
 	log.Info("flow_open", "flow", flow, "network", req.Network, "destination", req.Address)
@@ -263,4 +276,31 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 			return
 		}
 	}
+}
+
+func (s *Server) track(cs tls.ConnectionState, transport string, peer func() string) (func(int, int), func()) {
+	if s.Track != nil {
+		return s.Track(cs, transport, peer)
+	}
+	return nil, func() {}
+}
+
+type countedStream struct {
+	Stream
+	count func(int, int)
+}
+
+func (s countedStream) Read(b []byte) (int, error) {
+	n, e := s.Stream.Read(b)
+	if n > 0 {
+		s.count(n, 0)
+	}
+	return n, e
+}
+func (s countedStream) Write(b []byte) (int, error) {
+	n, e := s.Stream.Write(b)
+	if n > 0 {
+		s.count(0, n)
+	}
+	return n, e
 }

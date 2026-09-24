@@ -23,12 +23,16 @@ import (
 )
 
 type User struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Created     time.Time `json:"created"`
-	Expires     time.Time `json:"expires"`
-	Certificate string    `json:"certificate"`
-	Key         string    `json:"key,omitempty"`
+	LastConnected time.Time `json:"last_connected,omitempty"`
+	LastTransport string    `json:"last_transport,omitempty"`
+	LastSource    string    `json:"last_source,omitempty"`
+	Stats         UserStats `json:"-"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Created       time.Time `json:"created"`
+	Expires       time.Time `json:"expires"`
+	Certificate   string    `json:"certificate"`
+	Key           string    `json:"key,omitempty"`
 }
 type diskState struct {
 	Version int             `json:"version"`
@@ -37,6 +41,7 @@ type diskState struct {
 	Users   map[string]User `json:"users"`
 }
 type Store struct {
+	stats  map[string]*userTraffic
 	mu     sync.Mutex
 	path   string
 	state  diskState
@@ -197,6 +202,7 @@ func (s *Store) List() []User {
 	defer s.mu.Unlock()
 	out := make([]User, 0, len(s.state.Users))
 	for _, u := range s.state.Users {
+		u.Stats = s.snapshot(u.ID, time.Now())
 		u.Key = ""
 		u.Certificate = ""
 		out = append(out, u)
@@ -226,6 +232,7 @@ func (s *Store) Delete(id string) error {
 		s.mu.Unlock()
 		return e
 	}
+	delete(s.stats, id)
 	closers := s.active[id]
 	delete(s.active, id)
 	s.mu.Unlock()
