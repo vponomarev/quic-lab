@@ -1,0 +1,21 @@
+[Unit]
+Description=QUIC Lab public echo server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/quic-lab
+LoadCredential=cert.pem:/etc/letsencrypt/live/quic.example.org/fullchain.pem
+LoadCredential=key.pem:/etc/letsencrypt/live/quic.example.org/privkey.pem
+ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:4433 -web-listen 127.0.0.1:8081 -cert ${CREDENTIALS_DIRECTORY}/cert.pem -key ${CREDENTIALS_DIRECTORY}/key.pem
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

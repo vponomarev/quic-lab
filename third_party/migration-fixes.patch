@@ -1,0 +1,379 @@
+--- a/conn_id_generator.go
++++ b/conn_id_generator.go
+@@ -210,3 +210,20 @@
+ 		r.AddConnectionID(connID)
+ 	}
+ }
++
++func (m *connIDGenerator) RemoveConnRunner(runner connRunner) {
++	r, ok := m.connRunners[runner]
++	if !ok {
++		return
++	}
++	if m.initialClientDestConnID != nil {
++		r.RemoveConnectionID(*m.initialClientDestConnID)
++	}
++	for _, id := range m.activeSrcConnIDs {
++		r.RemoveConnectionID(id)
++	}
++	for _, pending := range m.connIDsToRetire {
++		r.RemoveConnectionID(pending.connID)
++	}
++	delete(m.connRunners, runner)
++}
+--- a/conn_id_manager.go
++++ b/conn_id_manager.go
+@@ -85,7 +85,11 @@
+ 	}
+ 	// If the NEW_CONNECTION_ID frame is reordered, such that its sequence number is smaller than the currently active
+ 	// connection ID or if it was already retired, send the RETIRE_CONNECTION_ID frame immediately.
+-	if f.SequenceNumber < max(h.activeSequenceNumber, h.highestProbingID) || f.SequenceNumber < h.highestRetired {
++	inUse := f.SequenceNumber == h.activeSequenceNumber
++	for _, entry := range h.pathProbing {
++		inUse = inUse || entry.SequenceNumber == f.SequenceNumber
++	}
++	if !inUse && (f.SequenceNumber < max(h.activeSequenceNumber, h.highestProbingID) || f.SequenceNumber < h.highestRetired) {
+ 		h.queueControlFrame(&wire.RetireConnectionIDFrame{
+ 			SequenceNumber: f.SequenceNumber,
+ 		})
+@@ -135,6 +139,17 @@
+ }
+ 
+ func (h *connIDManager) addConnectionID(seq uint64, connID protocol.ConnectionID, resetToken protocol.StatelessResetToken) error {
++	// A retransmitted NEW_CONNECTION_ID must not put an allocated probing CID
++	// back into the free queue. Otherwise two paths share it and retiring one
++	// silently invalidates the other at the peer.
++	for _, entry := range h.pathProbing {
++		if entry.SequenceNumber == seq {
++			if entry.ConnectionID != connID || entry.StatelessResetToken != resetToken {
++				return fmt.Errorf("received conflicting probing connection ID for sequence number %d", seq)
++			}
++			return nil
++		}
++	}
+ 	// fast path: add to the end of the queue
+ 	if len(h.queue) == 0 || h.queue[len(h.queue)-1].SequenceNumber < seq {
+ 		h.queue = append(h.queue, newConnID{
+--- /dev/null
++++ b/conn_id_migration_duplicate_test.go
+@@ -0,0 +1,30 @@
++package quic
++
++import (
++	"github.com/quic-go/quic-go/internal/protocol"
++	"github.com/quic-go/quic-go/internal/wire"
++	"github.com/stretchr/testify/require"
++	"testing"
++)
++
++func TestProbingCIDRetransmissionDoesNotRequeueOrRetire(t *testing.T) {
++	var retired []uint64
++	m := newConnIDManager(protocol.ParseConnectionID([]byte{0}),
++		func(protocol.StatelessResetToken) {}, func(protocol.StatelessResetToken) {},
++		func(f wire.Frame) {
++			if r, ok := f.(*wire.RetireConnectionIDFrame); ok {
++				retired = append(retired, r.SequenceNumber)
++			}
++		})
++	f := &wire.NewConnectionIDFrame{SequenceNumber: 1, ConnectionID: protocol.ParseConnectionID([]byte{1})}
++	require.NoError(t, m.Add(f))
++	_, ok := m.GetConnIDForPath(1)
++	require.True(t, ok)
++	require.NoError(t, m.Add(f)) // retransmission after a lost ACK
++	require.Empty(t, m.queue, "reserved CID must not become available for a second path")
++	require.NoError(t, m.Add(&wire.NewConnectionIDFrame{SequenceNumber: 2, ConnectionID: protocol.ParseConnectionID([]byte{2})}))
++	_, ok = m.GetConnIDForPath(2)
++	require.True(t, ok)
++	require.NoError(t, m.Add(f)) // now older than highestProbingID, but still in use
++	require.Empty(t, retired, "a live probing CID must not be retired on retransmission")
++}
+--- a/connection.go
++++ b/connection.go
+@@ -45,7 +45,8 @@
+ }
+ 
+ type receivedPacket struct {
+-	buffer *packetBuffer
++	transport *Transport // receiving path, including paths not yet selected for sending
++	buffer    *packetBuffer
+ 
+ 	remoteAddr net.Addr
+ 	rcvTime    monotime.Time
+@@ -172,6 +173,7 @@
+ 	cryptoStreamHandler cryptoStreamHandler
+ 
+ 	notifyReceivedPacket chan struct{}
++	retireTransport      chan retireTransportRequest
+ 	sendingScheduled     chan struct{}
+ 	receivedPacketMx     sync.Mutex
+ 	receivedPackets      ringbuffer.RingBuffer[receivedPacket]
+@@ -545,6 +547,7 @@
+ 	c.framer = newFramer(c.connFlowController)
+ 	c.receivedPackets.Init(8)
+ 	c.notifyReceivedPacket = make(chan struct{}, 1)
++	c.retireTransport = make(chan retireTransportRequest)
+ 	c.closeChan = make(chan struct{}, 1)
+ 	c.sendingScheduled = make(chan struct{}, 1)
+ 	c.handshakeCompleteChan = make(chan struct{})
+@@ -657,6 +660,13 @@
+ 			case <-c.closeChan:
+ 				break runLoop
+ 			case <-c.timer.C:
++			case req := <-c.retireTransport:
++				if addrsEqual(c.conn.LocalAddr(), req.transport.conn.LocalAddr()) {
++					req.result <- errors.New("transport is still active")
++				} else {
++					c.connIDGenerator.RemoveConnRunner((*packetHandlerMap)(req.transport))
++					req.result <- nil
++				}
+ 			case <-c.sendingScheduled:
+ 			case <-sendQueueAvailable:
+ 			case <-c.notifyReceivedPacket:
+@@ -1257,6 +1267,29 @@
+ 
+ 	// In RFC 9000, only the client can migrate between paths.
+ 	if c.perspective == protocol.PerspectiveClient {
++		if pathChallenge != nil && p.transport != nil {
++			// RFC 9000 section 8.2.2: respond on the path that carried the
++			// challenge, even before the application switches to that path.
++			cid := c.connIDManager.Get()
++			if pm := c.pathManagerOutgoing.Load(); pm != nil {
++				if pathCID, ok := pm.connIDForTransport(p.transport); ok {
++					cid = pathCID
++				}
++			}
++			probe, buf, err := c.packer.PackPathProbePacket(cid, []ackhandler.Frame{{Frame: &wire.PathResponseFrame{Data: pathChallenge.Data}, Handler: pathResponseHandler{}}}, c.version)
++			if err != nil {
++				return false, err
++			}
++			c.logShortHeaderPacket(probe, protocol.ECNNon, buf.Len())
++			c.registerPackedShortHeaderPacket(probe, protocol.ECNNon, p.rcvTime)
++			_, err = p.transport.WriteTo(buf.Data, p.remoteAddr)
++			buf.Release()
++			if err != nil {
++				// A queued challenge may belong to a retired / failed standby.
++				// Failure on that path must not tear down the working connection.
++				c.logger.Debugf("could not send PATH_RESPONSE on receiving path: %s", err)
++			}
++		}
+ 		return true, nil
+ 	}
+ 	if addrsEqual(p.remoteAddr, c.RemoteAddr()) {
+@@ -2047,9 +2080,7 @@
+ }
+ 
+ func (c *Conn) handlePathChallengeFrame(f *wire.PathChallengeFrame) {
+-	if c.perspective == protocol.PerspectiveClient {
+-		c.queueControlFrame(&wire.PathResponseFrame{Data: f.Data})
+-	}
++	// The packet handler responds using the receiving transport.
+ }
+ 
+ func (c *Conn) handlePathResponseFrame(f *wire.PathResponseFrame) error {
+--- a/path_manager.go
++++ b/path_manager.go
+@@ -93,7 +93,7 @@
+ 		}
+ 	}
+ 
+-	if len(pm.paths) >= maxPaths {
++	if p == nil && len(pm.paths) >= maxPaths {
+ 		if pm.paths[0].lastPacketTime.Add(pathTimeout).After(t) {
+ 			if pm.logger.Debug() {
+ 				pm.logger.Debugf("received packet for previously unseen path %s, but already have %d paths", remoteAddr, len(pm.paths))
+@@ -132,6 +132,8 @@
+ 		}
+ 		pm.nextPathID++
+ 		pm.paths = append(pm.paths, p)
++	}
++	if !p.validated {
+ 		frames = append(frames, ackhandler.Frame{
+ 			Frame:   &wire.PathChallengeFrame{Data: p.pathChallenge},
+ 			Handler: (*pathManagerAckHandler)(pm),
+@@ -164,7 +166,8 @@
+ 	for _, path := range pm.paths {
+ 		if addrsEqual(path.addr, addr) {
+ 			pm.logger.Debugf("switching to path %d (%s)", path.id, addr)
+-			continue
++			// The probing CID is separate from connIDManager's active CID.
++			// Retire it too before discarding this path record.
+ 		}
+ 		pm.retireConnID(path.id)
+ 	}
+@@ -180,17 +183,10 @@
+ func (pm *pathManagerAckHandler) OnAcked(f wire.Frame) {}
+ 
+ func (pm *pathManagerAckHandler) OnLost(f wire.Frame) {
+-	pc, ok := f.(*wire.PathChallengeFrame)
+-	if !ok {
+-		return
+-	}
+-	for i, path := range pm.paths {
+-		if path.pathChallenge == pc.Data {
+-			pm.paths = slices.Delete(pm.paths, i, i+1)
+-			pm.retireConnID(path.id)
+-			break
+-		}
+-	}
++	// Loss is not path abandonment. Keep the bounded path record and its CID:
++	// retiring it here churns through all IDs during an outage, while new IDs
++	// cannot arrive on the old active path. A subsequent incoming challenge
++	// re-sends our challenge; inactive records remain subject to pathTimeout.
+ }
+ 
+ func addrsEqual(addr1, addr2 net.Addr) bool {
+--- a/path_manager_outgoing.go
++++ b/path_manager_outgoing.go
+@@ -41,6 +41,11 @@
+ 	p.pathManager.enqueueProbe(p)
+ 	nextProbeDur := p.initialRTT
+ 	var timer *time.Timer
++	defer func() {
++		if timer != nil {
++			timer.Stop()
++		}
++	}()
+ 	var timerChan <-chan time.Time
+ 	for {
+ 		select {
+@@ -153,6 +158,8 @@
+ 	// path might already exist, and just being re-probed
+ 	if existingPath, ok := pm.paths[p.id]; ok {
+ 		existingPath.validated = make(chan struct{})
++		existingPath.isValidated = false
++		existingPath.pathChallenges = nil
+ 		return existingPath
+ 	}
+ 
+@@ -197,6 +204,7 @@
+ }
+ 
+ func (pm *pathManagerOutgoing) switchToPath(id pathID) error {
++	defer pm.scheduleSending()
+ 	pm.mx.Lock()
+ 	defer pm.mx.Unlock()
+ 
+@@ -210,6 +218,17 @@
+ 	pm.pathToSwitchTo = p
+ 	pm.activePath = id
+ 	return nil
++}
++
++func (pm *pathManagerOutgoing) connIDForTransport(tr *Transport) (protocol.ConnectionID, bool) {
++	pm.mx.Lock()
++	defer pm.mx.Unlock()
++	for id, p := range pm.paths {
++		if p.tr == tr {
++			return pm.getConnID(id)
++		}
++	}
++	return protocol.ConnectionID{}, false
+ }
+ 
+ func (pm *pathManagerOutgoing) NewPath(t *Transport, initialRTT time.Duration, enablePath func()) *Path {
+--- a/path_manager_test.go
++++ b/path_manager_test.go
+@@ -121,7 +121,7 @@
+ 	require.NotEmpty(t, frames)
+ 	require.NotEqual(t, frames[0].Frame.(*wire.PathChallengeFrame).Data, pc1.Data)
+ 	require.False(t, shouldSwitch)
+-	require.Equal(t, []protocol.ConnectionID{connIDs[0]}, retiredConnIDs)
++	require.Equal(t, []protocol.ConnectionID{connIDs[0], connIDs[1]}, retiredConnIDs)
+ }
+ 
+ func TestPathManagerMultipleProbes(t *testing.T) {
+@@ -154,8 +154,9 @@
+ 		false,
+ 	)
+ 	require.Equal(t, connIDs[0], connID)
+-	require.Len(t, frames, 1)
+-	require.Equal(t, &wire.PathResponseFrame{Data: [8]byte{1, 2, 3, 4, 5, 6, 7, 8}}, frames[0].Frame)
++	require.Len(t, frames, 2)
++	require.Equal(t, &wire.PathResponseFrame{Data: [8]byte{1, 2, 3, 4, 5, 6, 7, 8}}, frames[1].Frame)
++	pm.HandlePathResponseFrame(&wire.PathResponseFrame{Data: frames[0].Frame.(*wire.PathChallengeFrame).Data})
+ 	require.False(t, shouldSwitch)
+ 
+ 	// now receive another packet on the same path with a PATH_RESPONSE
+@@ -265,16 +266,21 @@
+ 	require.Zero(t, connID)
+ 	require.Empty(t, frames)
+ 
+-	// losing the frame removes this path
++	// Losing a challenge retains its CID and the bounded path record.
+ 	f1[0].Handler.OnLost(f1[0].Frame)
+ 
+-	// we can open exactly one more path
++	// No new path can be allocated until an existing record expires.
++	connID, frames, _ = pm.HandlePacket(&net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 4000}, now, nil, true)
++	require.Zero(t, connID)
++	require.Empty(t, frames)
++	// Existing paths still answer challenges even when the table is full.
++	_, frames, _ = pm.HandlePacket(&net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 3001}, now, &wire.PathChallengeFrame{}, false)
++	require.Len(t, frames, 2)
++	now = now.Add(pathTimeout)
+ 	connID, frames, _ = pm.HandlePacket(&net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 4000}, now, nil, true)
+ 	require.NotEmpty(t, frames)
+ 	require.Equal(t, connIDs[connIDIndex], connID)
+-	connID, frames, _ = pm.HandlePacket(&net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 4001}, now, nil, true)
+-	require.Zero(t, connID)
+-	require.Empty(t, frames)
++	require.Len(t, pm.paths, maxPaths)
+ }
+ 
+ type mockAddr struct {
+--- /dev/null
++++ b/path_response_handler.go
+@@ -0,0 +1,10 @@
++package quic
++
++import "github.com/quic-go/quic-go/internal/wire"
++
++// PATH_RESPONSE isn't retransmitted on its own: the peer retries its challenge.
++// Probe loss processing requires a handler even for these non-retransmitted frames.
++type pathResponseHandler struct{}
++
++func (pathResponseHandler) OnAcked(wire.Frame) {}
++func (pathResponseHandler) OnLost(wire.Frame)  {}
+--- /dev/null
++++ b/retire_transport.go
+@@ -0,0 +1,30 @@
++package quic
++
++import "context"
++
++type retireTransportRequest struct {
++	transport *Transport
++	result    chan error
++}
++
++// RetireTransport detaches this connection from an inactive transport, allowing
++// its owner to close the socket without destroying the migrated connection.
++// The caller must first close any Path using the transport and never reuse it.
++func (c *Conn) RetireTransport(ctx context.Context, t *Transport) error {
++	req := retireTransportRequest{transport: t, result: make(chan error, 1)}
++	select {
++	case c.retireTransport <- req:
++	case <-c.Context().Done():
++		return nil
++	case <-ctx.Done():
++		return ctx.Err()
++	}
++	select {
++	case err := <-req.result:
++		return err
++	case <-c.Context().Done():
++		return nil
++	case <-ctx.Done():
++		return ctx.Err()
++	}
++}
+--- a/transport.go
++++ b/transport.go
+@@ -562,6 +562,7 @@
+ }
+ 
+ func (t *Transport) handlePacket(p receivedPacket) {
++	p.transport = t
+ 	if len(p.data) == 0 {
+ 		return
+ 	}

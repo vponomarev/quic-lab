@@ -1,0 +1,21 @@
+[Unit]
+Description=QUIC Lab seminar echo server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/quic-lab
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+LoadCredential=key.pem:/opt/quic-lab/key.pem
+# The private key is passed through systemd credentials rather than made world-readable.
+ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:4433 -cert /opt/quic-lab/cert.pem -key ${CREDENTIALS_DIRECTORY}/key.pem
+
+[Install]
+WantedBy=multi-user.target

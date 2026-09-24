@@ -1,0 +1,17 @@
+/bin/
+/certs/
+*.ndjson
+android/.gradle/
+android/**/build/
+android/local.properties
+android/app/libs/*.aar
+android/app/libs/*.jar
+.idea/
+
+artifacts/
+*.keystore
+*.jks
+.env
+.env.*
+android/.kotlin/
+!android/gradle/wrapper/gradle-wrapper.jar
