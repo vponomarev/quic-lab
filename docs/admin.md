@@ -34,6 +34,10 @@ LoadCredential=admin.json:/etc/quic-lab/admin.json
 ```nginx
 location /lab/ {
     proxy_pass http://127.0.0.1:8083/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 60s;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto https;
     proxy_buffering off;
@@ -84,7 +88,14 @@ URL и не попадает в обычный access log. Сам QR до пог
 IP и время подключения. Один сертификат может иметь несколько одновременных туннелей.
 У QUIC адрес берётся из текущего соединения и меняется при миграции. HTTPS показывает
 адрес TCP-соединения. Это адрес, видимый серверу (в том числе NAT); заголовки
-`X-Forwarded-For` не используются. Кнопка «Обновить статистику» обновляет снимок.
+`X-Forwarded-For` не используются. Страница получает снимок сразу и затем каждые 5 секунд по WebSocket `/lab/users/live`.
+Обновляются только метрики; введённое имя и кнопки остаются на месте. При обрыве связи
+клиент переподключается через 3 секунды. WebSocket требует действующую сессию
+администратора и совпадение Origin; выход и истечение сессии прекращают поток обновлений.
+После изменения списка пользователей в другой вкладке появляется предложение обновить страницу.
+Для nginx в location `/lab/` нужны `proxy_http_version 1.1`,
+`proxy_set_header Upgrade $http_upgrade` и `proxy_set_header Connection "upgrade"`;
+таймаут `proxy_read_timeout 60s` достаточен для пятисекундного интервала.
 
 TX — байты от клиента, RX — байты к клиенту, сумма по всем туннелям пользователя за
 последние 10 минут. Окно состоит из 600 секундных интервалов. Считается TCP payload
