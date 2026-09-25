@@ -174,7 +174,8 @@ def apply_nginx(content):
         ENABLED.symlink_to(SITE)
     try:
         run("nginx", "-t")
-        run("systemctl", "enable", "--now", "nginx")
+        if subprocess.run(["systemctl", "is-active", "--quiet", "nginx"]).returncode != 0:
+            run("systemctl", "enable", "--now", "nginx")
         run("systemctl", "reload", "nginx")
     except BaseException:
         if previous is None:
@@ -185,6 +186,18 @@ def apply_nginx(content):
             ENABLED.unlink(missing_ok=True)
         # A failed reload leaves the previous workers serving traffic.
         raise
+
+
+def missing_packages(custom_cert):
+    # An existing nginx (including an independently installed build) is never
+    # passed to apt. Only install missing prerequisites, without upgrades.
+    commands = {"nginx": "nginx", "openssl": "openssl"}
+    if not custom_cert:
+        commands["certbot"] = "certbot"
+    packages = [package for command, package in commands.items() if not shutil.which(command)]
+    if not Path("/etc/ssl/certs/ca-certificates.crt").is_file():
+        packages.append("ca-certificates")
+    return packages
 
 
 def main():
@@ -253,8 +266,11 @@ def install(args):
             for names in re.findall(r"(?m)^\s*server_name\s+([^;]+);", section):
                 if args.domain in [name.strip("\"'").lower() for name in names.split()]:
                     raise RuntimeError("This domain already has an nginx site; see migration instructions.")
-    run("apt-get", "update")
-    run("apt-get", "install", "-y", "nginx", "certbot", "ca-certificates", "openssl", env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
+    packages = missing_packages(custom_cert)
+    if packages:
+        run("apt-get", "update")
+        run("apt-get", "install", "--no-upgrade", "-y", *packages,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "l"})
     CONFIG.mkdir(mode=0o700, parents=True, exist_ok=True)
     CONFIG.chmod(0o700)
     OPT.mkdir(mode=0o755, parents=True, exist_ok=True)

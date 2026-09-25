@@ -4,6 +4,7 @@ import importlib.util
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("installer", Path(__file__).with_name("install-server.py"))
 i = importlib.util.module_from_spec(spec)
@@ -11,6 +12,22 @@ spec.loader.exec_module(i)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_existing_nginx_is_never_installed_or_upgraded(self):
+        with patch.object(i.shutil, "which", side_effect=lambda c: "/usr/bin/" + c if c in ("nginx", "openssl") else None), patch.object(i.Path, "is_file", return_value=True):
+            self.assertEqual(i.missing_packages(False), ["certbot"])
+            self.assertEqual(i.missing_packages(True), [])
+        with patch.object(i.shutil, "which", return_value=None), patch.object(i.Path, "is_file", return_value=False):
+            self.assertEqual(set(i.missing_packages(False)), {"nginx", "openssl", "certbot", "ca-certificates"})
+
+    def test_running_nginx_only_validated_and_reloaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            site, enabled = Path(tmp) / "site", Path(tmp) / "enabled"
+            with patch.object(i, "SITE", site), patch.object(i, "ENABLED", enabled), patch.object(i, "run") as run, patch.object(i.subprocess, "run") as status:
+                status.return_value.returncode = 0
+                i.apply_nginx("# test")
+                self.assertEqual([c.args for c in run.call_args_list], [("nginx", "-t"), ("systemctl", "reload", "nginx")])
+                self.assertTrue(enabled.is_symlink())
+
     def test_domain_validation(self):
         self.assertEqual(i.domain_name("Lab.Example.org."), "lab.example.org")
         for name in ("127.0.0.1", "https://example.org", "x.example/evil", "x.example;foo", "-a.example", "*.example.org", "foo..org", "a" * 64 + ".org"):
