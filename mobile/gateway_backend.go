@@ -125,3 +125,43 @@ func awgPingProbe(ctx context.Context, d flowDialer, target string, seq uint16) 
 	}
 	return nil
 }
+
+// This is end-to-end RTT to the upstream Endpoint. It never feeds the local
+// heartbeat, migration decisions, jitter window or the local-RTT graph.
+func (g *Gateway) transitHeartbeat(ctx context.Context, awgDialer flowDialer, endpoint string) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var seq uint16
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		seq++
+		started := time.Now()
+		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
+		var e error
+		if awgDialer != nil {
+			e = awgPingProbe(probe, awgDialer, endpoint, seq)
+		} else {
+			var stream gateway.Stream
+			stream, e = gateway.Open(probe, g.open, "transit-probe", "")
+			if stream != nil {
+				stream.Close()
+			}
+		}
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		if e == nil {
+			g.emit("transit_echo", map[string]any{"rtt_ms": float64(time.Since(started)) / float64(time.Millisecond)})
+		} else {
+			g.emit("transit_probe_failed", map[string]any{})
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}

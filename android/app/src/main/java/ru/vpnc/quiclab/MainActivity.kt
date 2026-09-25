@@ -204,7 +204,7 @@ class MainActivity : Activity() {
         help.addView(text("Что наблюдать", 16f, ink, true))
         help.addView(text("1. Начните на Wi-Fi и дождитесь ответов.\n2. Выключите Wi-Fi: посмотрите на паузу и сеансы.\n3. Включите обратно. Возврат после проверки сети занимает около 8 секунд — обмен продолжается.", 14f, muted))
         space(help, 8)
-        help.addView(text("RTT — путь сообщения туда и обратно. Пауза — время между ответами, включая переподключение. Сеанс — соединение, подтверждённое сервером.", 12f, muted))
+        help.addView(text("RTT — путь сообщения туда и обратно. При транзите: VPN / удалённый gateway. График и jitter показывают только RTT до VPN. Пауза — время между ответами, включая переподключение. Сеанс — соединение, подтверждённое сервером.", 12f, muted))
         help.addView(text("Jitter max — максимальная разница RTT соседних ответов за последние 15 секунд. Пик перехода исчезнет через 15 секунд. Если ответов меньше двух — прочерк; замирание видно по паузе.", 12f, muted))
         val events = card(panel)
         events.addView(text("Ход эксперимента", 16f, ink, true))
@@ -383,10 +383,12 @@ class MainActivity : Activity() {
             echoRow.visibility=if(vpn) View.GONE else View.VISIBLE
             vpnCard.visibility=if(vpn) View.VISIBLE else View.GONE
             compare.visibility=if(vpn) View.GONE else View.VISIBLE
-            graphTitle.text=if(vpn) "VPN · RTT контрольных запросов" else "Echo · задержка ответа"
+            graphTitle.text=if(vpn) "VPN · RTT до локального шлюза" else "Echo · задержка ответа"
             if(vpn) {
                 val fresh=LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho<1500
-                val rtt=if(fresh) "%.0f мс".format(LabVpnService.rtt) else "—"
+                val localRtt=if(fresh) "%.0f".format(LabVpnService.rtt) else "—"
+                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0 && time-LabVpnService.lastTransitEcho<3500) "%.0f".format(LabVpnService.transitRtt) else "—"
+                val rtt=if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит" else "$localRtt мс"
                 val transport=LabVpnService.transport.uppercase()
                 vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}"
                 vpnExit.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE

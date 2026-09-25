@@ -17,6 +17,7 @@ import (
 	"quiclab/internal/gateway"
 	"quiclab/internal/labcert"
 	"quiclab/internal/protocol"
+	"quiclab/internal/transit"
 )
 
 func main() {
@@ -65,12 +66,14 @@ func main() {
 	var publicAdmin http.Handler
 	var adminBase string
 	var managed *admin.Store
+	var uplink *transit.Config
 	if *adminFile != "" {
 		cfg, e := admin.ReadConfig(*adminFile)
 		if e != nil {
 			log.Error("admin_config", "error", e)
 			os.Exit(1)
 		}
+		uplink = cfg.Transit
 		managed, e = admin.OpenStore(cfg.DataDir)
 		if e != nil {
 			log.Error("admin_store", "error", e)
@@ -100,6 +103,11 @@ func main() {
 		if e != nil {
 			log.Error("gateway_policy", "error", e)
 			os.Exit(1)
+		}
+		if uplink != nil {
+			gw.DialContext = uplink.DialContext
+			gw.Probe = uplink.Probe
+			gw.Resolver = uplink.Resolver()
 		}
 		var mtls *tls.Config
 		if managed != nil {

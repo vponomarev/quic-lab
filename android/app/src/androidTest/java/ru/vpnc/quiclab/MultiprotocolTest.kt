@@ -1,6 +1,7 @@
 package ru.vpnc.quiclab
 
 import android.content.Intent
+import android.net.VpnService
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -34,9 +35,22 @@ class MultiprotocolTest {
                 prefs.edit().putString("transport", transport).putString("endpoint", prefs.getString("${transport}_endpoint", "")).commit()
                 context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 Thread.sleep(1200)
+                VpnService.prepare(context)?.let {
+                    context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    waitFor("VPN permission", 90) { VpnService.prepare(context) == null }
+                }
                 context.startForegroundService(Intent(context, LabVpnService::class.java))
                 waitFor("$transport RTT") { LabVpnService.active && LabVpnService.rtt > 0 && LabVpnService.lastEcho >= LabVpnService.startedAt }
+                if (profile.optString("transit_endpoint").isNotBlank()) waitFor("$transport transit RTT") { LabVpnService.lastTransitEcho >= LabVpnService.startedAt && LabVpnService.transitRtt > 0 }
                 waitFor("$transport exit IP") { LabVpnService.exitIP.isNotBlank() }
+                if (InstrumentationRegistry.getArguments().getString("capture_transit_ui") == "true") {
+                    inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity").close()
+                    Thread.sleep(1500)
+                    inst.uiAutomation.takeScreenshot()?.let { screenshot ->
+                        File(context.filesDir, "transit-ui-$transport.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                        screenshot.recycle()
+                    }
+                }
                 context.startService(Intent(context, LabVpnService::class.java).setAction("stop"))
                 waitFor("$transport stopped") { !LabVpnService.active }
                 Thread.sleep(1500)

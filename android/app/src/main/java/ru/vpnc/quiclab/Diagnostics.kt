@@ -105,6 +105,7 @@ internal object Diagnostics {
             appendLine("Server ${sanitize(prefs.getString("endpoint", "").orEmpty())}; transport ${prefs.getString("transport", "quic")}; routing mode ${prefs.getInt("mode",0)}; app count ${VpnProfiles.apps(context).size}")
             appendLine("VPN active=${LabVpnService.active}; ${sanitize(LabVpnService.status)}; network=${LabVpnService.network}")
             appendLine("RTT=${LabVpnService.rtt}ms; last reply age=${if(LabVpnService.lastEcho>0) now-LabVpnService.lastEcho else -1}ms")
+            if (LabVpnService.transitEnabled) appendLine("Transit RTT=${LabVpnService.transitRtt}ms; last reply age=${if(LabVpnService.lastTransitEcho>0) now-LabVpnService.lastTransitEcho else -1}ms")
             appendLine(LabVpnService.quality(now))
             appendLine("TX=${LabVpnService.txBytes}; RX=${LabVpnService.rxBytes}; TX/s=${LabVpnService.txRate}; RX/s=${LabVpnService.rxRate}")
             appendLine("Exit IP=${LabVpnService.exitIP}; ${LabVpnService.exitState}; check age=${if(LabVpnService.exitCheckedAt>0) now-LabVpnService.exitCheckedAt else -1}ms")

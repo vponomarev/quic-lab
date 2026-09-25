@@ -7,29 +7,32 @@ import (
 	"net/url"
 	"os"
 	"quiclab/internal/awgserver"
+	"quiclab/internal/transit"
 	"strconv"
 	"strings"
 )
 
 type Profile struct {
-	Transports  []string `json:"transports,omitempty"`
-	AWGConfig   string   `json:"awg_config,omitempty"`
-	Version     int      `json:"version"`
-	Kind        string   `json:"kind"`
-	Name        string   `json:"name,omitempty"`
-	Endpoint    string   `json:"endpoint,omitempty"`
-	QUIC        string   `json:"quic,omitempty"`
-	HTTPS       string   `json:"https,omitempty"`
-	Hostname    string   `json:"hostname"`
-	Pin         string   `json:"pin,omitempty"`
-	CA          string   `json:"ca,omitempty"`
-	Certificate string   `json:"certificate,omitempty"`
-	Key         string   `json:"key,omitempty"`
-	DNS         string   `json:"dns,omitempty"`
-	Mode        int      `json:"mode,omitempty"`
-	Routes      string   `json:"routes,omitempty"`
+	TransitEndpoint string   `json:"transit_endpoint,omitempty"`
+	Transports      []string `json:"transports,omitempty"`
+	AWGConfig       string   `json:"awg_config,omitempty"`
+	Version         int      `json:"version"`
+	Kind            string   `json:"kind"`
+	Name            string   `json:"name,omitempty"`
+	Endpoint        string   `json:"endpoint,omitempty"`
+	QUIC            string   `json:"quic,omitempty"`
+	HTTPS           string   `json:"https,omitempty"`
+	Hostname        string   `json:"hostname"`
+	Pin             string   `json:"pin,omitempty"`
+	CA              string   `json:"ca,omitempty"`
+	Certificate     string   `json:"certificate,omitempty"`
+	Key             string   `json:"key,omitempty"`
+	DNS             string   `json:"dns,omitempty"`
+	Mode            int      `json:"mode,omitempty"`
+	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
+	Transit   *transit.Config   `json:"transit,omitempty"`
 	AWG       *awgserver.Config `json:"awg,omitempty"`
 	APKPath   string            `json:"apk_path,omitempty"`
 	Listen    string            `json:"listen"`
@@ -53,6 +56,11 @@ func ReadConfig(file string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.Transit != nil {
+		if e := c.Transit.Validate(); e != nil {
+			return e
+		}
+	}
 	if c.AWG != nil {
 		if e := c.AWG.Validate(); e != nil {
 			return e

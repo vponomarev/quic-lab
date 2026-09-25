@@ -36,6 +36,7 @@ class LabVpnService : VpnService() {
         }
         if (session != null) return START_NOT_STICKY
         resetMetrics(VpnProfiles.preferences(this).getString("transport","quic")!!)
+        transitEnabled = !VpnProfiles.preferences(this).getString("transit_endpoint", "").isNullOrBlank()
         connection = "—"
         rtt = 0.0
         val manager = getSystemService(NotificationManager::class.java)
@@ -103,6 +104,7 @@ class LabVpnService : VpnService() {
             val cfg =
                 VpnIdentity.load(this)
                     .put("transport", prefs.getString("transport", "quic"))
+                    .put("transit_endpoint", prefs.getString("transit_endpoint", ""))
                     .put("probe_exit_ip", mode != 3)
                     .put("ca", prefs.getString("ca", ""))
                     .put("dns", prefs.getString("dns", "1.1.1.1"))
@@ -178,6 +180,9 @@ class LabVpnService : VpnService() {
         @Volatile var exitCheckedAt = 0L
         @Volatile var active = false
         @Volatile var status = "VPN выключен"
+        @Volatile var transitEnabled = false
+        @Volatile var transitRtt = 0.0
+        @Volatile var lastTransitEcho = 0L
         @Volatile var rtt = 0.0
         @Volatile var connection = "—"
         @Volatile var transport = "quic"
@@ -193,6 +198,7 @@ class LabVpnService : VpnService() {
         private var stats = TransportStats()
         private val events = ArrayDeque<String>()
         @Synchronized private fun resetMetrics(value:String) {
+            transitEnabled=false; transitRtt=0.0; lastTransitEcho=0
             exitIP=""; exitCheckedAt=0; exitState="Не проверен"
             transport=value; startedAt=android.os.SystemClock.elapsedRealtime()
             lastEcho=0; network="—"; txBytes=0; rxBytes=0; txRate=0.0; rxRate=0.0
@@ -209,6 +215,8 @@ class LabVpnService : VpnService() {
             Diagnostics.event("vpn", e)
             val kind = e.optString("event")
             when(kind) {
+                "transit_echo" -> { transitEnabled=true; transitRtt=e.optDouble("rtt_ms"); lastTransitEcho=android.os.SystemClock.elapsedRealtime(); return }
+                "transit_probe_failed" -> { lastTransitEcho=0; return }
                 "exit_ip_checking" -> { exitState="Проверяем…"; return }
                 "exit_ip" -> { exitIP=e.optString("ip"); exitCheckedAt=android.os.SystemClock.elapsedRealtime(); exitState="Проверен через туннель"; return }
                 "exit_ip_failed" -> { exitState="Проверка недоступна"; return }

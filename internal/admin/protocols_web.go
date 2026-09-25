@@ -71,6 +71,9 @@ func (w *Web) profile(u User) (Profile, error) {
 	p := w.Config.VPN
 	p.Version = 1
 	p.Kind = "vpn"
+	if w.Config.Transit != nil {
+		p.TransitEndpoint = w.Config.Transit.Endpoint
+	}
 	p.Name = u.Name
 	p.Certificate = u.Certificate
 	p.Key = u.Key

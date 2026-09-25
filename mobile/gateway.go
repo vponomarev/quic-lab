@@ -22,14 +22,15 @@ import (
 )
 
 type gatewayConfig struct {
-	DNS         string `json:"dns"`
-	AWGConfig   string `json:"awg_config"`
-	Transport   string `json:"transport"`
-	Endpoint    string `json:"endpoint"`
-	Hostname    string `json:"hostname"`
-	Certificate string `json:"certificate"`
-	Key         string `json:"key"`
-	CA          string `json:"ca"`
+	TransitEndpoint string `json:"transit_endpoint"`
+	DNS             string `json:"dns"`
+	AWGConfig       string `json:"awg_config"`
+	Transport       string `json:"transport"`
+	Endpoint        string `json:"endpoint"`
+	Hostname        string `json:"hostname"`
+	Certificate     string `json:"certificate"`
+	Key             string `json:"key"`
+	CA              string `json:"ca"`
 }
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
@@ -86,6 +87,9 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 		g.session++
 		g.emit("connected", map[string]any{"transport": "awg", "session": g.session, "detail": "AWG engine ready; waiting for tunnel probe"})
 		go g.awgHeartbeat(g.ctx, engine, g.cfg.Endpoint)
+		if g.cfg.TransitEndpoint != "" {
+			go g.transitHeartbeat(g.ctx, engine, g.cfg.TransitEndpoint)
+		}
 		return nil
 	}
 	if g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
@@ -123,6 +127,9 @@ func (g *Gateway) connect(binder SocketBinder) error {
 			g.cancel = nil
 			g.q = nil
 			return e
+		}
+		if g.cfg.TransitEndpoint != "" {
+			go g.transitHeartbeat(g.ctx, nil, g.cfg.TransitEndpoint)
 		}
 		return nil
 	}
@@ -175,6 +182,9 @@ func (g *Gateway) connect(binder SocketBinder) error {
 	}
 	g.emit("connected", map[string]any{"transport": "https", "session": g.session})
 	go g.heartbeat(g.ctx, m, s)
+	if g.cfg.TransitEndpoint != "" {
+		go g.transitHeartbeat(g.ctx, nil, g.cfg.TransitEndpoint)
+	}
 	return nil
 }
 func (g *Gateway) heartbeat(ctx context.Context, m *smux.Session, s gateway.Stream) {

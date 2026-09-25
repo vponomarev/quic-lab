@@ -26,6 +26,7 @@ internal object ProfileImport {
             require(p.optString("pin").isEmpty() || p.optString("pin").matches(Regex("[0-9a-fA-F]{64}"))) { "Некорректный fingerprint" }
         } else {
             val allowed = transports(p)
+            if (p.optString("transit_endpoint").isNotBlank()) endpoint("transit_endpoint")
             if ("quic" in allowed) endpoint("quic")
             if ("https" in allowed) endpoint("https")
             if ("awg" in allowed) mobile.Mobile.validateAWGConfig(p.getString("awg_config"))
@@ -68,6 +69,7 @@ internal object ProfileImport {
             val selected = allowed.first()
             val address = if (selected == "awg") awg!!.getString("endpoint") else p.getString(selected)
             check(VpnProfiles.preferences(context).edit()
+                .putString("transit_endpoint",p.optString("transit_endpoint"))
                 .putString("transport",selected).putString("endpoint",address)
                 .putStringSet("available_transports",allowed.toSet())
                 .putString("awg_endpoint",awg?.optString("endpoint") ?: "")

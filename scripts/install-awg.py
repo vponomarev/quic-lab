@@ -70,6 +70,8 @@ def main():
     previous = path.read_bytes()
     cfg = json.loads(previous)
     installer.owned(UNIT)
+    if cfg.get("transit") and not cfg.get("awg"):
+        p.error("Disable transit before first enabling ingress AWG, then re-enable transit to include its subnet")
     awg = dict(cfg.get("awg", dict(endpoint=cfg["vpn"]["hostname"]+":51820", address="10.77.0.1/24", dns="1.1.1.1", allowed_ips=["0.0.0.0/0"], interface="ql-awg0", mtu=1280)))
     if cfg.get("awg") and a.address and a.address != cfg["awg"]["address"]:
         p.error("Changing the address pool requires reissuing existing AWG profiles; choose it on first installation")

@@ -27,6 +27,9 @@ import (
 )
 
 type Server struct {
+	DialContext      func(context.Context, string, string) (net.Conn, error)
+	Probe            func(context.Context) error
+	Resolver         *net.Resolver
 	RegisterProtocol func(tls.ConnectionState, string, func()) (func(), error)
 	Track            func(tls.ConnectionState, string, func() string) (func(int, int), func())
 	Register         func(tls.ConnectionState, func()) (func(), error)
@@ -195,6 +198,21 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 	if ReadJSON(st, &req) != nil {
 		return
 	}
+	if req.Network == "transit-probe" {
+		if s.Probe == nil {
+			WriteJSON(st, Reply{Error: "transit disabled"})
+			return
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
+		e := s.Probe(probeCtx)
+		cancel()
+		if e != nil {
+			WriteJSON(st, Reply{Error: "transit gateway unavailable"})
+			return
+		}
+		WriteJSON(st, Reply{Session: id})
+		return
+	}
 	if req.Network == "echo" {
 		if WriteJSON(st, Reply{Session: id}) != nil {
 			return
@@ -210,6 +228,7 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 			if json.Unmarshal(scan.Bytes(), &f) != nil {
 				return
 			}
+
 			f.ConnectionID = id
 			if json.NewEncoder(st).Encode(f) != nil {
 				return
@@ -220,7 +239,11 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 	// still performs TLS and reads the response through its existing tunnel.
 	if req.Network == "exit-ip" {
 		resolveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		addresses, err := net.DefaultResolver.LookupIP(resolveCtx, "ip4", "api.ipify.org")
+		resolver := s.Resolver
+		if resolver == nil {
+			resolver = net.DefaultResolver
+		}
+		addresses, err := resolver.LookupIP(resolveCtx, "ip4", "api.ipify.org")
 		cancel()
 		if err != nil || len(addresses) == 0 {
 			WriteJSON(st, Reply{Error: "exit IP lookup unavailable"})
@@ -250,7 +273,11 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 	if req.Network == "dns" {
 		network = "udp4"
 	}
-	dst, e := (&net.Dialer{}).DialContext(dctx, network, req.Address)
+	dial := s.DialContext
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	dst, e := dial(dctx, network, req.Address)
 	if e != nil {
 		WriteJSON(st, Reply{Error: "destination unavailable"})
 		return
