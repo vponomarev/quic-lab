@@ -19,6 +19,7 @@ func (w *Web) statsScript(rw http.ResponseWriter, r *http.Request) {
 }
 
 type liveUserStats struct {
+	Name        string   `json:"name"`
 	ID          string   `json:"id"`
 	Connections []string `json:"connections"`
 	Last        string   `json:"last"`
@@ -30,9 +31,9 @@ func (w *Web) statsSnapshot() []liveUserStats {
 	users := w.Store.List()
 	out := make([]liveUserStats, 0, len(users))
 	for _, u := range users {
-		row := liveUserStats{ID: u.ID, Last: "Ещё не подключался", TX: u.Stats.TXText(), RX: u.Stats.RXText(), Connections: []string{}}
+		row := liveUserStats{ID: u.ID, Name: u.Name, Last: "Ещё не подключался", TX: u.Stats.TXText(), RX: u.Stats.RXText(), Connections: []string{}}
 		if !u.LastConnected.IsZero() {
-			row.Last = u.LastConnected.UTC().Format("02.01.2006 15:04:05") + " UTC\n" + u.LastTransport + "\n" + u.LastSource
+			row.Last = u.LastConnected.UTC().Format("02.01.2006 15:04:05") + " UTC\n" + u.LastTransport + " · " + u.LastSource
 		}
 		for _, c := range u.Stats.Connections {
 			row.Connections = append(row.Connections, c.Transport+"\n"+c.Source+"\nС "+c.Connected.UTC().Format("02.01 15:04:05")+" UTC")

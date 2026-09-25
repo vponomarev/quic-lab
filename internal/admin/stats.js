@@ -24,6 +24,9 @@
       users.forEach(user => {
         const row = rows.get(user.id);
         if (!row) { changed = true; return; }
+        row.querySelector('[data-stat="name"]').textContent = user.name;
+        const editor = row.querySelector('details.rename');
+        if (editor && !editor.open) editor.querySelector('input[name="name"]').value = user.name;
         const connections = row.querySelector('[data-stat="connections"]');
         lines(connections, user.connections.length ? 'Онлайн · ' + user.connections.length + '\n' + user.connections.join('\n\n') : 'Офлайн');
         connections.className = user.connections.length ? 'online' : 'muted';

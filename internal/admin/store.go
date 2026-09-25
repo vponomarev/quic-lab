@@ -197,6 +197,33 @@ func (s *Store) Create(name string) (User, error) {
 	}
 	return u, nil
 }
+
+// Rename changes only the display name; credentials and live tunnels remain valid.
+func (s *Store) Rename(id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.state.Users[id]
+	if !ok {
+		return errors.New("unknown user")
+	}
+	if len(name) == 0 || len(name) > 100 {
+		return errors.New("name must contain 1..100 bytes")
+	}
+	for otherID, user := range s.state.Users {
+		if otherID != id && user.Name == name {
+			return errors.New("name already exists")
+		}
+	}
+	updated := old
+	updated.Name = name
+	s.state.Users[id] = updated
+	if e := s.save(); e != nil {
+		s.state.Users[id] = old
+		return e
+	}
+	return nil
+}
+
 func (s *Store) List() []User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
