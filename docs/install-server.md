@@ -11,8 +11,8 @@
 Проверьте `sha256sum --ignore-missing -c SHA256SUMS`, затем распакуйте архив:
 
 ```sh
-tar xzf quic-lab-server-0.4.3-dev-linux-amd64.tar.gz
-cd quic-lab-server-0.4.3-dev-linux-amd64
+tar xzf quic-lab-server-0.4.4-dev-linux-amd64.tar.gz
+cd quic-lab-server-0.4.4-dev-linux-amd64
 sudo ./install-server.py quic.example.org
 ```
 
@@ -42,6 +42,38 @@ Echo; вход в админку позволяет выпускать mTLS-пр
 установке задайте, например, `--gateway-allow 192.168.50.0/24,1.1.1.1/32`.
 В дальнейшем редактируйте `/etc/quic-lab/server.env` и перезапускайте службу.
 Android-маршруты и выбор приложений задаются отдельно в клиенте.
+
+## Справка и свои порты
+
+`./install-server.py` без аргументов, а также `./install-server.py --help`
+выводят справку и завершаются успешно без установки и без требования sudo.
+
+```sh
+sudo ./install-server.py quic.example.org \
+  --echo-quic-port 4433 \
+  --vpn-quic-port 443 \
+  --mtls-port 9443
+```
+
+| Параметр | Назначение | По умолчанию при первой установке |
+| --- | --- | --- |
+| `--echo-quic-port` | Echo QUIC, UDP | 4433 |
+| `--vpn-quic-port` | VPN QUIC, UDP | 4434 |
+| `--mtls-port` | VPN HTTPS/mTLS, TCP | 8443 |
+
+Допустимы порты 1–65535. Два QUIC listener должны иметь разные UDP-порты.
+TCP mTLS не может занимать 80/443 nginx или 8081–8083 локальных backend.
+Одинаковый номер TCP и UDP допустим. Выбранный порт должен быть свободен от
+других процессов; в частности, UDP/443 может быть занят HTTP/3.
+Для порта ниже 1024 установщик добавляет службе CAP_NET_BIND_SERVICE.
+
+Порты записываются в `/etc/quic-lab/install.json`, systemd unit и адреса профилей
+в admin.json. Повторный запуск без этих параметров сохраняет выбор. Явный параметр
+меняет соответствующий порт и перезапускает сервер, сохраняя пользователей,
+ключи, пароль и остальные настройки. При неудачном запуске откатываются также
+admin.json и install.json. Новые QR-профили содержат новые адреса;
+уже импортированные на телефонах профили нужно обновить вручную или импортировать
+заново. Firewall установщик не меняет; в конце выводятся фактические порты.
 
 ## Если nginx уже слушает 80 и 443
 
@@ -105,7 +137,7 @@ sudo ./install-server.py quic.example.org \
 ### 3. Лаба должна жить на уже используемом домене
 
 Пример: основной сайт остаётся на `https://example.org/`, а админка лабы будет
-на `https://example.org/lab/`. Установщик 0.4.3-dev **не объединяет server-блоки**:
+на `https://example.org/lab/`. Установщик 0.4.4-dev **не объединяет server-блоки**:
 при обнаружении этого имени он завершится с сообщением
 `This domain already has an nginx site`. Параметра `--skip-nginx` в этой версии нет.
 
@@ -251,7 +283,7 @@ APK появляется под QR на `/lab/`. Порты 8081–8083 дост
 На машине сборки с Go из go.mod и Python 3:
 
 ```sh
-python3 scripts/build-server-release.py --version 0.4.3-dev
+python3 scripts/build-server-release.py --version 0.4.4-dev
 ```
 
 Архивы обеих архитектур и SHA256SUMS появляются в `artifacts/server-release/`.
@@ -292,7 +324,6 @@ TCP/443 nginx. VPN HTTPS использует отдельный TCP/8443: кл�
 
 QUIC использует UDP: UDP/443 может сосуществовать с HTTPS на TCP/443, если этот
 UDP-порт свободен (например, его не занял HTTP/3 в nginx). Для QUIC VPN можно
-вручную изменить listener и адрес в выдаваемом профиле на UDP/443; в поставке
-по умолчанию остаётся UDP/4434. DynamicUser-службе для низкого порта потребуется
-`AmbientCapabilities=CAP_NET_BIND_SERVICE` в systemd drop-in. Echo остаётся на
+задать `--vpn-quic-port 443`; по умолчанию остаётся UDP/4434.
+Право привязки к низкому порту установщик добавляет автоматически. Echo остаётся на
 отдельном UDP/4433. Установщик не меняет действующие listener других приложений.

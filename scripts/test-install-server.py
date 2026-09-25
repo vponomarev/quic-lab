@@ -2,6 +2,9 @@
 """Unit tests; run on Linux (installer uses fcntl)."""
 import importlib.util
 import tempfile
+import contextlib
+import io
+from types import SimpleNamespace
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -27,6 +30,39 @@ class InstallerTests(unittest.TestCase):
                 i.apply_nginx("# test")
                 self.assertEqual([c.args for c in run.call_args_list], [("nginx", "-t"), ("systemctl", "reload", "nginx")])
                 self.assertTrue(enabled.is_symlink())
+
+    def test_help_without_arguments_does_not_require_root_or_install(self):
+        with patch.object(i.sys, "argv", ["install-server.py"]), patch.object(i.os, "geteuid", side_effect=AssertionError("must not check root")), patch.object(i, "install") as install, contextlib.redirect_stdout(io.StringIO()) as out:
+            i.main()
+            self.assertIn("--vpn-quic-port", out.getvalue())
+            self.assertIn("--mtls-port", out.getvalue())
+            install.assert_not_called()
+
+    def test_custom_ports_profiles_unit_and_persistence(self):
+        ports = i.resolve_ports(SimpleNamespace(vpn_quic_port=443, mtls_port=9443, echo_quic_port=14433))
+        cfg = i.admin_config("lab.example.org", ports)
+        self.assertEqual(cfg["echo"]["endpoint"], "lab.example.org:14433")
+        self.assertEqual(cfg["vpn"]["quic"], "lab.example.org:443")
+        self.assertEqual(cfg["vpn"]["https"], "lab.example.org:9443")
+        unit = i.unit_config("/cert.pem", "/key.pem", ports)
+        self.assertIn("-gateway-quic 0.0.0.0:443", unit)
+        self.assertIn("-gateway-https 0.0.0.0:9443", unit)
+        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE", unit)
+        self.assertEqual(i.resolve_ports(SimpleNamespace(), {"ports": ports}, cfg), ports)
+        self.assertEqual(i.resolve_ports(SimpleNamespace(), None, cfg), ports)
+        self.assertEqual(i.resolve_ports(SimpleNamespace()), i.DEFAULT_PORTS)
+        self.assertNotIn("AmbientCapabilities", i.unit_config("/cert", "/key"))
+        self.assertEqual(i.resolve_ports(SimpleNamespace(mtls_port=10443), {"ports": ports}, cfg)["mtls_port"], 10443)
+
+    def test_port_validation(self):
+        for value in ("0", "65536", "-1", "https", "443;false"):
+            with self.assertRaises(Exception):
+                i.port_number(value)
+        for args in (SimpleNamespace(vpn_quic_port=4433), SimpleNamespace(mtls_port=443), SimpleNamespace(mtls_port=8083)):
+            with self.assertRaises(ValueError):
+                i.resolve_ports(args)
+        # TCP and UDP can share a numeric port.
+        self.assertEqual(i.resolve_ports(SimpleNamespace(mtls_port=4434))["mtls_port"], 4434)
 
     def test_domain_validation(self):
         self.assertEqual(i.domain_name("Lab.Example.org."), "lab.example.org")

@@ -45,8 +45,8 @@ def run(*args, **kwargs):
                 raise subprocess.CalledProcessError(1, args)
             state = json.loads((i.CONFIG / "install.json").read_text())
             Path("/var/lib/quic-lab").mkdir(exist_ok=True)
-            cmd = ["/opt/quic-lab/quic-lab-server", "-listen", "0.0.0.0:4433", "-web-listen", "127.0.0.1:8081",
-                   "-gateway-quic", "0.0.0.0:4434", "-gateway-https", "0.0.0.0:8443", "-gateway-allow", "0.0.0.0/0",
+            cmd = ["/opt/quic-lab/quic-lab-server", "-listen", f"0.0.0.0:{state['ports']['echo_quic_port']}", "-web-listen", "127.0.0.1:8081",
+                   "-gateway-quic", f"0.0.0.0:{state['ports']['vpn_quic_port']}", "-gateway-https", f"0.0.0.0:{state['ports']['mtls_port']}", "-gateway-allow", "0.0.0.0/0",
                    "-demo-listen", "127.0.0.1:8082", "-cert", state["cert"], "-key", state["key"],
                    "-admin-config", "/etc/quic-lab/admin.json"]
             server = subprocess.Popen(cmd, stdout=open("/tmp/server.log", "a"), stderr=subprocess.STDOUT)
@@ -76,7 +76,7 @@ other = Path("/etc/nginx/sites-available/other")
 other.write_text("server { listen 80; server_name other.example.org; return 200 'other'; }\n")
 Path("/etc/nginx/sites-enabled/other").symlink_to(other)
 original_other = other.read_bytes()
-sys.argv = ["install-server.py", "lab.example.org", "--binary", "/test/quic-lab-server", "--cert", "/test/tls/cert.pem", "--key", "/test/tls/key.pem"]
+sys.argv = ["install-server.py", "lab.example.org", "--binary", "/test/quic-lab-server", "--cert", "/test/tls/cert.pem", "--key", "/test/tls/key.pem", "--echo-quic-port", "14433", "--vpn-quic-port", "14434", "--mtls-port", "18443"]
 try:
     with contextlib.redirect_stdout(io.StringIO()) as output:
         i.main()
@@ -84,6 +84,10 @@ try:
     assert cfg["password"] in output.getvalue() and cfg["username"] in output.getvalue()
     assert (i.CONFIG / "admin.json").stat().st_mode & 0o777 == 0o600
     assert (i.CONFIG / "admin-credentials.txt").stat().st_mode & 0o777 == 0o600
+    assert cfg["echo"]["endpoint"].endswith(":14433")
+    assert cfg["vpn"]["quic"].endswith(":14434")
+    assert cfg["vpn"]["https"].endswith(":18443")
+    state_before = (i.CONFIG / "install.json").read_bytes()
     identity = Path("/var/lib/quic-lab/identities.json").read_bytes()
     with urllib.request.urlopen("http://127.0.0.1:8083/", timeout=3) as response:
         assert response.status == 200
@@ -98,6 +102,7 @@ try:
     assert Path("/var/lib/quic-lab/identities.json").read_bytes() == identity
     assert other.read_bytes() == original_other
     # Roll back a failed service restart, keeping identity/config.
+    sys.argv += ["--vpn-quic-port", "24434", "--mtls-port", "28443"]
     fail_next_start = True
     try:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -107,9 +112,10 @@ try:
     else:
         raise AssertionError("Expected a simulated restart failure")
     assert server and server.poll() is None
+    assert (i.CONFIG / "install.json").read_bytes() == state_before
     assert (i.CONFIG / "admin.json").read_bytes() == before
     assert Path("/var/lib/quic-lab/identities.json").read_bytes() == identity
-    print("PASS: fresh install, secrets/modes, HTTPS site, unit syntax, repeat install, preserved CA/config/other site, rollback")
+    print("PASS: fresh install, secrets/modes, HTTPS site, unit syntax, repeat install, preserved CA/config/ports/other site, port-change rollback")
 finally:
     if server:
         server.terminate()

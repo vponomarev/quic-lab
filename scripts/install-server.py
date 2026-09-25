@@ -70,12 +70,44 @@ def certificate_path(value):
     return value
 
 
-def admin_config(domain):
+DEFAULT_PORTS = dict(echo_quic_port=4433, vpn_quic_port=4434, mtls_port=8443)
+
+
+def port_number(value):
+    try:
+        number = int(value)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError("Port must be an integer in 1..65535")
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError("Port must be in 1..65535")
+    return number
+
+
+def resolve_ports(args, state=None, cfg=None):
+    ports = dict(DEFAULT_PORTS)
+    # Older installations did not record ports in install.json.
+    if cfg:
+        for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
+            ports[name] = port_number(cfg[section][field].rsplit(":", 1)[1])
+    ports.update((state or {}).get("ports", {}))
+    for name in DEFAULT_PORTS:
+        if getattr(args, name, None) is not None:
+            ports[name] = getattr(args, name)
+        ports[name] = port_number(ports[name])
+    if ports["echo_quic_port"] == ports["vpn_quic_port"]:
+        raise ValueError("Echo QUIC and VPN QUIC must use different UDP ports")
+    if ports["mtls_port"] in (80, 443, 8081, 8082, 8083):
+        raise ValueError("mTLS TCP port conflicts with nginx or a loopback backend (80, 443, 8081-8083)")
+    return ports
+
+
+def admin_config(domain, ports=None):
+    ports = ports or DEFAULT_PORTS
     return dict(listen="127.0.0.1:8083", public_url=f"https://{domain}/lab/",
                 username="admin-" + secrets.token_hex(3), password=secrets.token_urlsafe(24),
                 data_dir="/var/lib/quic-lab", apk_path="/var/lib/quic-lab/downloads/quic-lab.apk",
-                echo=dict(endpoint=f"{domain}:4433", hostname=domain),
-                vpn=dict(quic=f"{domain}:4434", https=f"{domain}:8443", hostname=domain, dns="1.1.1.1", mode=0))
+                echo=dict(endpoint=f"{domain}:{ports['echo_quic_port']}", hostname=domain),
+                vpn=dict(quic=f"{domain}:{ports['vpn_quic_port']}", https=f"{domain}:{ports['mtls_port']}", hostname=domain, dns="1.1.1.1", mode=0))
 
 
 def nginx_config(domain, cert=None, key=None):
@@ -130,7 +162,9 @@ server {{
 """
 
 
-def unit_config(cert, key):
+def unit_config(cert, key, ports=None):
+    ports = ports or DEFAULT_PORTS
+    capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" if min(ports.values()) < 1024 else ""
     return f"""{MARKER}
 [Unit]
 Description=QUIC Lab echo, mTLS gateway and admin
@@ -140,7 +174,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 DynamicUser=yes
-WorkingDirectory=/opt/quic-lab
+{capability}WorkingDirectory=/opt/quic-lab
 StateDirectory=quic-lab
 StateDirectoryMode=0700
 UMask=0077
@@ -148,7 +182,7 @@ LoadCredential=cert.pem:{cert}
 LoadCredential=key.pem:{key}
 LoadCredential=admin.json:/etc/quic-lab/admin.json
 EnvironmentFile=/etc/quic-lab/server.env
-ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:4433 -web-listen 127.0.0.1:8081 -gateway-quic 0.0.0.0:4434 -gateway-https 0.0.0.0:8443 -gateway-allow ${{GATEWAY_ALLOW}} -demo-listen 127.0.0.1:8082 -cert ${{CREDENTIALS_DIRECTORY}}/cert.pem -key ${{CREDENTIALS_DIRECTORY}}/key.pem -admin-config ${{CREDENTIALS_DIRECTORY}}/admin.json
+ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:{ports["echo_quic_port"]} -web-listen 127.0.0.1:8081 -gateway-quic 0.0.0.0:{ports["vpn_quic_port"]} -gateway-https 0.0.0.0:{ports["mtls_port"]} -gateway-allow ${{GATEWAY_ALLOW}} -demo-listen 127.0.0.1:8082 -cert ${{CREDENTIALS_DIRECTORY}}/cert.pem -key ${{CREDENTIALS_DIRECTORY}}/key.pem -admin-config ${{CREDENTIALS_DIRECTORY}}/admin.json
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=yes
@@ -201,7 +235,7 @@ def missing_packages(custom_cert):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog="Example: sudo ./install-server.py quic.example.org --vpn-quic-port 443 --mtls-port 9443. Omitted ports retain saved settings on updates.")
     parser.add_argument("domain", type=domain_name)
     parser.add_argument("--email", help="Optional Let's Encrypt account email")
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-server")
@@ -209,6 +243,12 @@ def main():
     parser.add_argument("--gateway-allow", type=cidrs, help="Initial allowed IPv4 CIDRs; default 0.0.0.0/0. Existing policy is preserved.")
     parser.add_argument("--cert", help="Existing server PEM chain; use together with --key")
     parser.add_argument("--key", help="Existing server PEM key; skips certificate issuance")
+    parser.add_argument("--echo-quic-port", type=port_number, help="Echo UDP port (initial default: 4433)")
+    parser.add_argument("--vpn-quic-port", type=port_number, help="VPN QUIC UDP port (initial default: 4434)")
+    parser.add_argument("--mtls-port", type=port_number, help="VPN HTTPS/mTLS TCP port (initial default: 8443)")
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("Run with sudo/root.")
@@ -250,10 +290,14 @@ def install(args):
     # Verify architecture before changing system files. -h prints flags, not credentials.
     run(str(args.binary.resolve()), "-h", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     existing = CONFIG / "admin.json"
+    old_config = existing.read_bytes() if existing.exists() else None
+    cfg = None
     if existing.exists():
         cfg = json.loads(existing.read_text())
         if cfg.get("public_url") != f"https://{args.domain}/lab/" or cfg.get("listen") != "127.0.0.1:8083" or cfg.get("data_dir") != "/var/lib/quic-lab":
             raise RuntimeError("Existing admin.json uses a different layout; migrate manually.")
+    ports = resolve_ports(args, state, cfg)
+    old_state = state_file.read_bytes() if state_file.exists() else None
     env_file = CONFIG / "server.env"
     if args.gateway_allow and env_file.exists():
         raise RuntimeError("Policy already exists; edit /etc/quic-lab/server.env and restart the service instead.")
@@ -275,7 +319,7 @@ def install(args):
     CONFIG.chmod(0o700)
     OPT.mkdir(mode=0o755, parents=True, exist_ok=True)
     if not existing.exists():
-        cfg = admin_config(args.domain)
+        cfg = admin_config(args.domain, ports)
         atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
         credentials = f"URL: {cfg['public_url']}login\nLogin: {cfg['username']}\nPassword: {cfg['password']}\n"
         atomic(CONFIG / "admin-credentials.txt", credentials, 0o600)
@@ -284,7 +328,6 @@ def install(args):
         print("Existing admin configuration and password preserved.", flush=True)
     if not env_file.exists():
         atomic(env_file, f"GATEWAY_ALLOW={args.gateway_allow or '0.0.0.0/0'}\n", 0o600)
-    atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert), indent=2) + "\n", 0o600)
     Path(WEBROOT).mkdir(mode=0o755, parents=True, exist_ok=True)
     if not custom_cert:
         if not Path(cert).exists() or not Path(key).exists():
@@ -312,8 +355,15 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
     if old_binary is not None:
         atomic(OPT / "quic-lab-server.previous", old_binary, 0o755)
     atomic(binary, args.binary.read_bytes(), 0o755)
-    atomic(UNIT, unit_config(cert, key))
+    atomic(UNIT, unit_config(cert, key, ports))
     try:
+        if old_config is not None:
+            for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
+                # Keep custom hostnames, account, routing and all other settings.
+                host = cfg[section][field].rsplit(":", 1)[0]
+                cfg[section][field] = f"{host}:{ports[name]}"
+            atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
+        atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports), indent=2) + "\n", 0o600)
         run("systemctl", "daemon-reload")
         run("systemctl", "enable", "quic-lab")
         run("systemctl", "restart", "quic-lab")
@@ -332,6 +382,12 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
             raise RuntimeError("Server did not become healthy; inspect journalctl -u quic-lab")
     except BaseException:
         run("systemctl", "stop", "quic-lab")
+        if old_config is not None:
+            atomic(existing, old_config, 0o600)
+        if old_state is not None:
+            atomic(state_file, old_state, 0o600)
+        else:
+            state_file.unlink(missing_ok=True)
         if old_binary is not None and old_unit is not None:
             atomic(binary, old_binary, 0o755)
             atomic(UNIT, old_unit)
@@ -346,7 +402,7 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
         atomic(downloads / "quic-lab.apk", args.apk.read_bytes())
     print(f"Ready: https://{args.domain}/lab/\nConfig: /etc/quic-lab/admin.json\n"
           "Credentials: /etc/quic-lab/admin-credentials.txt (first installation)\n"
-          "Allow inbound TCP 80,443,8443 and UDP 4433,4434 in host/cloud firewalls.\n"
+          f"Allow inbound TCP 80,443,{ports['mtls_port']} and UDP {ports['echo_quic_port']},{ports['vpn_quic_port']} in host/cloud firewalls.\n"
           "Firewall rules were not changed. Updates restart active sessions.")
 
 
