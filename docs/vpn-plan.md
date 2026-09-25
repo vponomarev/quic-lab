@@ -2,7 +2,7 @@
 
 VPN дополняет существующий echo-режим; его UI, метрики и сервер сохраняются.
 
-- Android 12+, IPv4; отдельный foreground VpnService и экран.
+- Android 11+, IPv4; отдельный foreground VpnService и экран.
 - QUIC streams / HTTPS WebSocket + smux v2; общий протокол прокси.
 - all apps / only selected / exclude selected / network routing (IPv4 CIDR).
 - mTLS: CA клиентов на exit node; PKCS#12 импорт на Android; gateway в одном процессе с echo, на отдельных listeners.

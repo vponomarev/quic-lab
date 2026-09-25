@@ -2,7 +2,7 @@
 
 Учебный Android-клиент и Go-сервер для сравнения **QUIC stream** и
 **WebSocket поверх HTTPS / HTTP/1.1 / TLS / TCP** при смене Wi-Fi и мобильной сети.
-Android 12+ (API 31), ARM64 и x86_64. Интерфейс на русском языке.
+Android 11+ (API 30), ARM64 и x86_64. Интерфейс на русском языке.
 
 ## VPN gateway (разработка)
 
@@ -94,7 +94,7 @@ mkdir -p bin android/app/libs
 go build -trimpath -o bin/gomobile golang.org/x/mobile/cmd/gomobile
 go build -trimpath -o bin/gobind golang.org/x/mobile/cmd/gobind
 export PATH="$PWD/bin:$PATH"
-gomobile bind -trimpath -target=android/arm64,android/amd64 -androidapi=31 \
+gomobile bind -trimpath -target=android/arm64,android/amd64 -androidapi=30 \
   '-ldflags=-s -w -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384' \
   -o android/app/libs/quiclab.aar ./mobile
 sh android/gradlew -p android assembleDebug lintDebug

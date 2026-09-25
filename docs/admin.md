@@ -126,7 +126,7 @@ TLS/QUIC/WebSocket-заголовков и повторных передач. Э
 Кнопка «Показать QR для скачивания» раскрывает отдельный QR прямой ссылки на APK;
 по умолчанию он скрыт. Загрузка `/lab/download/quic-lab.apk` публичная, без входа.
 Обслуживается только заданный файл, каталог с идентичностями не публикуется.
-APK рассчитан на Android 12+ и 64-битные ARM64 / x86-64 устройства.
+APK рассчитан на Android 11+ и 64-битные ARM64 / x86-64 устройства.
 
 Соберите APK через `scripts/build-android.ps1 -BuildApk`, скопируйте
 `android/app/build/outputs/apk/debug/app-debug.apk` и `scripts/publish-apk.sh` на сервер,

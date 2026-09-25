@@ -4,10 +4,10 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "ru.vpnc.quiclab"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0-dev"
+        versionCode = 5
+        versionName = "0.4.1-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {

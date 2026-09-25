@@ -7,6 +7,7 @@ import android.location.LocationManager
 import android.net.*
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -33,16 +34,19 @@ internal class RadioMonitor(private val context: Context,
     private fun id(n: Long) = if (n == Long.MAX_VALUE || n < 0) "—" else n.toString()
 
     fun start() {
-        val cb = object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                val info = caps.transportInfo as? WifiInfo ?: return
-                handler.post { if (!closed) showWifi(info) }
+        // Android 11 uses the existing WifiManager polling below.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val cb = object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    val info = caps.transportInfo as? WifiInfo ?: return
+                    handler.post { if (!closed) showWifi(info) }
+                }
             }
+            try {
+                cm.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), cb)
+                callback = cb
+            } catch (_: SecurityException) { }
         }
-        try {
-            cm.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), cb)
-            callback = cb
-        } catch (_: SecurityException) { }
         handler.post(poll)
     }
 
