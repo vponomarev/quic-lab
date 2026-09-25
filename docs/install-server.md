@@ -43,6 +43,143 @@ Echo; вход в админку позволяет выпускать mTLS-пр
 В дальнейшем редактируйте `/etc/quic-lab/server.env` и перезапускайте службу.
 Android-маршруты и выбор приложений задаются отдельно в клиенте.
 
+## Если nginx уже слушает 80 и 443
+
+Занятые **существующим системным nginx** порты 80/443 — нормальный сценарий.
+Установщик добавляет виртуальный хост в тот же nginx и выполняет проверку
+конфигурации и reload. Запускать второй nginx или останавливать первый не нужно.
+HTTP выбирает сайт по Host, HTTPS — сертификат по SNI и далее сайт по запросу:
+[обработка запросов nginx](https://nginx.org/en/docs/http/request_processing.html),
+[HTTPS и SNI](https://nginx.org/en/docs/http/configuring_https_servers.html).
+
+| Ситуация | Как установить |
+| --- | --- |
+| nginx обслуживает другие домены; для лабы есть новый поддомен | Обычный запуск установщика, сценарий 1 |
+| Новый поддомен уже покрыт вашим сертификатом | Установщик с `--cert` и `--key`, сценарий 2 |
+| Этот DNS-домен уже есть в `server_name` существующего сайта | Отдельный поддомен либо ручное добавление locations, сценарий 3 |
+| 80/443 заняты nginx в Docker, ingress или другим reverse proxy | Ручная интеграция с существующим proxy, сценарий 4 |
+
+### 1. На сервере уже есть сайты, лаба получает отдельный поддомен
+
+Например, `www.example.org` уже работает, а для лабы создаётся
+`quic.example.org`, направленный на тот же IP:
+
+```sh
+sudo nginx -t
+sudo ss -lntup
+sudo ./install-server.py quic.example.org --email admin@example.org
+```
+
+В существующих конфигурациях не должно быть отдельного `server_name quic.example.org`.
+Установщик создаст `/etc/nginx/sites-available/quic-lab` и ссылку в `sites-enabled`,
+добавит HTTP/HTTPS server-блоки только для нового имени. Сайты других доменов
+и `default_server` остаются на месте. Let's Encrypt проверит новый домен через
+`/.well-known/acme-challenge/` на уже работающем nginx (webroot).
+
+Этот вариант рассчитан на пакетный nginx с подключённым `sites-enabled/*`
+и службой `nginx.service`. Если nginx собран вручную или использует иной основной
+конфиг, сначала согласуйте его с шаблоном либо используйте ручной сценарий.
+Если сайты привязаны к конкретному IP, используют `proxy_protocol` или другие
+особые параметры `listen`, wildcard-шаблон установщика тоже нужно адаптировать
+вручную: совпадение порта само по себе не гарантирует совместимость этих параметров.
+
+### 2. nginx уже работает, сертификат для нового имени тоже есть
+
+Если существующий wildcard/SAN-сертификат покрывает `quic.example.org`, используйте
+его PEM-файлы. DNS-имя всё равно должно быть новым для конфигурации nginx:
+
+```sh
+sudo ./install-server.py quic.example.org \
+  --cert /etc/letsencrypt/live/example.org/fullchain.pem \
+  --key /etc/letsencrypt/live/example.org/privkey.pem
+```
+
+Новый сертификат не запрашивается; существующий инструмент продления сохраняется.
+Добавьте к его deploy hook проверку/reload nginx и перезапуск `quic-lab`, чтобы
+служба получила обновлённые TLS credentials. `--cert`/`--key` не разрешают
+перезаписывать существующий server-блок с тем же DNS-именем.
+
+### 3. Лаба должна жить на уже используемом домене
+
+Пример: основной сайт остаётся на `https://example.org/`, а админка лабы будет
+на `https://example.org/lab/`. Установщик 0.4.2-dev **не объединяет server-блоки**:
+при обнаружении этого имени он завершится с сообщением
+`This domain already has an nginx site`. Параметра `--skip-nginx` в этой версии нет.
+
+Самый простой автоматический вариант — выделить `quic.example.org` и использовать
+сценарий 1. Если нужен именно общий домен, выполните ручную настройку backend по
+[инструкции VPN](vpn-gateway.md#сервер) и [инструкции админки](admin.md#настройка):
+установите бинарник и systemd-службу, задайте сертификат текущего сайта и admin.json.
+Используйте `public_url: https://example.org/lab/`, `hostname: example.org`, echo
+`example.org:4433`, VPN QUIC `example.org:4434`, VPN HTTPS `example.org:8443`.
+Генерация логина/пароля установщиком в этом ручном сценарии не выполняется.
+HTTP backend должны слушать только 127.0.0.1:8081, 8082 и 8083 соответственно.
+Не выполняйте шаг создания второго nginx server-блока из базовой инструкции.
+
+После запуска backend добавьте следующие locations **в уже существующий HTTPS
+server-блок**, сохранив его `listen`, `server_name`, сертификат и обработку `/`:
+
+```nginx
+location = /lab { return 302 /lab/; }
+location ^~ /lab/ {
+    proxy_pass http://127.0.0.1:8083/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_read_timeout 60s;
+    proxy_buffering off;
+}
+location = /echo {
+    proxy_pass http://127.0.0.1:8081;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 95s;
+    proxy_send_timeout 95s;
+    proxy_buffering off;
+}
+location ^~ /vpn-demo/ {
+    proxy_pass http://127.0.0.1:8082/;
+    proxy_set_header Host $host;
+    proxy_buffering off;
+}
+```
+
+Эти пути должны быть свободны: существующие locations для них нужно объединить
+вручную. `^~` защищает маршруты лабы от общих regex-правил сайта, например для
+статических файлов. Завершающий `/` в `proxy_pass` для `/lab/` и `/vpn-demo/` важен:
+backend получает путь без внешнего префикса. Заголовки Host и X-Forwarded-Proto
+нужны в том числе для проверки Origin админкой; иначе вход может дать `Invalid origin`.
+
+```sh
+sudo nginx -t && sudo systemctl reload nginx
+curl https://example.org/lab/
+```
+
+HTTP/80 и продление сертификата сайта остаются в его существующей схеме.
+После продления сертификата перезапускайте также `quic-lab`.
+VPN HTTPS на TCP/8443 по-прежнему завершает TLS непосредственно в Go-сервере:
+клиентский mTLS нельзя заменить обычным HTTP `proxy_pass` из nginx.
+UDP/4433 и UDP/4434 также должны доходить до Go-сервера напрямую.
+
+### 4. nginx находится в Docker или перед сервером стоит другой proxy
+
+Автоматический установщик управляет **системным** nginx. Если 80/443 опубликованы
+контейнером, установка ещё одного nginx на хосте создаст конфликт портов.
+В этом случае используйте ручную настройку backend и добавьте маршруты из сценария 3
+в существующий reverse proxy. Для разных сетевых пространств `127.0.0.1` указывает
+на разные узлы: proxy должен иметь доступ к backend через подходящий приватный адрес.
+Админка сервера требует loopback listener; используйте общий network namespace
+или локальный промежуточный proxy, не открывайте её напрямую наружу.
+
+На внешнем proxy сохраняйте исходный Host, передавайте X-Forwarded-Proto=https и
+поддерживайте WebSocket Upgrade. Сертификат нужного DNS-имени должен быть доступен
+также Go-серверу для QUIC и прямого mTLS listener на TCP/8443. Маршрутизация
+UDP/4433, UDP/4434 и TCP/8443 на него настраивается отдельно от HTTPS-сайта.
+
 ## Уже имеющийся сертификат
 
 ```sh
