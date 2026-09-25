@@ -57,14 +57,14 @@ internal object Diagnostics {
 
     @Synchronized fun event(source: String, event: JSONObject) {
         val kind = event.optString("event")
-        if (kind in listOf("echo", "traffic")) return
-        if (kind in listOf("standby_ready", "standby_unavailable", "probe_unavailable")) {
+        if (kind in listOf("echo", "transit_echo")) return
+        if (kind in listOf("traffic", "udp_rejected", "standby_ready", "standby_unavailable", "probe_unavailable")) {
             val routineKey="$source/$kind"
             val time=SystemClock.elapsedRealtime()
             if (time-(routineAt[routineKey] ?: -30000L)<30000) return
             routineAt[routineKey]=time
         }
-        val fields = listOf("detail", "error", "ip", "connection_id", "local", "remote", "transport", "key")
+        val fields = listOf("detail", "error", "ip", "connection_id", "local", "remote", "transport", "key", "network", "destination", "up", "down", "tcp_flows", "udp_flows", "udp_tx", "udp_rx", "udp_rejected", "datagram_drops")
             .filter { event.has(it) && it != "key" }
             .joinToString(" ") { "$it=${sanitize(event.optString(it))}" }
         entries.addLast("${Instant.now()} +${SystemClock.elapsedRealtime()}ms ${sanitize(source)} ${sanitize(kind)} $fields".take(1400))
@@ -107,6 +107,7 @@ internal object Diagnostics {
             appendLine("RTT=${LabVpnService.rtt}ms; last reply age=${if(LabVpnService.lastEcho>0) now-LabVpnService.lastEcho else -1}ms")
             if (LabVpnService.transitEnabled) appendLine("Transit RTT=${LabVpnService.transitRtt}ms; last reply age=${if(LabVpnService.lastTransitEcho>0) now-LabVpnService.lastTransitEcho else -1}ms")
             appendLine(LabVpnService.quality(now))
+            appendLine(LabVpnService.flowSummary)
             appendLine("TX=${LabVpnService.txBytes}; RX=${LabVpnService.rxBytes}; TX/s=${LabVpnService.txRate}; RX/s=${LabVpnService.rxRate}")
             appendLine("Exit IP=${LabVpnService.exitIP}; ${LabVpnService.exitState}; check age=${if(LabVpnService.exitCheckedAt>0) now-LabVpnService.exitCheckedAt else -1}ms")
             appendLine("Networks: ${networks.joinToString("; ")}")

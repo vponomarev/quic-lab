@@ -145,7 +145,7 @@ class MainActivity : Activity() {
             startService(android.content.Intent(this,LabVpnService::class.java).setAction("exit-ip"))
         }
         vpnCard.addView(exitRefresh)
-        vpnCard.addView(text("TX ↑ отправка · RX ↓ приём. Данные TCP/DNS внутри туннеля; без keep-alive и шифрования. Средняя скорость за ~1 с.",11f,muted))
+        vpnCard.addView(text("TX ↑ отправка · RX ↓ приём. Данные TCP/UDP внутри туннеля; без keep-alive и шифрования. Средняя скорость за ~1 с.",11f,muted))
         vpnCard.visibility=View.GONE
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         panel.addView(row)
@@ -390,7 +390,7 @@ class MainActivity : Activity() {
                 val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0 && time-LabVpnService.lastTransitEcho<3500) "%.0f".format(LabVpnService.transitRtt) else "—"
                 val rtt=if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит" else "$localRtt мс"
                 val transport=LabVpnService.transport.uppercase()
-                vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}"
+                vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}\n${LabVpnService.flowSummary}"
                 vpnExit.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
                 exitRefresh.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
                 exitRefresh.isEnabled=LabVpnService.active

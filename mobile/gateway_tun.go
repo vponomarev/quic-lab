@@ -56,7 +56,14 @@ func (g *Gateway) Attach(fd int) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				g.emit("traffic", map[string]any{"tx_bytes": h.tx.Load(), "rx_bytes": h.rx.Load()})
+				g.mu.Lock()
+				m := g.datagrams
+				g.mu.Unlock()
+				var drops int64
+				if m != nil {
+					drops = m.Drops.Load()
+				}
+				g.emit("traffic", map[string]any{"tx_bytes": h.tx.Load(), "rx_bytes": h.rx.Load(), "tcp_flows": h.tcpFlows.Load(), "udp_flows": h.udpFlows.Load(), "udp_rejected": h.udpRejected.Load(), "udp_tx": h.udpTx.Load(), "udp_rx": h.udpRx.Load(), "datagram_drops": drops})
 			}
 		}
 	}()
@@ -80,13 +87,14 @@ func (g *Gateway) Attach(fd int) error {
 }
 
 type tunHandler struct {
-	tx, rx atomic.Int64
-	mu     sync.Mutex
-	closed bool
-	g      *Gateway
-	ctx    context.Context
-	slots  chan struct{}
-	wg     sync.WaitGroup
+	tcpFlows, udpFlows, udpRejected, udpTx, udpRx atomic.Int64
+	tx, rx                                        atomic.Int64
+	mu                                            sync.Mutex
+	closed                                        bool
+	g                                             *Gateway
+	ctx                                           context.Context
+	slots                                         chan struct{}
+	wg                                            sync.WaitGroup
 }
 
 func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
@@ -118,17 +126,20 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 			h.g.emit("flow_failed", map[string]any{"destination": dst, "error": e.Error()})
 			return
 		}
-		h.g.emit("flow_open", map[string]any{"destination": dst})
+		h.tcpFlows.Add(1)
+		h.g.emit("flow_open", map[string]any{"network": "tcp", "destination": dst})
 		up, down := gateway.Relay(h.ctx, trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}, c)
-		h.g.emit("flow_closed", map[string]any{"destination": dst, "up": up, "down": down})
+		h.g.emit("flow_closed", map[string]any{"network": "tcp", "destination": dst, "up": up, "down": down})
 	}()
 }
 
-// QUIC/HTTPS support DNS datagrams; AWG can carry arbitrary IPv4 UDP.
+// QUIC DATAGRAM and AWG preserve UDP; HTTPS and older QUIC servers support DNS only.
 func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 	id := c.ID()
 	backend := h.g.datagramBackend()
 	if backend == nil && id.LocalPort != 53 {
+		h.udpRejected.Add(1)
+		h.g.emit("udp_rejected", map[string]any{"network": "udp", "destination": net.JoinHostPort(id.LocalAddress.String(), strconv.Itoa(int(id.LocalPort))), "detail": "transport does not support arbitrary UDP"})
 		c.Close()
 		return
 	}
@@ -161,6 +172,7 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 		if e != nil {
 			return
 		}
+		h.udpFlows.Add(1)
 		s = trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}
 		defer s.Close()
 		stop := context.AfterFunc(h.ctx, func() { c.Close(); s.Close() })
@@ -176,10 +188,12 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 			if gateway.WritePacket(s, b[:n]) != nil {
 				return
 			}
+			h.udpTx.Add(1)
 			reply, e := gateway.ReadPacket(s, 4096)
 			if e != nil {
 				return
 			}
+			h.udpRx.Add(1)
 			if _, e = c.WriteTo(reply, from); e != nil {
 				return
 			}
@@ -195,8 +209,12 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 	out, e := d.DialContext(ctx, "udp4", dst)
 	cancel()
 	if e != nil {
+		h.g.emit("flow_failed", map[string]any{"network": "udp", "destination": dst, "error": e.Error()})
 		return
 	}
+	h.udpFlows.Add(1)
+	h.g.emit("flow_open", map[string]any{"network": "udp", "destination": dst})
+	defer h.g.emit("flow_closed", map[string]any{"network": "udp", "destination": dst})
 	defer out.Close()
 	stop := context.AfterFunc(h.ctx, func() { out.Close(); c.Close() })
 	defer stop()
@@ -211,6 +229,7 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 		return
 	}
 	h.tx.Add(int64(n))
+	h.udpTx.Add(1)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -225,6 +244,7 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 				return
 			}
 			h.rx.Add(int64(n))
+			h.udpRx.Add(1)
 			c.SetDeadline(time.Now().Add(60 * time.Second))
 			out.SetDeadline(time.Now().Add(60 * time.Second))
 		}
@@ -239,6 +259,7 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 			return
 		}
 		h.tx.Add(int64(n))
+		h.udpTx.Add(1)
 		c.SetDeadline(time.Now().Add(60 * time.Second))
 		out.SetDeadline(time.Now().Add(60 * time.Second))
 	}

@@ -194,10 +194,12 @@ class LabVpnService : VpnService() {
         @Volatile var txRate = 0.0
         @Volatile var rxRate = 0.0
         @Volatile var lastTransition = 0L
+        @Volatile var flowSummary = ""
         private var trafficAt = 0L
         private var stats = TransportStats()
         private val events = ArrayDeque<String>()
         @Synchronized private fun resetMetrics(value:String) {
+            flowSummary=""
             transitEnabled=false; transitRtt=0.0; lastTransitEcho=0
             exitIP=""; exitCheckedAt=0; exitState="Не проверен"
             transport=value; startedAt=android.os.SystemClock.elapsedRealtime()
@@ -223,6 +225,7 @@ class LabVpnService : VpnService() {
             }
             val now=android.os.SystemClock.elapsedRealtime()
             if(kind=="traffic") {
+                flowSummary="Потоки TCP/UDP: ${e.optLong("tcp_flows")}/${e.optLong("udp_flows")} · UDP пакеты ↑${e.optLong("udp_tx")} ↓${e.optLong("udp_rx")}\nUDP отклонено потоков: ${e.optLong("udp_rejected")} · DATAGRAM локальные сбросы: ${e.optLong("datagram_drops")}"
                 val tx=e.optLong("tx_bytes"); val rx=e.optLong("rx_bytes")
                 val seconds=(now-trafficAt).coerceAtLeast(1)/1000.0
                 txRate=(tx-txBytes).coerceAtLeast(0)/seconds

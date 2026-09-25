@@ -104,7 +104,11 @@ func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
 			}
 			count, done := s.track(c.ConnectionState().TLS, "QUIC", func() string { return c.RemoteAddr().String() })
 			defer done()
-			s.serve(c.Context(), "quic", func() (Stream, error) {
+			var datagrams *DatagramMux
+			if c.ConnectionState().SupportsDatagrams.Remote {
+				datagrams = NewDatagramMux(c)
+			}
+			s.serve(c.Context(), datagrams, "quic", func() (Stream, error) {
 				v, e := c.AcceptStream(c.Context())
 				if e != nil {
 					return nil, e
@@ -141,7 +145,7 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 	defer m.Close()
 	count, done := s.track(*r.TLS, "HTTPS / WebSocket", func() string { return r.RemoteAddr })
 	defer done()
-	s.serve(ctx, "https", func() (Stream, error) {
+	s.serve(ctx, nil, "https", func() (Stream, error) {
 		v, e := m.AcceptStream()
 		if e != nil {
 			return nil, e
@@ -149,7 +153,7 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 		return NewMStream(v), nil
 	}, func() { m.Close() }, count)
 }
-func (s *Server) serve(ctx context.Context, transport string, accept func() (Stream, error), closeSession func(), counters ...func(int, int)) {
+func (s *Server) serve(ctx context.Context, datagrams *DatagramMux, transport string, accept func() (Stream, error), closeSession func(), counters ...func(int, int)) {
 	id := identity()
 	log := s.Log.With("session", id, "transport", transport)
 	log.Info("gateway_open")
@@ -184,11 +188,14 @@ func (s *Server) serve(ctx context.Context, transport string, accept func() (Str
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots; <-s.slots }()
-			s.handle(ctx, st, id, log, counters...)
+			s.handleDatagrams(ctx, st, id, log, datagrams, counters...)
 		}()
 	}
 }
 func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Logger, counters ...func(int, int)) {
+	s.handleDatagrams(ctx, st, id, log, nil, counters...)
+}
+func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log *slog.Logger, datagrams *DatagramMux, counters ...func(int, int)) {
 	defer st.Close()
 	closeStream := st.Close
 	stop := context.AfterFunc(ctx, func() { closeStream() })
@@ -196,6 +203,14 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 	st.SetDeadline(time.Now().Add(10 * time.Second))
 	var req Request
 	if ReadJSON(st, &req) != nil {
+		return
+	}
+	if req.Network == "udp-datagram-v1" {
+		var count func(int, int)
+		if len(counters) > 0 {
+			count = counters[0]
+		}
+		s.serveUDP(ctx, st, req, id, datagrams, count)
 		return
 	}
 	if req.Network == "transit-probe" {

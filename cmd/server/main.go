@@ -123,7 +123,7 @@ func main() {
 			os.Exit(1)
 		}
 		if *gatewayQUIC != "" {
-			ql, e := quic.ListenAddr(*gatewayQUIC, mtls, &quic.Config{MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxFlows, MaxIncomingUniStreams: -1})
+			ql, e := quic.ListenAddr(*gatewayQUIC, mtls, &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxFlows, MaxIncomingUniStreams: -1})
 			if e != nil {
 				log.Error("gateway_listen", "error", e)
 				os.Exit(1)

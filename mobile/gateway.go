@@ -35,6 +35,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	datagrams    *gateway.DatagramMux
 	awg          *awg.Engine
 	exitChecking bool
 	mu           sync.Mutex
@@ -127,6 +128,9 @@ func (g *Gateway) connect(binder SocketBinder) error {
 			g.cancel = nil
 			g.q = nil
 			return e
+		}
+		if g.q.conn.ConnectionState().SupportsDatagrams.Remote {
+			g.datagrams = gateway.NewDatagramMux(g.q.conn)
 		}
 		if g.cfg.TransitEndpoint != "" {
 			go g.transitHeartbeat(g.ctx, nil, g.cfg.TransitEndpoint)
@@ -338,6 +342,7 @@ func (g *Gateway) Stop() {
 		g.mux.Close()
 		g.mux = nil
 	}
+	g.datagrams = nil
 	a := g.awg
 	g.awg = nil
 	g.mu.Unlock()

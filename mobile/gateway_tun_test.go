@@ -28,7 +28,9 @@ import (
 	"quiclab/internal/gateway"
 )
 
-func TestTUNDNSRoundTripAndStop(t *testing.T) {
+func TestTUNDNSRoundTripAndStop(t *testing.T)          { testTUNRoundTrip(t, false) }
+func TestTUNQUICDatagramRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, true) }
+func testTUNRoundTrip(t *testing.T, datagrams bool) {
 	var target net.IP
 	addresses, _ := net.InterfaceAddrs()
 	for _, a := range addresses {
@@ -41,7 +43,11 @@ func TestTUNDNSRoundTripAndStop(t *testing.T) {
 	if target == nil {
 		t.Skip("non-loopback IPv4 required for TUN destination")
 	}
-	dns, e := net.ListenPacket("udp4", net.JoinHostPort(target.String(), "53"))
+	port := "53"
+	if datagrams {
+		port = "0"
+	}
+	dns, e := net.ListenPacket("udp4", net.JoinHostPort(target.String(), port))
 	if e != nil {
 		t.Skipf("isolated loopback DNS unavailable: %v", e)
 	}
@@ -60,7 +66,7 @@ func TestTUNDNSRoundTripAndStop(t *testing.T) {
 	srv, _ := gateway.New(target.String()+"/32", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{MaxIncomingStreams: 128})
+	ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: datagrams, MaxIncomingStreams: 128})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -98,7 +104,7 @@ func TestTUNDNSRoundTripAndStop(t *testing.T) {
 	}
 	binary.BigEndian.PutUint16(p[10:12], ^uint16(sum))
 	binary.BigEndian.PutUint16(p[20:22], 12345)
-	binary.BigEndian.PutUint16(p[22:24], 53)
+	binary.BigEndian.PutUint16(p[22:24], uint16(dns.LocalAddr().(*net.UDPAddr).Port))
 	binary.BigEndian.PutUint16(p[24:26], uint16(len(p)-20))
 	copy(p[28:], payload)
 	if _, e = unix.Write(fds[1], p); e != nil {

@@ -161,7 +161,7 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	conn, err := t.q.Dial(ctx, addr, cfg, &quic.Config{MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second})
+	conn, err := t.q.Dial(ctx, addr, cfg, &quic.Config{EnableDatagrams: c.gatewayTLS != nil, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second})
 	if err != nil {
 		cancel()
 		t.close()

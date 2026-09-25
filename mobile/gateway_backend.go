@@ -55,10 +55,13 @@ func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.
 func (g *Gateway) datagramBackend() flowDialer {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.awg == nil {
-		return nil
+	if g.awg != nil {
+		return g.awg
 	}
-	return g.awg
+	if g.datagrams != nil {
+		return quicUDP{g}
+	}
+	return nil
 }
 
 // RTT is an ICMP round trip to the endpoint through AWG.
@@ -164,4 +167,25 @@ func (g *Gateway) transitHeartbeat(ctx context.Context, awgDialer flowDialer, en
 		case <-ticker.C:
 		}
 	}
+}
+
+type quicUDP struct{ g *Gateway }
+
+func (d quicUDP) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if network != "udp4" {
+		return nil, errors.New("UDP only")
+	}
+	d.g.mu.Lock()
+	m, q := d.g.datagrams, d.g.q
+	d.g.mu.Unlock()
+	if m == nil || q == nil {
+		return nil, errors.New("QUIC disconnected")
+	}
+	q.op.Lock()
+	c := q.conn
+	q.op.Unlock()
+	if c == nil {
+		return nil, errors.New("QUIC disconnected")
+	}
+	return m.DialUDP(ctx, c, address)
 }
