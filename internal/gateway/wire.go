@@ -112,8 +112,9 @@ type Request struct {
 	Address string `json:"address,omitempty"`
 }
 type Reply struct {
-	Error   string `json:"error,omitempty"`
-	Session string `json:"session,omitempty"`
+	UDPStream bool   `json:"udp_stream,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Session   string `json:"session,omitempty"`
 }
 
 func WriteJSON(w io.Writer, v any) error {
@@ -156,13 +157,17 @@ func ReadPacket(r io.Reader, max int) ([]byte, error) {
 	return b, e
 }
 func Open(ctx context.Context, open func(context.Context) (Stream, error), network, address string) (Stream, error) {
+	s, _, e := OpenWithReply(ctx, open, network, address)
+	return s, e
+}
+func OpenWithReply(ctx context.Context, open func(context.Context) (Stream, error), network, address string) (Stream, Reply, error) {
+	var reply Reply
 	s, e := open(ctx)
 	if e != nil {
-		return nil, e
+		return nil, reply, e
 	}
 	s.SetDeadline(time.Now().Add(10 * time.Second))
 	if e = WriteJSON(s, Request{network, address}); e == nil {
-		var reply Reply
 		e = ReadJSON(s, &reply)
 		if e == nil && reply.Error != "" {
 			e = errors.New(reply.Error)
@@ -170,10 +175,10 @@ func Open(ctx context.Context, open func(context.Context) (Stream, error), netwo
 	}
 	if e != nil {
 		s.Close()
-		return nil, e
+		return nil, reply, e
 	}
 	s.SetDeadline(time.Time{})
-	return s, nil
+	return s, reply, nil
 }
 
 // Relay bounds memory and preserves a request-side FIN while a response is pending.

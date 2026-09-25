@@ -3,11 +3,13 @@ package mobile
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"quiclab/internal/gateway"
@@ -15,7 +17,9 @@ import (
 	"time"
 )
 
-func TestGatewayUDPDatagrams(t *testing.T) {
+func TestGatewayUDPDatagrams(t *testing.T) { testGatewayUDP(t, "quic") }
+func TestGatewayUDPWebSocket(t *testing.T) { testGatewayUDP(t, "https") }
+func testGatewayUDP(t *testing.T, mode string) {
 	pair, cp, kp := testIdentity(t)
 	ca := filepath.Join(t.TempDir(), "ca.pem")
 	os.WriteFile(ca, []byte(cp), 0600)
@@ -23,12 +27,26 @@ func TestGatewayUDPDatagrams(t *testing.T) {
 	srv, _ := gateway.New("127.0.0.0/8", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 128})
-	if e != nil {
-		t.Fatal(e)
+	var address string
+	if mode == "quic" {
+		ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 128})
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer ln.Close()
+		go srv.ServeQUIC(ctx, ln)
+		address = ln.Addr().String()
+	} else {
+		tc.NextProtos = []string{"http/1.1"}
+		ln, e := tls.Listen("tcp", "127.0.0.1:0", tc)
+		if e != nil {
+			t.Fatal(e)
+		}
+		hs := &http.Server{Handler: http.HandlerFunc(srv.WebSocket)}
+		defer hs.Close()
+		go hs.Serve(ln)
+		address = ln.Addr().String()
 	}
-	defer ln.Close()
-	go srv.ServeQUIC(ctx, ln)
 	target, e := net.ListenPacket("udp4", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
@@ -51,7 +69,7 @@ func TestGatewayUDPDatagrams(t *testing.T) {
 		}
 	}()
 	g := NewGateway(nil)
-	cfg, _ := json.Marshal(gatewayConfig{Transport: "quic", Endpoint: ln.Addr().String(), Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
+	cfg, _ := json.Marshal(gatewayConfig{Transport: mode, Endpoint: address, Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
 	if e = g.Start(string(cfg), nil); e != nil {
 		t.Fatal(e)
 	}
@@ -84,19 +102,40 @@ func TestGatewayUDPDatagrams(t *testing.T) {
 			t.Fatalf("UDP request/reply serialization: %q %v", buf[:n], e)
 		}
 	}
-	// Migration retains connection, control stream and UDP socket at the exit.
-	if e = g.MigrateTo("test-new-path", nil); e != nil {
-		t.Fatal(e)
+	if mode == "https" {
+		packet := bytes.Repeat([]byte{9}, 65507)
+		flow.Write(packet)
+		n, e := flow.Read(buf)
+		if e != nil || !bytes.Equal(buf[:n], packet) {
+			t.Fatal("large UDP frame", n, e)
+		}
 	}
-	flow.Write([]byte("after-migration"))
-	n, e := flow.Read(buf)
-	if e != nil || string(buf[:n]) != "after-migration" {
-		t.Fatal("UDP flow lost on migration", e)
+	if mode == "quic" {
+		// Migration retains connection, control stream and UDP socket at the exit.
+		if e = g.MigrateTo("test-new-path", nil); e != nil {
+			t.Fatal(e)
+		}
+		flow.Write([]byte("after-migration"))
+		n, e := flow.Read(buf)
+		if e != nil || string(buf[:n]) != "after-migration" {
+			t.Fatal("UDP flow lost on migration", e)
+		}
 	}
 	// Destination policy also applies to datagrams.
 	if other, e := d.DialContext(ctx, "udp4", "192.0.2.1:9999"); e == nil {
 		other.Close()
 		t.Fatal("UDP bypassed destination ACL")
+	}
+	done := make(chan error, 1)
+	go func() { _, e := flow.Read(buf); done <- e }()
+	g.Stop()
+	select {
+	case e := <-done:
+		if e == nil {
+			t.Fatal("read survived shutdown")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown leaked UDP reader")
 	}
 }
 

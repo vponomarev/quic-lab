@@ -5,11 +5,13 @@ package mobile
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,9 +30,11 @@ import (
 	"quiclab/internal/gateway"
 )
 
-func TestTUNDNSRoundTripAndStop(t *testing.T)          { testTUNRoundTrip(t, false) }
-func TestTUNQUICDatagramRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, true) }
-func testTUNRoundTrip(t *testing.T, datagrams bool) {
+func TestTUNDNSRoundTripAndStop(t *testing.T)          { testTUNRoundTrip(t, "legacy") }
+func TestTUNQUICDatagramRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, "quic") }
+func TestTUNWebSocketUDPRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, "https") }
+func testTUNRoundTrip(t *testing.T, mode string) {
+	datagrams := mode != "legacy"
 	var target net.IP
 	addresses, _ := net.InterfaceAddrs()
 	for _, a := range addresses {
@@ -66,14 +70,32 @@ func testTUNRoundTrip(t *testing.T, datagrams bool) {
 	srv, _ := gateway.New(target.String()+"/32", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: datagrams, MaxIncomingStreams: 128})
-	if e != nil {
-		t.Fatal(e)
+	var address string
+	if mode == "https" {
+		tc.NextProtos = []string{"http/1.1"}
+		ln, e := tls.Listen("tcp", "127.0.0.1:0", tc)
+		if e != nil {
+			t.Fatal(e)
+		}
+		hs := &http.Server{Handler: http.HandlerFunc(srv.WebSocket)}
+		defer hs.Close()
+		go hs.Serve(ln)
+		address = ln.Addr().String()
+	} else {
+		ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: datagrams, MaxIncomingStreams: 128})
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer ln.Close()
+		go srv.ServeQUIC(ctx, ln)
+		address = ln.Addr().String()
 	}
-	defer ln.Close()
-	go srv.ServeQUIC(ctx, ln)
+	transport := "quic"
+	if mode == "https" {
+		transport = "https"
+	}
 	g := NewGateway(nil)
-	cfg, _ := json.Marshal(gatewayConfig{Transport: "quic", Endpoint: ln.Addr().String(), Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
+	cfg, _ := json.Marshal(gatewayConfig{Transport: transport, Endpoint: address, Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
 	if e = g.Start(string(cfg), nil); e != nil {
 		t.Fatal(e)
 	}

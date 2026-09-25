@@ -58,6 +58,9 @@ func (g *Gateway) datagramBackend() flowDialer {
 	if g.awg != nil {
 		return g.awg
 	}
+	if g.mux != nil && g.udpStream {
+		return httpsUDP{g}
+	}
 	if g.datagrams != nil {
 		return quicUDP{g}
 	}
@@ -188,4 +191,17 @@ func (d quicUDP) DialContext(ctx context.Context, network, address string) (net.
 		return nil, errors.New("QUIC disconnected")
 	}
 	return m.DialUDP(ctx, c, address)
+}
+
+type httpsUDP struct{ g *Gateway }
+
+func (d httpsUDP) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if network != "udp4" {
+		return nil, errors.New("UDP only")
+	}
+	st, e := gateway.Open(ctx, d.g.open, "udp-stream-v1", address)
+	if e != nil {
+		return nil, e
+	}
+	return &gateway.PacketStream{Stream: st}, nil
 }

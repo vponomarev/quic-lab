@@ -100,7 +100,7 @@ func TestTransitLive(t *testing.T) {
 				}
 				return diagnosticConn{s}, nil
 			})
-			if down && (transport == "quic" || transport == "awg") {
+			if down {
 				probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 				d := g.datagramBackend()
 				if d == nil {
@@ -135,28 +135,26 @@ func TestTransitLive(t *testing.T) {
 				t.Fatalf("unexpected egress %s", ip)
 			}
 			t.Log("transit exit", ip)
-			if transport == "quic" || transport == "awg" {
-				d := g.datagramBackend()
-				if d == nil {
-					t.Fatal("UDP backend unavailable")
-				}
-				dns, e := d.DialContext(ctx, "udp4", net.JoinHostPort(value("dns"), "53"))
-				if e != nil {
-					t.Fatal(e)
-				}
-				defer dns.Close()
-				dns.SetDeadline(time.Now().Add(3 * time.Second))
-				query := []byte{0x51, 0x4c, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1}
-				if _, e = dns.Write(query); e != nil {
-					t.Fatal(e)
-				}
-				reply := make([]byte, 4096)
-				n, e := dns.Read(reply)
-				if e != nil || n < 12 || reply[0] != 0x51 || reply[1] != 0x4c || reply[2]&0x80 == 0 {
-					t.Fatal("UDP transit DNS response", n, e)
-				}
-				t.Log("UDP through transit passed")
+			d := g.datagramBackend()
+			if d == nil {
+				t.Fatal("UDP backend unavailable")
 			}
+			dns, e := d.DialContext(ctx, "udp4", net.JoinHostPort(value("dns"), "53"))
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer dns.Close()
+			dns.SetDeadline(time.Now().Add(3 * time.Second))
+			query := []byte{0x51, 0x4c, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1}
+			if _, e = dns.Write(query); e != nil {
+				t.Fatal(e)
+			}
+			reply := make([]byte, 4096)
+			n, e := dns.Read(reply)
+			if e != nil || n < 12 || reply[0] != 0x51 || reply[1] != 0x4c || reply[2]&0x80 == 0 {
+				t.Fatal("UDP transit DNS response", n, e)
+			}
+			t.Log("UDP through transit passed")
 
 		})
 	}

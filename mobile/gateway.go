@@ -35,6 +35,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	udpStream    bool
 	datagrams    *gateway.DatagramMux
 	awg          *awg.Engine
 	exitChecking bool
@@ -171,7 +172,7 @@ func (g *Gateway) connect(binder SocketBinder) error {
 	}
 	g.mux = m
 	g.session++
-	s, e := gateway.Open(g.ctx, func(context.Context) (gateway.Stream, error) {
+	s, reply, e := gateway.OpenWithReply(g.ctx, func(context.Context) (gateway.Stream, error) {
 		v, e := m.OpenStream()
 		if e != nil {
 			return nil, e
@@ -184,7 +185,8 @@ func (g *Gateway) connect(binder SocketBinder) error {
 		g.cancel = nil
 		return e
 	}
-	g.emit("connected", map[string]any{"transport": "https", "session": g.session})
+	g.udpStream = reply.UDPStream
+	g.emit("connected", map[string]any{"transport": "https", "session": g.session, "detail": fmt.Sprintf("UDP over stream: %t", g.udpStream)})
 	go g.heartbeat(g.ctx, m, s)
 	if g.cfg.TransitEndpoint != "" {
 		go g.transitHeartbeat(g.ctx, nil, g.cfg.TransitEndpoint)
@@ -343,6 +345,7 @@ func (g *Gateway) Stop() {
 		g.mux = nil
 	}
 	g.datagrams = nil
+	g.udpStream = false
 	a := g.awg
 	g.awg = nil
 	g.mu.Unlock()

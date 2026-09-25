@@ -133,7 +133,8 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 	}()
 }
 
-// QUIC DATAGRAM and AWG preserve UDP; HTTPS and older QUIC servers support DNS only.
+// Negotiated QUIC DATAGRAM, HTTPS packet streams and AWG carry UDP.
+// Older servers retain DNS-only compatibility.
 func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 	id := c.ID()
 	backend := h.g.datagramBackend()

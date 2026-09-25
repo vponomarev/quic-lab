@@ -205,6 +205,14 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 	if ReadJSON(st, &req) != nil {
 		return
 	}
+	if req.Network == "udp-stream-v1" {
+		var count func(int, int)
+		if len(counters) > 0 {
+			count = counters[0]
+		}
+		s.serveUDPStream(ctx, st, req, id, count)
+		return
+	}
 	if req.Network == "udp-datagram-v1" {
 		var count func(int, int)
 		if len(counters) > 0 {
@@ -229,7 +237,8 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 		return
 	}
 	if req.Network == "echo" {
-		if WriteJSON(st, Reply{Session: id}) != nil {
+		_, udpStream := st.(*MStream)
+		if WriteJSON(st, Reply{Session: id, UDPStream: udpStream}) != nil {
 			return
 		}
 		scan := bufio.NewScanner(st)
