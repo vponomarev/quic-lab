@@ -83,8 +83,22 @@ def port_number(value):
     return number
 
 
-def resolve_ports(args, state=None, cfg=None):
+def resolve_frontend(state=None, cfg=None):
+    if state:
+        mode = state.get("frontend", "nginx")
+    elif cfg:
+        mode = "nginx"  # legacy installations used nginx
+    else:
+        mode = "nginx" if shutil.which("nginx") else "direct"
+    if mode not in ("nginx", "direct"):
+        raise ValueError("frontend must be nginx or direct in install.json")
+    return mode
+
+
+def resolve_ports(args, state=None, cfg=None, frontend="nginx"):
     ports = dict(DEFAULT_PORTS)
+    if frontend == "direct":
+        ports["mtls_port"] = 443
     # Older installations did not record ports in install.json.
     if cfg:
         for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
@@ -96,7 +110,7 @@ def resolve_ports(args, state=None, cfg=None):
         ports[name] = port_number(ports[name])
     if ports["echo_quic_port"] == ports["vpn_quic_port"]:
         raise ValueError("Echo QUIC and VPN QUIC must use different UDP ports")
-    if ports["mtls_port"] in (80, 443, 8081, 8082, 8083):
+    if ports["mtls_port"] in ((80, 443, 8081, 8082, 8083) if frontend == "nginx" else (80, 8081, 8082, 8083)):
         raise ValueError("mTLS TCP port conflicts with nginx or a loopback backend (80, 443, 8081-8083)")
     return ports
 
@@ -162,9 +176,10 @@ server {{
 """
 
 
-def unit_config(cert, key, ports=None):
+def unit_config(cert, key, ports=None, frontend="nginx"):
     ports = ports or DEFAULT_PORTS
-    capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" if min(ports.values()) < 1024 else ""
+    capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" if frontend == "direct" or min(ports.values()) < 1024 else ""
+    public = " -https-listen 0.0.0.0:443" if frontend == "direct" else ""
     return f"""{MARKER}
 [Unit]
 Description=QUIC Lab echo, mTLS gateway and admin
@@ -182,7 +197,7 @@ LoadCredential=cert.pem:{cert}
 LoadCredential=key.pem:{key}
 LoadCredential=admin.json:/etc/quic-lab/admin.json
 EnvironmentFile=/etc/quic-lab/server.env
-ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:{ports["echo_quic_port"]} -web-listen 127.0.0.1:8081 -gateway-quic 0.0.0.0:{ports["vpn_quic_port"]} -gateway-https 0.0.0.0:{ports["mtls_port"]} -gateway-allow ${{GATEWAY_ALLOW}} -demo-listen 127.0.0.1:8082 -cert ${{CREDENTIALS_DIRECTORY}}/cert.pem -key ${{CREDENTIALS_DIRECTORY}}/key.pem -admin-config ${{CREDENTIALS_DIRECTORY}}/admin.json
+ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:{ports["echo_quic_port"]} -web-listen 127.0.0.1:8081 -gateway-quic 0.0.0.0:{ports["vpn_quic_port"]} -gateway-https 0.0.0.0:{ports["mtls_port"]} -gateway-allow ${{GATEWAY_ALLOW}} -demo-listen 127.0.0.1:8082 -cert ${{CREDENTIALS_DIRECTORY}}/cert.pem -key ${{CREDENTIALS_DIRECTORY}}/key.pem -admin-config ${{CREDENTIALS_DIRECTORY}}/admin.json{public}
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=yes
@@ -222,10 +237,12 @@ def apply_nginx(content):
         raise
 
 
-def missing_packages(custom_cert):
+def missing_packages(custom_cert, frontend="nginx"):
     # An existing nginx (including an independently installed build) is never
     # passed to apt. Only install missing prerequisites, without upgrades.
-    commands = {"nginx": "nginx", "openssl": "openssl"}
+    commands = {"openssl": "openssl"}
+    if frontend == "nginx":
+        commands["nginx"] = "nginx"
     if not custom_cert:
         commands["certbot"] = "certbot"
     packages = [package for command, package in commands.items() if not shutil.which(command)]
@@ -245,7 +262,7 @@ def main():
     parser.add_argument("--key", help="Existing server PEM key; skips certificate issuance")
     parser.add_argument("--echo-quic-port", type=port_number, help="Echo UDP port (initial default: 4433)")
     parser.add_argument("--vpn-quic-port", type=port_number, help="VPN QUIC UDP port (initial default: 4434)")
-    parser.add_argument("--mtls-port", type=port_number, help="VPN HTTPS/mTLS TCP port (initial default: 8443)")
+    parser.add_argument("--mtls-port", type=port_number, help="VPN HTTPS/mTLS TCP port (initial default: 443 without nginx, 8443 with nginx)")
     if len(sys.argv) == 1:
         parser.print_help()
         return
@@ -268,11 +285,8 @@ def main():
 
 
 def install(args):
-    for path in (SITE, UNIT, HOOK):
+    for path in (UNIT, HOOK):
         owned(path)
-    if ENABLED.exists() or ENABLED.is_symlink():
-        if not ENABLED.is_symlink() or ENABLED.resolve() != SITE:
-            raise RuntimeError(f"Unmanaged nginx site: {ENABLED}")
     state_file = CONFIG / "install.json"
     state = json.loads(state_file.read_text()) if state_file.exists() else None
     if state and state["domain"] != args.domain:
@@ -296,12 +310,20 @@ def install(args):
         cfg = json.loads(existing.read_text())
         if cfg.get("public_url") != f"https://{args.domain}/lab/" or cfg.get("listen") != "127.0.0.1:8083" or cfg.get("data_dir") != "/var/lib/quic-lab":
             raise RuntimeError("Existing admin.json uses a different layout; migrate manually.")
-    ports = resolve_ports(args, state, cfg)
+    frontend = resolve_frontend(state, cfg)
+    if frontend == "nginx":
+        if not shutil.which("nginx"):
+            raise RuntimeError("Saved frontend is nginx, but nginx is missing; restore it before updating")
+        owned(SITE)
+        if ENABLED.exists() or ENABLED.is_symlink():
+            if not ENABLED.is_symlink() or ENABLED.resolve() != SITE:
+                raise RuntimeError(f"Unmanaged nginx site: {ENABLED}")
+    ports = resolve_ports(args, state, cfg, frontend)
     old_state = state_file.read_bytes() if state_file.exists() else None
     env_file = CONFIG / "server.env"
     if args.gateway_allow and env_file.exists():
         raise RuntimeError("Policy already exists; edit /etc/quic-lab/server.env and restart the service instead.")
-    if shutil.which("nginx"):
+    if frontend == "nginx":
         active = run("nginx", "-T", capture_output=True, text=True).stdout
         # Exclude only our dedicated file; reject duplicate exact server names elsewhere.
         for section in re.split(r"(?m)^# configuration file ", active):
@@ -310,7 +332,7 @@ def install(args):
             for names in re.findall(r"(?m)^\s*server_name\s+([^;]+);", section):
                 if args.domain in [name.strip("\"'").lower() for name in names.split()]:
                     raise RuntimeError("This domain already has an nginx site; see migration instructions.")
-    packages = missing_packages(custom_cert)
+    packages = missing_packages(custom_cert, frontend)
     if packages:
         run("apt-get", "update")
         run("apt-get", "install", "--no-upgrade", "-y", *packages,
@@ -328,34 +350,43 @@ def install(args):
         print("Existing admin configuration and password preserved.", flush=True)
     if not env_file.exists():
         atomic(env_file, f"GATEWAY_ALLOW={args.gateway_allow or '0.0.0.0/0'}\n", 0o600)
-    Path(WEBROOT).mkdir(mode=0o755, parents=True, exist_ok=True)
+    if old_config is None:
+        # Keep initial mode after a failed ACME attempt, even though admin.json
+        # already exists when the user retries installation.
+        atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend), indent=2) + "\n", 0o600)
+    if frontend == "nginx":
+        Path(WEBROOT).mkdir(mode=0o755, parents=True, exist_ok=True)
     if not custom_cert:
         if not Path(cert).exists() or not Path(key).exists():
-            apply_nginx(nginx_config(args.domain))
+            if frontend == "nginx":
+                apply_nginx(nginx_config(args.domain))
             print("Obtaining Let's Encrypt certificate; installation accepts the ACME subscriber agreement.", flush=True)
             email = ["--email", args.email] if args.email else ["--register-unsafely-without-email"]
-            run("certbot", "certonly", "--webroot", "-w", WEBROOT, "--cert-name", args.domain, "-d", args.domain,
+            method = ["--webroot", "-w", WEBROOT] if frontend == "nginx" else ["--standalone", "--preferred-challenges", "http"]
+            run("certbot", "certonly", *method, "--cert-name", args.domain, "-d", args.domain,
                 "--non-interactive", "--agree-tos", *email)
+        reload_nginx = "nginx -t\nsystemctl reload nginx\n" if frontend == "nginx" else ""
         atomic(HOOK, f"""#!/bin/sh
 {MARKER}
 set -eu
 [ "${{RENEWED_LINEAGE:-}}" = "/etc/letsencrypt/live/{args.domain}" ] || exit 0
-nginx -t
-systemctl reload nginx
-if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
+{reload_nginx}if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
 """, 0o755)
         run("systemctl", "enable", "--now", "certbot.timer")
     run("openssl", "x509", "-in", cert, "-noout", "-checkhost", args.domain)
     run("openssl", "x509", "-in", cert, "-noout", "-checkend", "0")
-    # nginx validates that the server certificate and private key match before restart.
-    apply_nginx(nginx_config(args.domain, cert, key))
+    # Validate the pair before replacing the binary/unit, also without nginx.
+    import ssl
+    ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+    if frontend == "nginx":
+        apply_nginx(nginx_config(args.domain, cert, key))
     binary = OPT / "quic-lab-server"
     old_binary = binary.read_bytes() if binary.exists() else None
     old_unit = UNIT.read_bytes() if UNIT.exists() else None
     if old_binary is not None:
         atomic(OPT / "quic-lab-server.previous", old_binary, 0o755)
     atomic(binary, args.binary.read_bytes(), 0o755)
-    atomic(UNIT, unit_config(cert, key, ports))
+    atomic(UNIT, unit_config(cert, key, ports, frontend))
     try:
         if old_config is not None:
             for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
@@ -363,7 +394,7 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
                 host = cfg[section][field].rsplit(":", 1)[0]
                 cfg[section][field] = f"{host}:{ports[name]}"
             atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
-        atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports), indent=2) + "\n", 0o600)
+        atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend), indent=2) + "\n", 0o600)
         run("systemctl", "daemon-reload")
         run("systemctl", "enable", "quic-lab")
         run("systemctl", "restart", "quic-lab")
@@ -386,7 +417,7 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
             atomic(existing, old_config, 0o600)
         if old_state is not None:
             atomic(state_file, old_state, 0o600)
-        else:
+        elif old_config is not None:
             state_file.unlink(missing_ok=True)
         if old_binary is not None and old_unit is not None:
             atomic(binary, old_binary, 0o755)
@@ -400,9 +431,10 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
         downloads = Path("/var/lib/quic-lab/downloads")
         downloads.mkdir(mode=0o755, exist_ok=True)
         atomic(downloads / "quic-lab.apk", args.apk.read_bytes())
-    print(f"Ready: https://{args.domain}/lab/\nConfig: /etc/quic-lab/admin.json\n"
+    tcp_ports = ",".join(str(p) for p in sorted({80, 443, ports["mtls_port"]}))
+    print(f"Frontend: {frontend}\nReady: https://{args.domain}/lab/\nConfig: /etc/quic-lab/admin.json\n"
           "Credentials: /etc/quic-lab/admin-credentials.txt (first installation)\n"
-          f"Allow inbound TCP 80,443,{ports['mtls_port']} and UDP {ports['echo_quic_port']},{ports['vpn_quic_port']} in host/cloud firewalls.\n"
+          f"Allow inbound TCP {tcp_ports} and UDP {ports['echo_quic_port']},{ports['vpn_quic_port']} in host/cloud firewalls.\n"
           "Firewall rules were not changed. Updates restart active sessions.")
 
 

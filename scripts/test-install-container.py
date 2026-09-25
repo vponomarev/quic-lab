@@ -18,6 +18,7 @@ assert Path("/.dockerenv").exists(), "Use only inside a disposable Docker contai
 spec = importlib.util.spec_from_file_location("installer", "/test/install-server.py")
 i = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(i)
+frontend = os.environ.get("TEST_FRONTEND", "nginx")
 real_run = i.run
 server = None
 nginx_started = False
@@ -26,6 +27,8 @@ fail_next_start = False
 
 def run(*args, **kwargs):
     global server, nginx_started, fail_next_start
+    if frontend == "direct" and args[0] == "nginx":
+        raise AssertionError("Direct mode must never invoke nginx")
     if args[0] != "systemctl":
         return real_run(*args, **kwargs)
     if "nginx" in args:
@@ -49,6 +52,8 @@ def run(*args, **kwargs):
                    "-gateway-quic", f"0.0.0.0:{state['ports']['vpn_quic_port']}", "-gateway-https", f"0.0.0.0:{state['ports']['mtls_port']}", "-gateway-allow", "0.0.0.0/0",
                    "-demo-listen", "127.0.0.1:8082", "-cert", state["cert"], "-key", state["key"],
                    "-admin-config", "/etc/quic-lab/admin.json"]
+            if state["frontend"] == "direct":
+                cmd += ["-https-listen", "0.0.0.0:443"]
             server = subprocess.Popen(cmd, stdout=open("/tmp/server.log", "a"), stderr=subprocess.STDOUT)
             time.sleep(0.3)
             if server.poll() is not None:
@@ -73,10 +78,11 @@ real_run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2
          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 # A second site must survive untouched.
 other = Path("/etc/nginx/sites-available/other")
-other.write_text("server { listen 80; server_name other.example.org; return 200 'other'; }\n")
-Path("/etc/nginx/sites-enabled/other").symlink_to(other)
-original_other = other.read_bytes()
-sys.argv = ["install-server.py", "lab.example.org", "--binary", "/test/quic-lab-server", "--cert", "/test/tls/cert.pem", "--key", "/test/tls/key.pem", "--echo-quic-port", "14433", "--vpn-quic-port", "14434", "--mtls-port", "18443"]
+if frontend == "nginx":
+    other.write_text("server { listen 80; server_name other.example.org; return 200 'other'; }\n")
+    Path("/etc/nginx/sites-enabled/other").symlink_to(other)
+    original_other = other.read_bytes()
+sys.argv = ["install-server.py", "lab.example.org", "--binary", "/test/quic-lab-server", "--cert", "/test/tls/cert.pem", "--key", "/test/tls/key.pem", "--echo-quic-port", "14433", "--vpn-quic-port", "14434", "--mtls-port", "443" if frontend == "direct" else "18443"]
 try:
     with contextlib.redirect_stdout(io.StringIO()) as output:
         i.main()
@@ -86,7 +92,8 @@ try:
     assert (i.CONFIG / "admin-credentials.txt").stat().st_mode & 0o777 == 0o600
     assert cfg["echo"]["endpoint"].endswith(":14433")
     assert cfg["vpn"]["quic"].endswith(":14434")
-    assert cfg["vpn"]["https"].endswith(":18443")
+    assert cfg["vpn"]["https"].endswith(":443" if frontend == "direct" else ":18443")
+    assert json.loads((i.CONFIG / "install.json").read_text())["frontend"] == frontend
     state_before = (i.CONFIG / "install.json").read_bytes()
     identity = Path("/var/lib/quic-lab/identities.json").read_bytes()
     with urllib.request.urlopen("http://127.0.0.1:8083/", timeout=3) as response:
@@ -100,7 +107,10 @@ try:
     assert cfg["password"] not in output.getvalue()
     assert (i.CONFIG / "admin.json").read_bytes() == before
     assert Path("/var/lib/quic-lab/identities.json").read_bytes() == identity
-    assert other.read_bytes() == original_other
+    if frontend == "nginx":
+        assert other.read_bytes() == original_other
+    else:
+        assert not Path("/etc/nginx/sites-available/quic-lab").exists()
     # Roll back a failed service restart, keeping identity/config.
     sys.argv += ["--vpn-quic-port", "24434", "--mtls-port", "28443"]
     fail_next_start = True
@@ -115,7 +125,7 @@ try:
     assert (i.CONFIG / "install.json").read_bytes() == state_before
     assert (i.CONFIG / "admin.json").read_bytes() == before
     assert Path("/var/lib/quic-lab/identities.json").read_bytes() == identity
-    print("PASS: fresh install, secrets/modes, HTTPS site, unit syntax, repeat install, preserved CA/config/ports/other site, port-change rollback")
+    print("PASS " + frontend + ": fresh install, secrets/modes, HTTPS site, unit syntax, repeat install, preserved CA/config/ports/other site, port-change rollback")
 finally:
     if server:
         server.terminate()

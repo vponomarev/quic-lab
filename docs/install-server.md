@@ -5,28 +5,63 @@
 и скрипт публикации APK. Go, Git и сборка на целевом сервере не нужны.
 Нужен Python 3: на минимальном образе `sudo apt-get update && sudo apt-get install -y python3`.
 
+## Автоматический выбор схемы
+
+При первой установке скрипт проверяет наличие nginx:
+
+| На хосте | Сайт, админка, echo HTTPS | VPN HTTPS/mTLS |
+| --- | --- | --- |
+| nginx отсутствует | Go-приложение, TCP/443 | Тот же TCP/443, путь `/tunnel` |
+| nginx установлен | Существующий nginx, TCP/443 | Go-приложение, TCP/8443 |
+
+Без nginx установщик **не устанавливает nginx**. Приложение обслуживает `/lab/`,
+`/echo`, `/vpn-demo/` и `/tunnel` самостоятельно. TLS допускает отсутствие
+клиентского сертификата на публичных маршрутах; `/tunnel` требует проверенного
+сертификата. Проверка отзыва и отключение удалённого клиента сохраняются.
+Админка по-прежнему требует логин и пароль, mTLS не заменяет вход администратора.
+
+Режим сохраняется как `frontend: direct` или `frontend: nginx` в
+`/etc/quic-lab/install.json`. Повторный запуск сохраняет режим, даже если позже
+на хосте появился nginx. Установки предыдущих версий остаются в nginx-режиме.
+Автоматическая миграция работающих сайтов между схемами не выполняется.
+
+Порты сохраняются в разделе `ports` этого же файла. Для изменения используйте
+параметры установщика ниже, чтобы синхронно обновить unit и QR-профили.
+При ручном изменении `install.json` повторите установщик для применения.
+В direct-режиме `--mtls-port 9443` вынесет VPN на отдельный порт, а публичный
+HTTPS останется на 443. UDP echo и VPN остаются раздельными: 4433 и 4434.
+
 ## Первая установка
 
 Скачайте архив своей архитектуры и SHA256SUMS из поставки сервера.
 Проверьте `sha256sum --ignore-missing -c SHA256SUMS`, затем распакуйте архив:
 
 ```sh
-tar xzf quic-lab-server-0.4.4-dev-linux-amd64.tar.gz
-cd quic-lab-server-0.4.4-dev-linux-amd64
+tar xzf quic-lab-server-0.4.5-dev-linux-amd64.tar.gz
+cd quic-lab-server-0.4.5-dev-linux-amd64
 sudo ./install-server.py quic.example.org
 ```
 
 Замените `quic.example.org` своим DNS-именем. A-запись должна указывать на сервер;
-если есть AAAA, она тоже должна вести на этот сервер. HTTP/80 должен быть доступен
-из интернета для ACME. TCP/443 и TCP/8443, UDP/4433 и UDP/4434 нужны клиентам.
+Шаблон direct использует IPv4: для этого имени не публикуйте AAAA,
+если отдельно не настроен IPv6 HTTPS-вход. HTTP/80 должен быть доступен
+из интернета для ACME. TCP/443 и UDP/4433, UDP/4434 нужны клиентам. В nginx-режиме также нужен TCP/8443
+(или собственный mTLS-порт).
 Установщик не меняет firewall и не затрагивает правила SSH.
 
-Установщик устанавливает только отсутствующие nginx, certbot, CA и OpenSSL из репозиториев дистрибутива,
-добавляет отдельный сайт, получает сертификат Let's Encrypt через webroot и
-включает продление. Запуск означает принятие [условий Let's Encrypt](https://letsencrypt.org/repository/).
+Установщик устанавливает только отсутствующие certbot, CA и OpenSSL из репозиториев
+дистрибутива. Существующий nginx не переустанавливается и не обновляется.
+С nginx сертификат получается через webroot и отдельный виртуальный хост;
+без nginx — через `certbot --standalone`, который временно занимает TCP/80.
+Само приложение порт 80 не занимает; он должен оставаться доступным для продлений.
+Приложение получает сертификат и ключ через systemd LoadCredential.
+
+Запуск означает принятие [условий Let's Encrypt](https://letsencrypt.org/repository/).
 По умолчанию учётная запись ACME создаётся без email; можно указать
-`--email admin@example.org`. [Метод webroot Certbot](https://eff-certbot.readthedocs.io/en/stable/using.html#webroot)
-не требует остановки существующих сайтов.
+`--email admin@example.org`. Certbot сохраняет метод проверки и использует его
+при продлении. Deploy hook перезапускает QUIC Lab, а в nginx-режиме также
+проверяет и перечитывает nginx. При своих PEM (`--cert`/`--key`) продление
+остаётся за вашим инструментом.
 
 Если `/etc/quic-lab/admin.json` отсутствует, генерируются случайные логин и пароль.
 Они сразу выводятся в терминал и сохраняются в `/etc/quic-lab/admin-credentials.txt`
@@ -59,10 +94,11 @@ sudo ./install-server.py quic.example.org \
 | --- | --- | --- |
 | `--echo-quic-port` | Echo QUIC, UDP | 4433 |
 | `--vpn-quic-port` | VPN QUIC, UDP | 4434 |
-| `--mtls-port` | VPN HTTPS/mTLS, TCP | 8443 |
+| `--mtls-port` | VPN HTTPS/mTLS, TCP | 443 без nginx; 8443 с nginx |
 
 Допустимы порты 1–65535. Два QUIC listener должны иметь разные UDP-порты.
-TCP mTLS не может занимать 80/443 nginx или 8081–8083 локальных backend.
+TCP mTLS не может занимать 80 или 8081–8083 локальных backend; в nginx-режиме
+также запрещён 443. В direct-режиме 443 означает общий HTTPS/mTLS listener.
 Одинаковый номер TCP и UDP допустим. Выбранный порт должен быть свободен от
 других процессов; в частности, UDP/443 может быть занят HTTP/3.
 Для порта ниже 1024 установщик добавляет службе CAP_NET_BIND_SERVICE.
@@ -137,7 +173,7 @@ sudo ./install-server.py quic.example.org \
 ### 3. Лаба должна жить на уже используемом домене
 
 Пример: основной сайт остаётся на `https://example.org/`, а админка лабы будет
-на `https://example.org/lab/`. Установщик 0.4.4-dev **не объединяет server-блоки**:
+на `https://example.org/lab/`. Установщик 0.4.5-dev **не объединяет server-блоки**:
 при обнаружении этого имени он завершится с сообщением
 `This domain already has an nginx site`. Параметра `--skip-nginx` в этой версии нет.
 
@@ -224,8 +260,8 @@ sudo ./install-server.py quic.example.org \
 
 Скрипт проверяет имя, срок сертификата и соответствие ключу. В этом режиме
 сертификат не запрашивается и его продление остаётся за вашим инструментом.
-После обновления PEM выполните `sudo nginx -t && sudo systemctl reload nginx`
-и `sudo systemctl restart quic-lab`. Режим и пути сохраняются для следующих запусков.
+После обновления PEM выполните `sudo systemctl restart quic-lab`.
+В nginx-режиме также выполните `sudo nginx -t && sudo systemctl reload nginx`. Режим и пути сохраняются для следующих запусков.
 
 ## Файлы и обновление
 
@@ -234,10 +270,10 @@ sudo ./install-server.py quic.example.org \
 - `/etc/quic-lab/admin-credentials.txt` — первоначальные учётные данные;
   после ручной смены пароля актуальным источником является `admin.json`.
 - `/etc/quic-lab/server.env` — серверная ACL `GATEWAY_ALLOW`.
-- `/etc/quic-lab/install.json` — DNS-имя и пути TLS для установщика.
+- `/etc/quic-lab/install.json` — DNS-имя, режим frontend, порты и пути TLS для установщика.
 - `/var/lib/quic-lab` — пользователи, CA и ключи. systemd управляет владельцем
   через DynamicUser/StateDirectory; не меняйте права вручную.
-- `/etc/nginx/sites-available/quic-lab`, `sites-enabled/quic-lab` — отдельный сайт.
+- `/etc/nginx/sites-available/quic-lab`, `sites-enabled/quic-lab` — отдельный сайт в nginx-режиме.
 - `/etc/systemd/system/quic-lab.service` — echo, VPN, админка и demo одним процессом.
 
 Распакуйте новый архив и повторите `sudo ./install-server.py quic.example.org`.
@@ -270,7 +306,7 @@ sudo ./install-server.py quic.example.org \
 sudo ./publish-apk.sh ./quic-lab.apk /var/lib/quic-lab/downloads/quic-lab.apk
 systemctl status quic-lab --no-pager
 sudo journalctl -u quic-lab -n 30 --no-pager
-sudo nginx -t
+sudo nginx -t # только в nginx-режиме
 curl https://quic.example.org/lab/
 sudo certbot renew --dry-run
 ```
@@ -283,7 +319,7 @@ APK появляется под QR на `/lab/`. Порты 8081–8083 дост
 На машине сборки с Go из go.mod и Python 3:
 
 ```sh
-python3 scripts/build-server-release.py --version 0.4.4-dev
+python3 scripts/build-server-release.py --version 0.4.5-dev
 ```
 
 Архивы обеих архитектур и SHA256SUMS появляются в `artifacts/server-release/`.
@@ -298,32 +334,31 @@ python3 scripts/build-server-release.py --version 0.4.4-dev
 В контейнерных тестах systemctl имитируется; unit проверяется systemd-analyze.
 Дополнительно на Debian 13 выполнен запуск с настоящим systemd, DynamicUser,
 LoadCredential и StateDirectory. ARM64-архив собран, запуск на ARM64 не проверялся.
+Для 0.4.5-dev дополнительно проверены direct-установка на Debian 12, nginx-установка
+на Ubuntu 24.04, общий HTTPS/mTLS под systemd на Debian 13 и Go-тесты аутентификации
+с race detector: публичный доступ, запрет VPN без сертификата, отзыв и чужой CA.
 ACME в этих тестах не запрашивает публичные сертификаты: используется тестовый PEM.
 
 Модульные проверки: `python3 scripts/test-install-server.py` на Linux.
 `scripts/test-install-container.py` предназначен только для одноразовых Docker-контейнеров:
-в `/test` положите установщик и бинарник; установите python3, openssl, nginx, curl,
-systemd, затем запустите тест. На обычном сервере этот тест запускать нельзя.
+в `/test` положите установщик и бинарник; установите python3, openssl, curl,
+systemd и nginx, затем запустите тест. Для direct-сценария не устанавливайте nginx
+и задайте `TEST_FRONTEND=direct`. На обычном сервере этот тест запускать нельзя.
 
 ## Использование порта 443 для VPN
 
-В текущей поставке сайт, админка и echo WebSocket уже используют существующий
-TCP/443 nginx. VPN HTTPS использует отдельный TCP/8443: клиентский mTLS
-проверяется самим Go-сервером. Перенести его за обычный HTTP proxy_pass на 443
-без изменения реализации аутентификации нельзя.
+В direct-режиме TCP/443 уже объединяет публичные HTTPS-маршруты и mTLS VPN.
+При нестандартном `--mtls-port` публичные маршруты остаются на TCP/443, а VPN
+получает собственный TLS listener на выбранном порту.
 
-Для будущего режима на общем TCP/443 можно завершать mTLS в отдельном виртуальном
-хосте nginx и передавать подтверждённую личность локальному backend. Это требует
-доверенного канала к backend, защиты от подделки заголовков и сохранения проверки
-отзыва клиентов. Такой режим пока не реализован.
-
-Альтернатива — TLS passthrough с маршрутизацией по SNI через nginx stream;
-она сохраняет mTLS в Go, но требует перестройки существующего входа TCP/443,
-поэтому установщик автоматически её не выполняет.
-[Механизм ssl_preread](https://nginx.org/en/docs/stream/ngx_stream_ssl_preread_module.html).
+В nginx-режиме TCP/443 остаётся у существующего nginx, VPN HTTPS работает на
+отдельном TCP/8443. Объединение VPN с nginx потребовало бы отдельной реализации
+передачи подтверждённой клиентской личности либо перестройки входа через
+TLS passthrough. Установщик этого не делает.
 
 QUIC использует UDP: UDP/443 может сосуществовать с HTTPS на TCP/443, если этот
 UDP-порт свободен (например, его не занял HTTP/3 в nginx). Для QUIC VPN можно
 задать `--vpn-quic-port 443`; по умолчанию остаётся UDP/4434.
-Право привязки к низкому порту установщик добавляет автоматически. Echo остаётся на
-отдельном UDP/4433. Установщик не меняет действующие listener других приложений.
+Право привязки к низкому порту установщик добавляет автоматически.
+Echo остаётся на отдельном UDP/4433. Действующие listener других приложений
+установщик не переносит и не отключает.

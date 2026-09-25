@@ -64,6 +64,20 @@ class InstallerTests(unittest.TestCase):
         # TCP and UDP can share a numeric port.
         self.assertEqual(i.resolve_ports(SimpleNamespace(mtls_port=4434))["mtls_port"], 4434)
 
+    def test_frontend_detection_and_saved_mode(self):
+        with patch.object(i.shutil, "which", return_value=None):
+            self.assertEqual(i.resolve_frontend(), "direct")
+            self.assertEqual(i.resolve_frontend({"domain": "old.example.org"}), "nginx")
+        with patch.object(i.shutil, "which", return_value="/usr/sbin/nginx"):
+            self.assertEqual(i.resolve_frontend(), "nginx")
+            self.assertEqual(i.resolve_frontend({"frontend": "direct"}), "direct")
+        ports = i.resolve_ports(SimpleNamespace(), frontend="direct")
+        self.assertEqual(ports["mtls_port"], 443)
+        self.assertIn("-https-listen 0.0.0.0:443", i.unit_config("/cert", "/key", ports, "direct"))
+        self.assertNotIn("-https-listen", i.unit_config("/cert", "/key"))
+        with patch.object(i.shutil, "which", return_value=None), patch.object(i.Path, "is_file", return_value=False):
+            self.assertNotIn("nginx", i.missing_packages(False, "direct"))
+
     def test_domain_validation(self):
         self.assertEqual(i.domain_name("Lab.Example.org."), "lab.example.org")
         for name in ("127.0.0.1", "https://example.org", "x.example/evil", "x.example;foo", "-a.example", "*.example.org", "foo..org", "a" * 64 + ".org"):

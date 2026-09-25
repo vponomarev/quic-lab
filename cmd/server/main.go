@@ -24,6 +24,7 @@ func main() {
 	certPath := flag.String("cert", "", "PEM certificate file")
 	keyPath := flag.String("key", "", "PEM private key file")
 	ephemeral := flag.Bool("ephemeral-cert", false, "generate an in-memory lab certificate; pin printed SHA-256 on client")
+	publicHTTPS := flag.String("https-listen", "", "optional public HTTPS listener for admin, echo and demo; shares gateway mTLS listener when addresses match")
 	webListen := flag.String("web-listen", "", "optional loopback HTTP WebSocket endpoint behind nginx")
 	gatewayQUIC := flag.String("gateway-quic", "", "optional authenticated gateway UDP address, e.g. :4434")
 	gatewayHTTPS := flag.String("gateway-https", "", "optional direct mTLS HTTPS address, e.g. :8443")
@@ -61,6 +62,8 @@ func main() {
 	log.Info("listening", "address", ln.Addr().String(), "certificate_sha256", labcert.Fingerprint(cert))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	var publicAdmin http.Handler
+	var adminBase string
 	var managed *admin.Store
 	if *adminFile != "" {
 		cfg, e := admin.ReadConfig(*adminFile)
@@ -74,6 +77,8 @@ func main() {
 			os.Exit(1)
 		}
 		ui := admin.NewWeb(cfg, managed)
+		publicAdmin = ui.Handler()
+		adminBase = cfg.PublicURL
 		as := &http.Server{Addr: cfg.Listen, Handler: ui.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		defer as.Close()
 		go func() {
@@ -121,7 +126,12 @@ func main() {
 			tc.NextProtos = []string{"http/1.1"}
 			mux := http.NewServeMux()
 			mux.HandleFunc("/tunnel", gw.WebSocket)
-			hs := &http.Server{Addr: *gatewayHTTPS, Handler: mux, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+			var handler http.Handler = mux
+			if *publicHTTPS == *gatewayHTTPS {
+				tc = publicTLS(tc)
+				handler = publicHandler(publicAdmin, adminBase, log, http.HandlerFunc(gw.WebSocket))
+			}
+			hs := &http.Server{Addr: *gatewayHTTPS, Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 			defer hs.Close()
 			go func() {
 				if e := hs.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
@@ -130,6 +140,16 @@ func main() {
 				}
 			}()
 		}
+	}
+	if *publicHTTPS != "" && *publicHTTPS != *gatewayHTTPS {
+		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+		defer ps.Close()
+		go func() {
+			if e := ps.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
+				log.Error("public_https", "error", e)
+				cancel()
+			}
+		}()
 	}
 	if *demoListen != "" {
 		ds := &http.Server{Addr: *demoListen, Handler: gateway.Demo(log), ReadHeaderTimeout: 5 * time.Second}
