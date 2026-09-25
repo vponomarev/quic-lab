@@ -6,8 +6,15 @@ import javax.net.ssl.HttpsURLConnection
 
 internal object ProfileImport {
     const val REQUEST = 4020
+    fun transports(p: JSONObject): List<String> {
+        if (p.optInt("version") == 1) return listOf("quic", "https")
+        val array = p.getJSONArray("transports")
+        val items = (0 until array.length()).map { array.getString(it) }
+        require(items.isNotEmpty() && items.size <= 3 && items.distinct() == items && items.all { it in listOf("quic", "https", "awg") }) { "Некорректный список протоколов" }
+        return items
+    }
     fun validate(p: JSONObject): String {
-        require(p.getInt("version") == 1) { "Неподдерживаемая версия профиля" }
+        require(p.getInt("version") in listOf(1, 2)) { "Неподдерживаемая версия профиля" }
         val kind=p.getString("kind")
         require(kind == "echo" || kind == "vpn") { "Неизвестный профиль" }
         require(p.getString("hostname").matches(Regex("[a-zA-Z0-9.-]{1,253}"))) { "Некорректное TLS имя" }
@@ -17,10 +24,15 @@ internal object ProfileImport {
         }
         if(kind=="echo") { endpoint("endpoint");require(!p.has("key") && !p.has("certificate")) { "Echo не должен содержать ключи" }
             require(p.optString("pin").isEmpty() || p.optString("pin").matches(Regex("[0-9a-fA-F]{64}"))) { "Некорректный fingerprint" }
-        } else {endpoint("quic");endpoint("https");require(p.optInt("mode",0) in listOf(0,3)) { "Неподдерживаемый режим" }
+        } else {
+            val allowed = transports(p)
+            if ("quic" in allowed) endpoint("quic")
+            if ("https" in allowed) endpoint("https")
+            if ("awg" in allowed) mobile.Mobile.validateAWGConfig(p.getString("awg_config"))
+            require(p.optInt("mode",0) in listOf(0,3)) { "Неподдерживаемый режим" }
             if(p.optInt("mode")==3) VpnRoutes.parse(p.getString("routes"))
             VpnRoutes.parse(p.optString("dns","1.1.1.1")+"/32")
-            require(p.getString("certificate").length<16000 && p.getString("key").length<8000) { "Слишком большой сертификат" }
+            if (allowed.any { it != "awg" }) require(p.getString("certificate").length<16000 && p.getString("key").length<8000) { "Слишком большой сертификат" }
         }
         return kind
     }
@@ -49,10 +61,17 @@ internal object ProfileImport {
         else {
             val previous=VpnProfiles.current(context).id
             val added=VpnProfiles.create(context,(p.optString("name","VPN")+" · "+p.getString("hostname")).take(100))
-            try { VpnIdentity.importProfile(context,p)
+            try {
+            val allowed = transports(p)
+            VpnIdentity.importBundle(context,p)
+            val awg = if ("awg" in allowed) AwgImport.metadata(p.getString("awg_config")) else null
+            val selected = allowed.first()
+            val address = if (selected == "awg") awg!!.getString("endpoint") else p.getString(selected)
             check(VpnProfiles.preferences(context).edit()
-                .putString("transport","quic").putString("endpoint",p.getString("quic"))
-                .putString("quic_endpoint",p.getString("quic")).putString("https_endpoint",p.getString("https"))
+                .putString("transport",selected).putString("endpoint",address)
+                .putStringSet("available_transports",allowed.toSet())
+                .putString("awg_endpoint",awg?.optString("endpoint") ?: "")
+                .putString("quic_endpoint",p.optString("quic")).putString("https_endpoint",p.optString("https"))
                 .putString("hostname",p.getString("hostname")).putString("ca",p.optString("ca"))
                 .putString("dns",p.optString("dns","1.1.1.1")).putInt("mode",p.optInt("mode",0))
                 .putString("routes",p.optString("routes")).putStringSet("apps",emptySet()).commit())

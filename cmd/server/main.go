@@ -76,6 +76,13 @@ func main() {
 			log.Error("admin_store", "error", e)
 			os.Exit(1)
 		}
+		if e = managed.ConfigureAWG(cfg.AWG); e != nil {
+			log.Error("awg_config", "error", e)
+			os.Exit(1)
+		}
+		if cfg.AWG != nil {
+			go managed.WatchAWG(ctx, cfg.DataDir)
+		}
 		ui := admin.NewWeb(cfg, managed)
 		publicAdmin = ui.Handler()
 		adminBase = cfg.PublicURL
@@ -98,7 +105,7 @@ func main() {
 		if managed != nil {
 			mtls = managed.TLS(cert)
 			mtls.NextProtos = []string{gateway.ALPN}
-			gw.Register = managed.Register
+			gw.RegisterProtocol = managed.RegisterProtocol
 			gw.Track = managed.Track
 		} else {
 			mtls, e = gateway.TLS(cert, *clientCA)

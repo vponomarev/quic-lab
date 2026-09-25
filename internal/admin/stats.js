@@ -31,7 +31,7 @@
         lines(connections, user.connections.length ? 'Онлайн · ' + user.connections.length + '\n' + user.connections.join('\n\n') : 'Офлайн');
         connections.className = user.connections.length ? 'online' : 'muted';
         lines(row.querySelector('[data-stat="last"]'), user.last);
-        lines(row.querySelector('[data-stat="traffic"]'), '↑ TX ' + user.tx + '\n↓ RX ' + user.rx);
+        lines(row.querySelector('[data-stat="traffic"]'), '↑ TX ' + user.tx + '\n↓ RX ' + user.rx + (user.rate ? '\n' + user.rate : ''));
       });
       status.textContent = changed ? 'Список пользователей изменился — обновите страницу' : 'Онлайн · каждые 5 секунд · обновлено ' + new Date().toLocaleTimeString();
     };

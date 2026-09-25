@@ -26,8 +26,13 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
         binary = Path(tmp) / "quic-lab-server"
         subprocess.run(["go", "build", "-trimpath", "-o", str(binary), "./cmd/server"], cwd=root,
                        env={**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}, check=True)
+        worker = Path(tmp) / "quic-lab-awg"
+        subprocess.run(["go", "build", "-trimpath", "-o", str(worker), "./cmd/awg-server"], cwd=root,
+                       env={**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}, check=True)
         archive = out / (name + ".tar.gz")
-        files = [(binary, "quic-lab-server", 0o755),
+        files = [(binary, "quic-lab-server", 0o755), (worker, "quic-lab-awg", 0o755),
+                 (root / "scripts/install-awg.py", "install-awg.py", 0o755),
+                 (root / "scripts/awg-network.py", "awg-network.py", 0o755),
                  (root / "scripts/install-server.py", "install-server.py", 0o755),
                  (root / "scripts/publish-apk.sh", "publish-apk.sh", 0o755),
                  (root / "docs/install-server.md", "README.md", 0o644),
@@ -39,7 +44,7 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                 info = tar.gettarinfo(str(source), arcname=name + "/" + target)
                 info.mode, info.uid, info.gid, info.uname, info.gname = mode, 0, 0, "root", "root"
                 data = source.read_bytes()
-                if source != binary:
+                if source not in (binary, worker):
                     data = data.replace(b"\r\n", b"\n")
                 info.size = len(data)
                 tar.addfile(info, io.BytesIO(data))

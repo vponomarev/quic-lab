@@ -27,11 +27,12 @@ import (
 )
 
 type Server struct {
-	Track    func(tls.ConnectionState, string, func() string) (func(int, int), func())
-	Register func(tls.ConnectionState, func()) (func(), error)
-	Allowed  []netip.Prefix
-	Log      *slog.Logger
-	slots    chan struct{}
+	RegisterProtocol func(tls.ConnectionState, string, func()) (func(), error)
+	Track            func(tls.ConnectionState, string, func() string) (func(int, int), func())
+	Register         func(tls.ConnectionState, func()) (func(), error)
+	Allowed          []netip.Prefix
+	Log              *slog.Logger
+	slots            chan struct{}
 }
 
 func New(allow string, log *slog.Logger) (*Server, error) {
@@ -91,8 +92,8 @@ func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
 			defer c.CloseWithError(0, "gateway closed")
 			stop := context.AfterFunc(ctx, func() { c.CloseWithError(0, "server stopped") })
 			defer stop()
-			if s.Register != nil {
-				release, e := s.Register(c.ConnectionState().TLS, func() { c.CloseWithError(1, "client revoked") })
+			if s.Register != nil || s.RegisterProtocol != nil {
+				release, e := s.register(c.ConnectionState().TLS, "quic", func() { c.CloseWithError(1, "client revoked") })
 				if e != nil {
 					return
 				}
@@ -120,8 +121,8 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.CloseNow()
-	if s.Register != nil {
-		release, e := s.Register(*r.TLS, func() { c.CloseNow() })
+	if s.Register != nil || s.RegisterProtocol != nil {
+		release, e := s.register(*r.TLS, "https", func() { c.CloseNow() })
 		if e != nil {
 			return
 		}
@@ -316,4 +317,11 @@ func (s countedStream) Write(b []byte) (int, error) {
 		s.count(0, n)
 	}
 	return n, e
+}
+
+func (s *Server) register(cs tls.ConnectionState, protocol string, close func()) (func(), error) {
+	if s.RegisterProtocol != nil {
+		return s.RegisterProtocol(cs, protocol, close)
+	}
+	return s.Register(cs, close)
 }

@@ -39,6 +39,13 @@ class VpnActivity : Activity() {
     private lateinit var appsSummary: TextView
     private var apps = mutableSetOf<String>()
     private val prefs by lazy { VpnProfiles.preferences(this) }
+    private val transportTypes by lazy {
+        val fallback = if (prefs.getString("transport", "quic") == "awg") setOf("awg") else setOf("quic", "https")
+        val available = prefs.getStringSet("available_transports", fallback) ?: fallback
+        listOf("quic", "https", "awg").filter { it in available }.ifEmpty { fallback.toList() }
+    }
+    private fun selectedTransport() = transportTypes[transport.selectedItemPosition]
+    private fun transportName(value: String) = when(value) { "quic" -> "QUIC"; "https" -> "HTTPS / WebSocket"; else -> "AmneziaWG" }
 
     private fun label(panel: LinearLayout, value: String): TextView =
         TextView(this).also {
@@ -344,7 +351,7 @@ class VpnActivity : Activity() {
                 ProfileImport.REQUEST,
             )
         }
-        button(panel, "Импортировать AmneziaWG .conf") {
+        button(panel, "Импортировать профиль .json / .conf") {
             check(!LabVpnService.active) { "Сначала остановите VPN" }
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 14)
         }
@@ -355,13 +362,13 @@ class VpnActivity : Activity() {
             choice(
                 panel,
                 "Транспорт",
-                arrayOf("QUIC", "HTTPS / WebSocket", "AmneziaWG"),
-                when(prefs.getString("transport", "quic")) { "awg" -> 2; "https" -> 1; else -> 0 },
+                transportTypes.map { transportName(it) }.toTypedArray(),
+                transportTypes.indexOf(prefs.getString("transport", "quic")).coerceAtLeast(0),
             )
         endpoint = field(panel, "Сервер · домен:порт", "endpoint")
         hostname = field(panel, "Имя сервера в сертификате TLS", "hostname")
-        hostname.isEnabled = transport.selectedItemPosition != 2
-        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель раз в секунду. Ключи AWG и сертификаты QUIC/HTTPS хранятся в разных профилях.")
+        hostname.isEnabled = selectedTransport() != "awg"
+        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель раз в секунду. Доступные протоколы задаются при выдаче профиля.")
         transport.onItemSelectedListener =
             object : android.widget.AdapterView.OnItemSelectedListener {
                 private var initial = true
@@ -374,13 +381,13 @@ class VpnActivity : Activity() {
                     position: Int,
                     id: Long,
                 ) {
-                    hostname.isEnabled = position != 2
+                    hostname.isEnabled = transportTypes[position] != "awg"
                     if (initial) {
                         initial = false
                         return
                     }
                     prefs
-                        .getString(when(position) { 0 -> "quic_endpoint"; 2 -> "awg_endpoint"; else -> "https_endpoint" }, null)
+                        .getString("${transportTypes[position]}_endpoint", null)
                         ?.let { endpoint.setText(it) }
                 }
             }
@@ -429,7 +436,7 @@ class VpnActivity : Activity() {
             label(
                 panel,
                 try {
-                    if (VpnIdentity.load(this).has("awg_config")) "Ключи AmneziaWG импортированы" else "Клиентский сертификат установлен"
+                    VpnIdentity.load(this).let { keys -> listOfNotNull(if(keys.has("certificate")) "Клиентский сертификат установлен" else null, if(keys.has("awg_config")) "Ключи AmneziaWG импортированы" else null).joinToString("\n") }
                 } catch (_: Exception) {
                     "Клиентский сертификат не импортирован"
                 },
@@ -493,16 +500,16 @@ class VpnActivity : Activity() {
     private fun save() {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         require(endpoint.text.contains(':')) { "Укажите домен:порт" }
-        if (transport.selectedItemPosition != 2) require(hostname.text.isNotBlank()) { "Укажите TLS hostname" }
+        if (selectedTransport() != "awg") require(hostname.text.isNotBlank()) { "Укажите TLS hostname" }
         if (mode.selectedItemPosition == 1)
             require(apps.isNotEmpty()) { "Выберите хотя бы одно приложение" }
         if (mode.selectedItemPosition == 3) VpnRoutes.parse(routes.text.toString())
         else VpnRoutes.parse(dns.text.toString() + "/32")
         val keys = VpnIdentity.load(this)
-        require(keys.has("awg_config") == (transport.selectedItemPosition == 2)) { "Для другого протокола импортируйте отдельный профиль" }
+        require(if (selectedTransport() == "awg") keys.has("awg_config") else keys.has("certificate")) { "Для другого протокола импортируйте отдельный профиль" }
         prefs
             .edit()
-            .putString("transport", when(transport.selectedItemPosition) { 0 -> "quic"; 2 -> "awg"; else -> "https" })
+            .putString("transport", selectedTransport())
             .putString("endpoint", endpoint.text.toString().trim())
             .putString("hostname", hostname.text.toString().trim())
             .putInt("mode", mode.selectedItemPosition)
@@ -595,7 +602,14 @@ class VpnActivity : Activity() {
                     require(count <= 32768) { "Конфиг слишком большой" }
                     String(bytes, 0, count, Charsets.UTF_8).also { bytes.fill(0) }
                 }
-                AwgImport.review(this, raw, { recreate() })
+                if (raw.trimStart().startsWith("{")) {
+                    val profile = org.json.JSONObject(raw)
+                    require(ProfileImport.validate(profile) == "vpn") { "Нужен VPN профиль" }
+                    AlertDialog.Builder(this).setTitle("Импорт VPN профиля")
+                        .setMessage("${profile.optString("name")} · ${profile.getString("hostname")}\n${ProfileImport.transports(profile).joinToString(" / ") { transportName(it) }}")
+                        .setPositiveButton("Импортировать") { _, _ -> try { ProfileImport.save(this, profile); recreate() } catch(e: Exception) { error(e) } }
+                        .setNegativeButton("Отмена", null).show()
+                } else AwgImport.review(this, raw, { recreate() })
             } catch (e: Exception) { error(e) }
             return
         }

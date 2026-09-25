@@ -17,37 +17,47 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"quiclab/internal/awgserver"
 	"sort"
 	"sync"
 	"time"
 )
 
 type User struct {
-	LastConnected time.Time `json:"last_connected,omitempty"`
-	LastTransport string    `json:"last_transport,omitempty"`
-	LastSource    string    `json:"last_source,omitempty"`
-	Stats         UserStats `json:"-"`
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Created       time.Time `json:"created"`
-	Expires       time.Time `json:"expires"`
-	Certificate   string    `json:"certificate"`
-	Key           string    `json:"key,omitempty"`
+	Disabled      bool            `json:"disabled,omitempty"`
+	Protocols     []string        `json:"protocols"`
+	AWG           *awgserver.Peer `json:"awg,omitempty"`
+	LastConnected time.Time       `json:"last_connected,omitempty"`
+	LastTransport string          `json:"last_transport,omitempty"`
+	LastSource    string          `json:"last_source,omitempty"`
+	Stats         UserStats       `json:"-"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Created       time.Time       `json:"created"`
+	Expires       time.Time       `json:"expires"`
+	Certificate   string          `json:"certificate"`
+	Key           string          `json:"key,omitempty"`
 }
 type diskState struct {
-	Version int             `json:"version"`
-	CA      string          `json:"ca"`
-	Key     string          `json:"ca_key"`
-	Users   map[string]User `json:"users"`
+	AWG     *awgserver.Identity `json:"awg,omitempty"`
+	Version int                 `json:"version"`
+	CA      string              `json:"ca"`
+	Key     string              `json:"ca_key"`
+	Users   map[string]User     `json:"users"`
 }
 type Store struct {
-	stats  map[string]*userTraffic
-	mu     sync.Mutex
-	path   string
-	state  diskState
-	ca     *x509.Certificate
-	key    *ecdsa.PrivateKey
-	active map[string]map[string]func()
+	awgConfig        *awgserver.Config
+	awgPrevious      map[string]awgserver.PeerStatus
+	awgUpdated       time.Time
+	awgStarted       time.Time
+	sessionProtocols map[string]string
+	stats            map[string]*userTraffic
+	mu               sync.Mutex
+	path             string
+	state            diskState
+	ca               *x509.Certificate
+	key              *ecdsa.PrivateKey
+	active           map[string]map[string]func()
 }
 
 func randomID() string {
@@ -117,7 +127,7 @@ func OpenStore(dir string) (*Store, error) {
 	if e != nil {
 		return nil, e
 	}
-	s.state = diskState{1, encode("CERTIFICATE", der), encode("PRIVATE KEY", kd), make(map[string]User)}
+	s.state = diskState{Version: 1, CA: encode("CERTIFICATE", der), Key: encode("PRIVATE KEY", kd), Users: make(map[string]User)}
 	if e = s.save(); e != nil {
 		return nil, e
 	}
@@ -149,7 +159,8 @@ func (s *Store) save() error {
 	}
 	return os.Rename(name, s.path)
 }
-func (s *Store) Create(name string) (User, error) {
+func (s *Store) Create(name string) (User, error) { return s.CreateWithProtocols(name, nil) }
+func (s *Store) CreateWithProtocols(name string, protocols []string) (User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(name) == 0 || len(name) > 100 {
@@ -172,7 +183,13 @@ func (s *Store) Create(name string) (User, error) {
 		return User{}, e
 	}
 	now := time.Now().UTC()
-	u := User{ID: randomID(), Name: name, Created: now, Expires: now.AddDate(0, 0, 90)}
+	if protocols != nil {
+		protocols = append([]string{}, protocols...)
+	}
+	u := User{ID: randomID(), Name: name, Created: now, Expires: now.AddDate(0, 0, 90), Protocols: protocols}
+	if e := s.provisionAWG(&u); e != nil {
+		return User{}, e
+	}
 	if u.Expires.After(s.ca.NotAfter) {
 		u.Expires = s.ca.NotAfter
 	}
@@ -232,6 +249,12 @@ func (s *Store) List() []User {
 		u.Stats = s.snapshot(u.ID, time.Now())
 		u.Key = ""
 		u.Certificate = ""
+		if u.AWG != nil {
+			peer := *u.AWG
+			peer.Private = ""
+			peer.PSK = ""
+			u.AWG = &peer
+		}
 		out = append(out, u)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })
@@ -241,7 +264,7 @@ func (s *Store) Profile(id string) (User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.state.Users[id]
-	if !ok || time.Now().After(u.Expires) {
+	if !ok || u.Disabled || time.Now().After(u.Expires) {
 		return User{}, errors.New("user unavailable")
 	}
 	return u, nil
@@ -274,7 +297,7 @@ func (s *Store) allowed(cs tls.ConnectionState) (string, error) {
 	}
 	cert := cs.PeerCertificates[0]
 	u, ok := s.state.Users[cert.Subject.CommonName]
-	if !ok || time.Now().After(u.Expires) {
+	if !ok || u.Disabled || time.Now().After(u.Expires) {
 		return "", errors.New("client revoked or expired")
 	}
 	b, _ := pem.Decode([]byte(u.Certificate))

@@ -28,10 +28,14 @@ type ConnectionStats struct {
 	Connected         time.Time
 }
 type UserStats struct {
-	TX, RX      uint64
-	Connections []ConnectionStats
+	RateTX, RateRX uint64
+	TX, RX         uint64
+	Connections    []ConnectionStats
 }
 
+func (s UserStats) RateText() string {
+	return "↑ " + byteText(s.RateTX) + "/с · ↓ " + byteText(s.RateRX) + "/с"
+}
 func (s UserStats) TXText() string { return byteText(s.TX) }
 func (s UserStats) RXText() string { return byteText(s.RX) }
 func byteText(n uint64) string {
@@ -80,8 +84,14 @@ func (s *Store) snapshot(id string, now time.Time) UserStats {
 		if b.Second > now.Unix()-600 && b.Second <= now.Unix() {
 			out.TX += b.TX
 			out.RX += b.RX
+			if b.Second > now.Unix()-5 {
+				out.RateTX += b.TX
+				out.RateRX += b.RX
+			}
 		}
 	}
+	out.RateTX /= 5
+	out.RateRX /= 5
 	for _, c := range u.live {
 		out.Connections = append(out.Connections, ConnectionStats{c.Transport, sourceIP(c.peer()), c.Connected})
 	}

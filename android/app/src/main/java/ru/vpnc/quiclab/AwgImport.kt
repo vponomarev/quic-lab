@@ -19,6 +19,7 @@ internal object AwgImport {
             val routes = (0 until allowed.length()).map { allowed.getString(it) }
             check(VpnProfiles.preferences(context).edit()
                 .putString("transport", "awg")
+                .putStringSet("available_transports", setOf("awg"))
                 .putString("endpoint", info.getString("endpoint"))
                 .putString("awg_endpoint", info.getString("endpoint"))
                 .putString("dns", info.getString("dns"))

@@ -6,35 +6,39 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"quiclab/internal/awgserver"
 	"strconv"
 	"strings"
 )
 
 type Profile struct {
-	Version     int    `json:"version"`
-	Kind        string `json:"kind"`
-	Name        string `json:"name,omitempty"`
-	Endpoint    string `json:"endpoint,omitempty"`
-	QUIC        string `json:"quic,omitempty"`
-	HTTPS       string `json:"https,omitempty"`
-	Hostname    string `json:"hostname"`
-	Pin         string `json:"pin,omitempty"`
-	CA          string `json:"ca,omitempty"`
-	Certificate string `json:"certificate,omitempty"`
-	Key         string `json:"key,omitempty"`
-	DNS         string `json:"dns,omitempty"`
-	Mode        int    `json:"mode,omitempty"`
-	Routes      string `json:"routes,omitempty"`
+	Transports  []string `json:"transports,omitempty"`
+	AWGConfig   string   `json:"awg_config,omitempty"`
+	Version     int      `json:"version"`
+	Kind        string   `json:"kind"`
+	Name        string   `json:"name,omitempty"`
+	Endpoint    string   `json:"endpoint,omitempty"`
+	QUIC        string   `json:"quic,omitempty"`
+	HTTPS       string   `json:"https,omitempty"`
+	Hostname    string   `json:"hostname"`
+	Pin         string   `json:"pin,omitempty"`
+	CA          string   `json:"ca,omitempty"`
+	Certificate string   `json:"certificate,omitempty"`
+	Key         string   `json:"key,omitempty"`
+	DNS         string   `json:"dns,omitempty"`
+	Mode        int      `json:"mode,omitempty"`
+	Routes      string   `json:"routes,omitempty"`
 }
 type Config struct {
-	APKPath   string  `json:"apk_path,omitempty"`
-	Listen    string  `json:"listen"`
-	PublicURL string  `json:"public_url"`
-	Username  string  `json:"username"`
-	Password  string  `json:"password"`
-	DataDir   string  `json:"data_dir"`
-	Echo      Profile `json:"echo"`
-	VPN       Profile `json:"vpn"`
+	AWG       *awgserver.Config `json:"awg,omitempty"`
+	APKPath   string            `json:"apk_path,omitempty"`
+	Listen    string            `json:"listen"`
+	PublicURL string            `json:"public_url"`
+	Username  string            `json:"username"`
+	Password  string            `json:"password"`
+	DataDir   string            `json:"data_dir"`
+	Echo      Profile           `json:"echo"`
+	VPN       Profile           `json:"vpn"`
 }
 
 func ReadConfig(file string) (Config, error) {
@@ -49,6 +53,11 @@ func ReadConfig(file string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.AWG != nil {
+		if e := c.AWG.Validate(); e != nil {
+			return e
+		}
+	}
 	u, e := url.Parse(c.PublicURL)
 	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !strings.HasSuffix(u.Path, "/") {
 		return errors.New("public_url must be an HTTPS URL ending in /")

@@ -93,6 +93,20 @@ internal object VpnIdentity {
         return cert.subjectX500Principal.name
     }
 
+    fun importBundle(context: Context, profile: JSONObject) {
+        val content = if (profile.has("certificate")) {
+            importProfile(context, profile)
+            load(context)
+        } else JSONObject().put("subject", "AmneziaWG")
+        if (profile.has("awg_config")) {
+            val raw = profile.getString("awg_config")
+            mobile.Mobile.validateAWGConfig(raw)
+            content.put("awg_config", raw)
+        }
+        require(content.has("certificate") || content.has("awg_config")) { "В профиле нет ключей" }
+        save(context, content.toString().toByteArray())
+    }
+
     fun importAWG(context: Context, raw: String) {
         mobile.Mobile.validateAWGConfig(raw)
         save(context, JSONObject().put("awg_config", raw).put("subject", "AmneziaWG").toString().toByteArray())

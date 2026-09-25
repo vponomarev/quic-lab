@@ -256,6 +256,8 @@ def main():
     parser.add_argument("domain", type=domain_name)
     parser.add_argument("--email", help="Optional Let's Encrypt account email")
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-server")
+    parser.add_argument("--enable-awg", action="store_true", help="Enable optional AmneziaWG worker (dedicated UDP port and firewall chains)")
+    parser.add_argument("--awg-port", type=port_number, help="AWG UDP port; initial default 51820")
     parser.add_argument("--apk", type=Path, help="Optional Android APK to publish")
     parser.add_argument("--gateway-allow", type=cidrs, help="Initial allowed IPv4 CIDRs; default 0.0.0.0/0. Existing policy is preserved.")
     parser.add_argument("--cert", help="Existing server PEM chain; use together with --key")
@@ -267,6 +269,8 @@ def main():
         parser.print_help()
         return
     args = parser.parse_args()
+    if args.awg_port and not args.enable_awg:
+        parser.error("--awg-port requires --enable-awg")
     if os.geteuid() != 0:
         parser.error("Run with sudo/root.")
     if bool(args.cert) != bool(args.key):
@@ -431,6 +435,11 @@ set -eu
         downloads = Path("/var/lib/quic-lab/downloads")
         downloads.mkdir(mode=0o755, exist_ok=True)
         atomic(downloads / "quic-lab.apk", args.apk.read_bytes())
+    if args.enable_awg:
+        command = [sys.executable, str(Path(__file__).with_name("install-awg.py")), "--binary", str(Path(__file__).with_name("quic-lab-awg"))]
+        if args.awg_port:
+            command += ["--port", str(args.awg_port)]
+        run(*command)
     tcp_ports = ",".join(str(p) for p in sorted({80, 443, ports["mtls_port"]}))
     print(f"Frontend: {frontend}\nReady: https://{args.domain}/lab/\nConfig: /etc/quic-lab/admin.json\n"
           "Credentials: /etc/quic-lab/admin-credentials.txt (first installation)\n"
