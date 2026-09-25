@@ -22,3 +22,6 @@ android/.kotlin/
 *.key
 *.csr
 *.srl
+
+__pycache__/
+*.pyc
