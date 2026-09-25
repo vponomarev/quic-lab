@@ -27,6 +27,7 @@ type Profile struct {
 	Routes      string `json:"routes,omitempty"`
 }
 type Config struct {
+	APKPath   string  `json:"apk_path,omitempty"`
 	Listen    string  `json:"listen"`
 	PublicURL string  `json:"public_url"`
 	Username  string  `json:"username"`

@@ -4,6 +4,7 @@
   "username": "admin",
   "password": "CHANGE-ME-BEFORE-START",
   "data_dir": "/var/lib/quic-lab",
+  "apk_path": "/var/lib/quic-lab/downloads/quic-lab.apk",
   "echo": {
     "endpoint": "your.domain:4433",
     "hostname": "your.domain"
