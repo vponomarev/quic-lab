@@ -34,6 +34,12 @@ class VpnLaunchTest {
   val deadline=System.currentTimeMillis()+90000
   while(System.currentTimeMillis()<deadline && (LabVpnService.connection=="—" || !LabVpnService.active))Thread.sleep(500)
   assertTrue("VPN consent and authenticated echo expected: ${LabVpnService.status}",LabVpnService.active && LabVpnService.connection!="—")
+  if (args.getString("exit_ip") == "true") {
+   val until=System.currentTimeMillis()+20000
+   while(System.currentTimeMillis()<until && LabVpnService.exitIP.isBlank()) Thread.sleep(100)
+   assertTrue("Exit IP through $transport: ${LabVpnService.exitState}",LabVpnService.exitIP.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+")))
+   assertTrue(LabVpnService.exitCheckedAt>0)
+  }
   if (args.getString("stop_restart") == "true") {
    repeat(2) { cycle ->
     inst.runOnMainSync {

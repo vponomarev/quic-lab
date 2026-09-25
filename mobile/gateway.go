@@ -31,16 +31,17 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
-	mu      sync.Mutex
-	q       *Client
-	mux     *smux.Session
-	cfg     gatewayConfig
-	tls     *tls.Config
-	sink    EventSink
-	ctx     context.Context
-	cancel  context.CancelFunc
-	tunStop func()
-	session int64
+	exitChecking bool
+	mu           sync.Mutex
+	q            *Client
+	mux          *smux.Session
+	cfg          gatewayConfig
+	tls          *tls.Config
+	sink         EventSink
+	ctx          context.Context
+	cancel       context.CancelFunc
+	tunStop      func()
+	session      int64
 }
 
 func NewGateway(sink EventSink) *Gateway { return &Gateway{sink: sink} }

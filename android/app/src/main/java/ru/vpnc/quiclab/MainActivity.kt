@@ -37,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var startButton: Button
     private lateinit var vpnChoice: TextView
     private lateinit var vpnButton: Button
+    private lateinit var vpnExit: TextView
+    private lateinit var exitRefresh: Button
     private lateinit var vpnCard: LinearLayout
     private lateinit var echoRow: LinearLayout
     private lateinit var vpnMetrics: TextView
@@ -84,6 +86,8 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Diagnostics.init(applicationContext)
+        Diagnostics.event("app", JSONObject().put("event","screen_opened"))
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor = Color.rgb(240, 245, 248)
         window.navigationBarColor = Color.rgb(240, 245, 248)
@@ -135,6 +139,12 @@ class MainActivity : Activity() {
         vpnCard.addView(vpnMetrics)
         space(vpnCard,8)
         vpnCard.addView(vpnTraffic)
+        vpnExit=text("",16f,ink,true)
+        vpnCard.addView(vpnExit)
+        exitRefresh=button("Проверить exit IP") {
+            startService(android.content.Intent(this,LabVpnService::class.java).setAction("exit-ip"))
+        }
+        vpnCard.addView(exitRefresh)
         vpnCard.addView(text("TX ↑ отправка · RX ↓ приём. Данные TCP/DNS внутри туннеля; без keep-alive и шифрования. Средняя скорость за ~1 с.",11f,muted))
         vpnCard.visibility=View.GONE
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -182,6 +192,7 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION, android.Manifest.permission.ACCESS_FINE_LOCATION), 42)
         })
         radios = RadioMonitor(this, { wifi, cell -> wifiDetails.text = wifi; cellDetails.text = cell; shortWifi=wifi.lineSequence().first().take(58); shortCell=cell.lineSequence().drop(1).firstOrNull()?.take(48) ?: "Сота: нет данных" }, { message, time ->
+            Diagnostics.event("radio",JSONObject().put("event","radio_transition").put("detail",if(message.startsWith("Wi-Fi")) "Wi-Fi AP changed" else "Serving cell changed"))
             if (running || LabVpnService.active) {
                 chart.mark(time)
                 timeline.addFirst("%5.1f с  %s".format((time - experimentStart) / 1000.0, message))
@@ -202,6 +213,9 @@ class MainActivity : Activity() {
         panel.addView(text("Echo: 20 сообщений/с; VPN keep-alive: 10 сообщений/с. При смене сети WSS открывает новый сеанс; может восстановиться и вернуться на Wi-Fi независимо от QUIC. Это демонстрация механики, не тест максимальной скорости.", 12f, muted))
         space(panel, 10)
 
+        panel.addView(button("Поделиться диагностикой") {
+            Diagnostics.preview(this, "Echo QUIC: replies=${q.replies}, migrations=${q.migrations}, RTT=${q.rtt}, maxGap=${q.maxGap}\nEcho HTTPS: replies=${w.replies}, RTT=${w.rtt}, maxGap=${w.maxGap}")
+        })
         val preferences = getSharedPreferences("server", MODE_PRIVATE)
         val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = if (preferences.getString("endpoint", "").isNullOrBlank()) View.VISIBLE else View.GONE }
         panel.addView(button("Настройки стенда и подробности") { settings.visibility = if (settings.visibility == View.GONE) View.VISIBLE else View.GONE })
@@ -318,6 +332,7 @@ class MainActivity : Activity() {
         quic.startOrMigrate(kind, endpoint.text.toString().trim(), hostname.text.toString().trim(), pin.text.toString().trim(), 50)
     }
     private fun accept(isQuic: Boolean, e: JSONObject) {
+        Diagnostics.event(if(isQuic) "echo-quic" else "echo-https",e)
         val time = SystemClock.elapsedRealtime()
         Log.i(if (isQuic) "QuicLab" else "WssLab", e.toString())
         runOnUiThread {
@@ -374,6 +389,12 @@ class MainActivity : Activity() {
                 val rtt=if(fresh) "%.0f мс".format(LabVpnService.rtt) else "—"
                 val transport=LabVpnService.transport.uppercase()
                 vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}"
+                vpnExit.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
+                exitRefresh.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
+                exitRefresh.isEnabled=LabVpnService.active
+                val age=if(LabVpnService.exitCheckedAt>0) " · ${(time-LabVpnService.exitCheckedAt)/1000} с назад" else ""
+                val exitStatus=if(LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho>2500) "Нет свежих ответов туннеля" else LabVpnService.exitState
+                vpnExit.text="Exit IPv4: ${LabVpnService.exitIP.ifBlank { "—" }}\n$exitStatus$age"
                 vpnTraffic.text="TX ↑ ${size(LabVpnService.txRate)}/с    RX ↓ ${size(LabVpnService.rxRate)}/с\nВсего: ↑ ${size(LabVpnService.txBytes.toDouble())}    ↓ ${size(LabVpnService.rxBytes.toDouble())}"
                 banner.text=if(LabVpnService.active && !fresh) "VPN · ждём ответы" else LabVpnService.status
                 reserveView.text="Keep-alive: 10 запросов/с · $transport · ${LabVpnService.network}"

@@ -41,7 +41,7 @@ internal class TransportStats {
                     trimRtt(now)
                     recentRtt.addLast(RttSample(now, rtt))
                 }
-                if (lastEcho != 0L) maxGap = maxOf(maxGap, (now - lastEcho).toDouble(), e.optDouble("gap_ms"))
+                if (lastEcho != 0L) maxGap = maxOf(maxGap, (now - lastEcho).toDouble(), (e.optDouble("gap_ms", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0))
                 lastEcho = now
                 replies++
                 e.optString("connection_id").takeIf { it.isNotBlank() }?.let { sessions.add(it) }

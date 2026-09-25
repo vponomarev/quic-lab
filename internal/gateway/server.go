@@ -215,6 +215,19 @@ func (s *Server) handle(ctx context.Context, st Stream, id string, log *slog.Log
 			}
 		}
 	}
+	// Resolve the one fixed HTTPS diagnostic target on the exit node. The client
+	// still performs TLS and reads the response through its existing tunnel.
+	if req.Network == "exit-ip" {
+		resolveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		addresses, err := net.DefaultResolver.LookupIP(resolveCtx, "ip4", "api.ipify.org")
+		cancel()
+		if err != nil || len(addresses) == 0 {
+			WriteJSON(st, Reply{Error: "exit IP lookup unavailable"})
+			return
+		}
+		req.Network = "tcp"
+		req.Address = net.JoinHostPort(addresses[0].String(), "443")
+	}
 	if req.Network != "tcp" && req.Network != "dns" {
 		WriteJSON(st, Reply{Error: "unsupported network"})
 		return

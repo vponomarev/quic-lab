@@ -16,7 +16,13 @@ class LabVpnService : VpnService() {
     private var starting = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Diagnostics.init(applicationContext)
+        if (intent?.action == "exit-ip") {
+            if (active && exitEnabled) session?.checkExitIP()
+            return START_NOT_STICKY
+        }
         if (intent?.action == "stop") {
+            Diagnostics.event("vpn", JSONObject().put("event", "stop_requested"))
             shutdown()
             stopSelf()
             return START_NOT_STICKY
@@ -64,6 +70,8 @@ class LabVpnService : VpnService() {
         try {
             val prefs = VpnProfiles.preferences(this)
             val mode = prefs.getInt("mode", 0)
+            exitEnabled = mode != 3
+            exitState = if (exitEnabled) "Ожидаем туннель" else "Не проверяется в режиме подсетей"
             val apps = VpnProfiles.apps(this).filter { it != packageName }
             val builder =
                 Builder()
@@ -95,6 +103,7 @@ class LabVpnService : VpnService() {
             val cfg =
                 VpnIdentity.load(this)
                     .put("transport", prefs.getString("transport", "quic"))
+                    .put("probe_exit_ip", mode != 3)
                     .put("ca", prefs.getString("ca", ""))
             val endpoint = prefs.getString("endpoint", "")!!
             val hostname = prefs.getString("hostname", "")!!
@@ -125,6 +134,7 @@ class LabVpnService : VpnService() {
             status = "Подключаем ${cfg.optString("transport").uppercase()}…"
         } catch (e: Exception) {
             status = "Ошибка: ${e.message}"
+            Diagnostics.event("vpn", JSONObject().put("event","start_failed").put("error",e.toString()))
             shutdown()
             stopSelf()
         }
@@ -132,13 +142,16 @@ class LabVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        Diagnostics.event("vpn", JSONObject().put("event","permission_revoked"))
         shutdown()
         stopSelf()
     }
 
     // Android may keep VpnService bound after stopSelf; release the VPN explicitly.
     private fun shutdown() {
+        if (active) Diagnostics.event("vpn", JSONObject().put("event","stopped"))
         active = false
+        exitState = "VPN остановлен"
         handler.removeCallbacksAndMessages(null)
         session?.close()
         session = null
@@ -158,6 +171,10 @@ class LabVpnService : VpnService() {
     }
 
     companion object {
+        @Volatile var exitEnabled = true
+        @Volatile var exitIP = ""
+        @Volatile var exitState = "Не проверен"
+        @Volatile var exitCheckedAt = 0L
         @Volatile var active = false
         @Volatile var status = "VPN выключен"
         @Volatile var rtt = 0.0
@@ -175,6 +192,7 @@ class LabVpnService : VpnService() {
         private var stats = TransportStats()
         private val events = ArrayDeque<String>()
         @Synchronized private fun resetMetrics(value:String) {
+            exitIP=""; exitCheckedAt=0; exitState="Не проверен"
             transport=value; startedAt=android.os.SystemClock.elapsedRealtime()
             lastEcho=0; network="—"; txBytes=0; rxBytes=0; txRate=0.0; rxRate=0.0
             lastTransition=0; trafficAt=startedAt; stats=TransportStats(); events.clear()
@@ -187,7 +205,13 @@ class LabVpnService : VpnService() {
 
         @Synchronized
         fun record(e: JSONObject) {
+            Diagnostics.event("vpn", e)
             val kind = e.optString("event")
+            when(kind) {
+                "exit_ip_checking" -> { exitState="Проверяем…"; return }
+                "exit_ip" -> { exitIP=e.optString("ip"); exitCheckedAt=android.os.SystemClock.elapsedRealtime(); exitState="Проверен через туннель"; return }
+                "exit_ip_failed" -> { exitState="Проверка недоступна"; return }
+            }
             val now=android.os.SystemClock.elapsedRealtime()
             if(kind=="traffic") {
                 val tx=e.optLong("tx_bytes"); val rx=e.optLong("rx_bytes")
@@ -197,6 +221,7 @@ class LabVpnService : VpnService() {
                 txBytes=tx; rxBytes=rx; trafficAt=now
                 return
             }
+            if (kind=="standby_ready") return
             stats.accept(e,now)
             if(kind=="active_network") network=e.optString("detail")
             if(kind in listOf("active_network","path_switched","network_lost")) lastTransition=now
@@ -207,7 +232,7 @@ class LabVpnService : VpnService() {
                 return
             }
             val detail = e.optString("detail", e.optString("error", e.optString("destination", "")))
-            events.addLast("$kind  $detail")
+            events.addLast("${java.time.Instant.now()}  $kind  $detail")
             while (events.size > 30) events.removeFirst()
             status =
                 when (kind) {

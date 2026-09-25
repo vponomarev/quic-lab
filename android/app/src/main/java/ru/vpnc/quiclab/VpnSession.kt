@@ -42,6 +42,7 @@ internal class VpnSession(
     private var preparedNetwork: Network? = null
     private var preparedAt = 0L
     private var nextProbeAt = 0L
+    private var nextExitCheckAt = 0L
     private var lastSwitchAt = 0L
     private var lastAttemptAt = 0L
     private var intervalMS = 50L
@@ -161,6 +162,7 @@ internal class VpnSession(
                         .put("hostname", name.ifBlank { resolved.hostname })
                     current.start(config.toString(), binder(network))
                     current.attach(tunFD.toLong())
+                    nextExitCheckAt = 0L
                     alive = true
                     intervalMS = interval
                     lastEchoAt = now()
@@ -236,9 +238,21 @@ internal class VpnSession(
         if (preparedNetwork == network) preparedNetwork = null
     }
 
+    fun checkExitIP() = submit {
+        if (alive && config.optBoolean("probe_exit_ip")) {
+            client?.checkExitIP()
+            nextExitCheckAt = now() + 60000
+        }
+    }
+
     private fun tick() {
-        if (!alive || !automatic) return
+        if (!alive) return
         val time = now()
+        if (config.optBoolean("probe_exit_ip") && time >= nextExitCheckAt && time - lastEchoAt < 2000) {
+            client?.checkExitIP()
+            nextExitCheckAt = time + 60000
+        }
+        if (!automatic) return
         if (
             activeNetwork in networks.values &&
                 lastEchoAt > lastAttemptAt &&
