@@ -37,7 +37,7 @@ func (w *Web) statsSnapshot() []liveUserStats {
 			row.Last = u.LastConnected.UTC().Format("02.01.2006 15:04:05") + " UTC\n" + u.LastTransport + " · " + u.LastSource
 		}
 		for _, c := range u.Stats.Connections {
-			row.Connections = append(row.Connections, c.Transport+"\n"+c.Source+"\nС "+c.Connected.UTC().Format("02.01 15:04:05")+" UTC")
+			row.Connections = append(row.Connections, c.Transport+" · "+c.Source+"\nС "+c.Connected.UTC().Format("02.01 15:04:05")+" UTC")
 		}
 		out = append(out, row)
 	}

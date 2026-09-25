@@ -31,7 +31,7 @@
         lines(connections, user.connections.length ? 'Онлайн · ' + user.connections.length + '\n' + user.connections.join('\n\n') : 'Офлайн');
         connections.className = user.connections.length ? 'online' : 'muted';
         lines(row.querySelector('[data-stat="last"]'), user.last);
-        lines(row.querySelector('[data-stat="traffic"]'), '↑ TX ' + user.tx + '\n↓ RX ' + user.rx + (user.rate ? '\n' + user.rate : ''));
+        lines(row.querySelector('[data-stat="traffic"]'), '↑ ' + user.tx + ' · ↓ ' + user.rx + (user.rate ? '\n' + user.rate : ''));
       });
       status.textContent = changed ? 'Список пользователей изменился — обновите страницу' : 'Онлайн · каждые 5 секунд · обновлено ' + new Date().toLocaleTimeString();
     };
@@ -48,4 +48,35 @@
   addEventListener('pagehide', () => { leaving = true; clearTimeout(retry); if (socket) socket.close(); });
   addEventListener('pageshow', event => { if (event.persisted) { leaving = false; connect(); } });
   connect();
+})();
+
+(() => {
+  'use strict';
+  const panel = document.getElementById('uplink');
+  if (!panel) return;
+  let timer, stopped = false;
+  async function update() {
+    try {
+      const response = await fetch(panel.dataset.url, {credentials:'same-origin', cache:'no-store'});
+      if (!response.ok) throw new Error(response.status === 401 ? 'Сессия завершена — войдите снова' : 'Статус аплинка недоступен');
+      const value = await response.json();
+      const state = document.getElementById('uplink-state');
+      state.textContent = !value.enabled ? 'Выключен' : value.exit_ip ? 'Работает' : value.reachable ? 'Gateway доступен' : 'Нет ответа';
+      state.className = value.reachable ? 'online' : 'disabled';
+      document.getElementById('uplink-rtt').textContent = value.rtt_ms == null ? '—' : Math.round(value.rtt_ms) + ' мс';
+      document.getElementById('uplink-exit').textContent = value.exit_ip || '—';
+      document.getElementById('uplink-time').textContent = 'Проверено ' + new Date(value.checked).toLocaleTimeString() + ' · каждые 30 с';
+      document.getElementById('uplink-error').textContent = [value.probe_error, value.exit_error].filter(Boolean).join(' · ');
+    } catch (error) {
+      document.getElementById('uplink-state').textContent = 'Нет свежих данных';
+      document.getElementById('uplink-state').className = 'muted';
+      document.getElementById('uplink-rtt').textContent = '—';
+      document.getElementById('uplink-exit').textContent = '—';
+      document.getElementById('uplink-error').textContent = error.message;
+    }
+    if (!stopped) timer = setTimeout(update, 30000);
+  }
+  addEventListener('pagehide', () => {stopped=true;clearTimeout(timer);});
+  addEventListener('pageshow', event => {if(event.persisted){stopped=false;update();}});
+  update();
 })();

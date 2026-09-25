@@ -87,6 +87,7 @@ func main() {
 			go managed.WatchAWG(ctx, cfg.DataDir)
 		}
 		ui := admin.NewWeb(cfg, managed)
+		ui.ListenerBindings = map[string]string{"public": *publicHTTPS, "echo-https": *webListen, "echo-quic": ln.Addr().String(), "vpn-quic": *gatewayQUIC, "vpn-https": *gatewayHTTPS}
 		publicAdmin = ui.Handler()
 		adminBase = cfg.PublicURL
 		as := &http.Server{Addr: cfg.Listen, Handler: ui.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
