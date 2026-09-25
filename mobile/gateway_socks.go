@@ -85,7 +85,7 @@ func (g *Gateway) socks(ctx context.Context, c net.Conn) {
 		return
 	}
 	target := net.JoinHostPort(net.IP(r[4:8]).String(), strconv.Itoa(int(binary.BigEndian.Uint16(r[8:]))))
-	s, e := gateway.Open(ctx, g.open, "tcp", target)
+	s, e := g.dialStream(ctx, "tcp", target)
 	if e != nil {
 		c.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
 		return

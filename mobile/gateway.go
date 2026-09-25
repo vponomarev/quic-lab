@@ -16,11 +16,14 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/xtaci/smux"
+	"quiclab/internal/awg"
 	"quiclab/internal/gateway"
 	"quiclab/internal/protocol"
 )
 
 type gatewayConfig struct {
+	DNS         string `json:"dns"`
+	AWGConfig   string `json:"awg_config"`
 	Transport   string `json:"transport"`
 	Endpoint    string `json:"endpoint"`
 	Hostname    string `json:"hostname"`
@@ -31,6 +34,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	awg          *awg.Engine
 	exitChecking bool
 	mu           sync.Mutex
 	q            *Client
@@ -61,6 +65,28 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	}
 	if e := json.Unmarshal([]byte(configJSON), &g.cfg); e != nil {
 		return e
+	}
+	if g.cfg.Transport == "awg" {
+		c, e := awg.Parse(g.cfg.AWGConfig)
+		if e != nil {
+			return e
+		}
+		if g.cfg.DNS != "" {
+			if net.ParseIP(g.cfg.DNS).To4() == nil {
+				return errors.New("IPv4 DNS required")
+			}
+			c.DNS = g.cfg.DNS
+		}
+		engine, e := awg.Start(c, g.cfg.Endpoint, binder)
+		if e != nil {
+			return e
+		}
+		g.awg = engine
+		g.ctx, g.cancel = context.WithCancel(context.Background())
+		g.session++
+		g.emit("connected", map[string]any{"transport": "awg", "session": g.session, "detail": "AWG engine ready; waiting for tunnel probe"})
+		go g.awgHeartbeat(g.ctx, engine, g.cfg.Endpoint)
+		return nil
 	}
 	if g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
 		return errors.New("choose quic or https")
@@ -213,6 +239,10 @@ func (g *Gateway) open(ctx context.Context) (gateway.Stream, error) {
 }
 func (g *Gateway) PreparePath(key string, binder SocketBinder) error {
 	g.mu.Lock()
+	if g.awg != nil {
+		g.mu.Unlock()
+		return errors.New("AWG does not probe standby paths")
+	}
 	q := g.q
 	cfg := g.cfg
 	tc := g.tls.Clone()
@@ -245,6 +275,9 @@ func (g *Gateway) PreparePath(key string, binder SocketBinder) error {
 func (g *Gateway) MigrateTo(key string, binder SocketBinder) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.awg != nil {
+		return g.awg.Migrate(binder)
+	}
 	if g.q != nil {
 		return g.q.MigrateTo(key, binder)
 	}
@@ -269,7 +302,11 @@ func (g *Gateway) InvalidatePath(key string) {
 func (g *Gateway) LocalAddress() string {
 	g.mu.Lock()
 	q := g.q
+	isAWG := g.awg != nil
 	g.mu.Unlock()
+	if isAWG {
+		return "awg"
+	}
 	if q != nil {
 		return q.LocalAddress()
 	}
@@ -291,7 +328,12 @@ func (g *Gateway) Stop() {
 		g.mux.Close()
 		g.mux = nil
 	}
+	a := g.awg
+	g.awg = nil
 	g.mu.Unlock()
+	if a != nil {
+		a.Close()
+	}
 	if stop != nil {
 		stop()
 	}

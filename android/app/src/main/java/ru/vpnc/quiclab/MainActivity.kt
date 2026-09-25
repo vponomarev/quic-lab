@@ -397,7 +397,7 @@ class MainActivity : Activity() {
                 vpnExit.text="Exit IPv4: ${LabVpnService.exitIP.ifBlank { "—" }}\n$exitStatus$age"
                 vpnTraffic.text="TX ↑ ${size(LabVpnService.txRate)}/с    RX ↓ ${size(LabVpnService.rxRate)}/с\nВсего: ↑ ${size(LabVpnService.txBytes.toDouble())}    ↓ ${size(LabVpnService.rxBytes.toDouble())}"
                 banner.text=if(LabVpnService.active && !fresh) "VPN · ждём ответы" else LabVpnService.status
-                reserveView.text="Keep-alive: 10 запросов/с · $transport · ${LabVpnService.network}"
+                reserveView.text=if(transport=="AWG") "ICMP endpoint через AWG · 1 запрос/с · ${LabVpnService.network}" else "Keep-alive: 10 запросов/с · $transport · ${LabVpnService.network}"
                 if(vpnChartSession!=LabVpnService.startedAt) { chart.clear(); vpnChartSession=LabVpnService.startedAt }
                 if(vpnTransition!=LabVpnService.lastTransition) { vpnTransition=LabVpnService.lastTransition; chart.mark(time) }
                 if(LabVpnService.active) chart.sample(if(fresh && transport=="QUIC") LabVpnService.rtt.toFloat() else null,if(fresh && transport!="QUIC") LabVpnService.rtt.toFloat() else null)

@@ -105,6 +105,7 @@ class LabVpnService : VpnService() {
                     .put("transport", prefs.getString("transport", "quic"))
                     .put("probe_exit_ip", mode != 3)
                     .put("ca", prefs.getString("ca", ""))
+                    .put("dns", prefs.getString("dns", "1.1.1.1"))
             val endpoint = prefs.getString("endpoint", "")!!
             val hostname = prefs.getString("hostname", "")!!
             val cm = getSystemService(ConnectivityManager::class.java)
@@ -222,10 +223,12 @@ class LabVpnService : VpnService() {
                 return
             }
             if (kind=="standby_ready") return
+            if (kind=="probe_unavailable") { status="AmneziaWG · endpoint не отвечает на ICMP"; return }
             stats.accept(e,now)
             if(kind=="active_network") network=e.optString("detail")
             if(kind in listOf("active_network","path_switched","network_lost")) lastTransition=now
             if (kind == "echo") {
+                if (transport == "awg") status = "AmneziaWG · ICMP endpoint отвечает"
                 lastEcho=now
                 rtt = e.optDouble("rtt_ms")
                 connection = e.optString("connection_id", connection)

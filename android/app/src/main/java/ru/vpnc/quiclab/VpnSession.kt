@@ -25,6 +25,7 @@ internal class VpnSession(
     private val validation: (Network, Int, Boolean) -> Unit = { _, _, _ -> },
     private val output: (JSONObject) -> Unit,
 ) {
+    private val isAWG = config.optString("transport") == "awg"
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val networks = mutableMapOf<Int, Network>()
     private val validated = mutableSetOf<Network>()
@@ -46,6 +47,7 @@ internal class VpnSession(
     private var lastSwitchAt = 0L
     private var lastAttemptAt = 0L
     private var intervalMS = 50L
+    @Volatile private var awgPingSeen = false
     @Volatile private var lastEchoAt = 0L
     @Volatile private var smoothedRTT = 100.0
     @Volatile private var standbyRTT = 0.0
@@ -110,6 +112,7 @@ internal class VpnSession(
                                     if (closed || token != epoch) return
                                     val e = JSONObject(eventJSON)
                                     if (e.optString("event") == "echo") {
+                                        if (isAWG) awgPingSeen = true
                                         lastEchoAt = now()
                                         smoothedRTT =
                                             smoothedRTT * 0.875 +
@@ -164,7 +167,7 @@ internal class VpnSession(
                     current.attach(tunFD.toLong())
                     nextExitCheckAt = 0L
                     alive = true
-                    intervalMS = interval
+                    intervalMS = if (isAWG) 1000 else interval
                     lastEchoAt = now()
                     lastSwitchAt = now()
                     smoothedRTT = 100.0
@@ -209,7 +212,7 @@ internal class VpnSession(
                         ?.let { kind to it }
                 }
                 .firstOrNull()
-                ?: if (config.optString("transport") == "https" && failedNetwork != null)
+                ?: if ((config.optString("transport") == "https" || isAWG) && failedNetwork != null)
                     networks[activeKind]
                         ?.takeIf { (retryAt[it] ?: 0L) <= now() }
                         ?.let { activeKind to it }
@@ -265,10 +268,22 @@ internal class VpnSession(
                     retryAt.remove(it)
                 }
         }
-        if (policy.isStalled(time - lastEchoAt, smoothedRTT, intervalMS)) {
+        if ((!isAWG || awgPingSeen) && policy.isStalled(time - lastEchoAt, smoothedRTT, intervalMS)) {
             recover("Нет ответов сервера: ${time - lastEchoAt} мс")
         } else if (failedNetwork != null) {
             recover("Текущий путь недоступен")
+        }
+        if (isAWG) {
+            // A second socket to the same AWG peer would move its return endpoint.
+            // Prefer a validated Wi-Fi only after dwell; no standby AWG traffic.
+            val wifi = networks[WIFI]
+            if (wifi != null && wifi in validated && wifi != activeNetwork) {
+                readySince.putIfAbsent(wifi, time)
+                if ((retryAt[wifi] ?: 0L) <= time && policy.canPreferWifi(time - (readySince[wifi] ?: time), time - lastSwitchAt))
+                    try { migrate(WIFI, wifi, "Wi-Fi устойчиво доступен") }
+                    catch (e: Exception) { penalize(wifi); event("auto_migration_failed", e.message ?: "AWG rebind failed") }
+            }
+            return
         }
         if (!alive || time < nextProbeAt) return
         val reserve =
@@ -324,6 +339,7 @@ internal class VpnSession(
                             if (ready) validated.add(network)
                             else {
                                 validated.remove(network)
+                                readySince.remove(network)
                                 false
                             }
                         if (newlyReady) event("network_validated", label(kind))
@@ -380,6 +396,7 @@ internal class VpnSession(
 
     private fun stopInternal() {
         epoch++
+        awgPingSeen = false
         alive = false
         activeNetwork = null
         failedNetwork = null

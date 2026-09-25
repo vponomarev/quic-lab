@@ -81,7 +81,7 @@ func TestGatewayTransports(t *testing.T) {
 				go hs.Serve(ln)
 			}
 			g := NewGateway(nil)
-			cfg, _ := json.Marshal(gatewayConfig{mode, addr, "localhost", cp, kp, cp})
+			cfg, _ := json.Marshal(gatewayConfig{Transport: mode, Endpoint: addr, Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
 			if e := g.Start(string(cfg), nil); e != nil {
 				t.Fatal(e)
 			}
@@ -145,7 +145,7 @@ func TestGatewayTransports(t *testing.T) {
 			}
 			bad := NewGateway(nil)
 			_, other, otherKey := testIdentity(t)
-			bcfg, _ := json.Marshal(gatewayConfig{mode, addr, "localhost", other, otherKey, cp})
+			bcfg, _ := json.Marshal(gatewayConfig{Transport: mode, Endpoint: addr, Hostname: "localhost", Certificate: other, Key: otherKey, CA: cp})
 			if e := bad.Start(string(bcfg), nil); e == nil {
 				bad.Stop()
 				t.Fatal("untrusted identity accepted")

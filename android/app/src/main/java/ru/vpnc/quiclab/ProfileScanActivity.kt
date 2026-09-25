@@ -12,7 +12,7 @@ class ProfileScanActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(TextView(this).apply{text="Импорт профиля QUIC Lab…";setPadding(24,72,24,24)})
         if(savedInstanceState==null) IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-            .setPrompt("QR echo или VPN из QUIC Lab").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
+            .setPrompt("QR QUIC Lab или AmneziaWG").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
     }
     @Deprecated("Activity result compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
@@ -21,7 +21,10 @@ class ProfileScanActivity : Activity() {
         val raw=scan.contents ?: run{finish();return}
         try {
             require(raw.length<=8192){"QR слишком большой"}
-            if(raw.trimStart().startsWith("{")) review(JSONObject(raw))
+            if(raw.trimStart().startsWith("[Interface]")) {
+                AwgImport.review(this,raw,{setResult(RESULT_OK,Intent().putExtra("kind","vpn"));finish()},{finish()})
+            }
+            else if(raw.trimStart().startsWith("{")) review(JSONObject(raw))
             else {val uri=ProfileImport.enrollment(raw)
                 AlertDialog.Builder(this).setTitle("Получить VPN-профиль?")
                     .setMessage("Сервер: ${uri.host}\nБудут получены настройки, клиентский сертификат и закрытый ключ.")

@@ -93,6 +93,11 @@ internal object VpnIdentity {
         return cert.subjectX500Principal.name
     }
 
+    fun importAWG(context: Context, raw: String) {
+        mobile.Mobile.validateAWGConfig(raw)
+        save(context, JSONObject().put("awg_config", raw).put("subject", "AmneziaWG").toString().toByteArray())
+    }
+
     fun load(context: Context): JSONObject {
         val bytes = VpnProfiles.identityFile(context).readBytes()
         val cipher =

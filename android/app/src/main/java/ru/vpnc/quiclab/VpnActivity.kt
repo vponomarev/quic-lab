@@ -290,7 +290,7 @@ class VpnActivity : Activity() {
                                         text =
                                             if (settings.getString("transport", "quic") == "quic")
                                                 "QUIC"
-                                            else "HTTPS / WebSocket"
+                                            else if (settings.getString("transport", "quic") == "awg") "AmneziaWG" else "HTTPS / WebSocket"
                                         textSize = 12f
                                         setTextColor(accent)
                                     }
@@ -344,6 +344,10 @@ class VpnActivity : Activity() {
                 ProfileImport.REQUEST,
             )
         }
+        button(panel, "Импортировать AmneziaWG .conf") {
+            check(!LabVpnService.active) { "Сначала остановите VPN" }
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 14)
+        }
         state = label(panel, LabVpnService.status)
         state.setTextColor(accent)
         panel = section("ПОДКЛЮЧЕНИЕ")
@@ -351,11 +355,13 @@ class VpnActivity : Activity() {
             choice(
                 panel,
                 "Транспорт",
-                arrayOf("QUIC", "HTTPS / WebSocket"),
-                if (prefs.getString("transport", "quic") == "quic") 0 else 1,
+                arrayOf("QUIC", "HTTPS / WebSocket", "AmneziaWG"),
+                when(prefs.getString("transport", "quic")) { "awg" -> 2; "https" -> 1; else -> 0 },
             )
         endpoint = field(panel, "Сервер · домен:порт", "endpoint")
         hostname = field(panel, "Имя сервера в сертификате TLS", "hostname")
+        hostname.isEnabled = transport.selectedItemPosition != 2
+        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель раз в секунду. Ключи AWG и сертификаты QUIC/HTTPS хранятся в разных профилях.")
         transport.onItemSelectedListener =
             object : android.widget.AdapterView.OnItemSelectedListener {
                 private var initial = true
@@ -368,12 +374,13 @@ class VpnActivity : Activity() {
                     position: Int,
                     id: Long,
                 ) {
+                    hostname.isEnabled = position != 2
                     if (initial) {
                         initial = false
                         return
                     }
                     prefs
-                        .getString(if (position == 0) "quic_endpoint" else "https_endpoint", null)
+                        .getString(when(position) { 0 -> "quic_endpoint"; 2 -> "awg_endpoint"; else -> "https_endpoint" }, null)
                         ?.let { endpoint.setText(it) }
                 }
             }
@@ -422,8 +429,7 @@ class VpnActivity : Activity() {
             label(
                 panel,
                 try {
-                    VpnIdentity.load(this)
-                    "Клиентский сертификат установлен"
+                    if (VpnIdentity.load(this).has("awg_config")) "Ключи AmneziaWG импортированы" else "Клиентский сертификат установлен"
                 } catch (_: Exception) {
                     "Клиентский сертификат не импортирован"
                 },
@@ -440,6 +446,7 @@ class VpnActivity : Activity() {
         }
         panel.addView(advanced)
         button(advanced, "Импортировать сертификат .p12") {
+            require(prefs.getString("transport", "quic") != "awg") { "Для сертификата создайте отдельный профиль QUIC/HTTPS" }
             startActivityForResult(
                 Intent(Intent.ACTION_OPEN_DOCUMENT)
                     .setType("*/*")
@@ -466,7 +473,7 @@ class VpnActivity : Activity() {
             "Смена транспорта или маршрутов: остановите VPN, измените настройки и запустите снова. Текущие соединения завершатся.",
         )
         val diagnostics = section("ДИАГНОСТИКА")
-        label(diagnostics, "Поддерживаются IPv4, TCP и DNS. Остальной UDP и IPv6 пока недоступны.")
+        label(diagnostics, "IPv4: QUIC/HTTPS поддерживают TCP и DNS; AmneziaWG — TCP и UDP. IPv6 заблокирован для захваченного VPN трафика.")
         logs = label(diagnostics, "")
         logs.textSize = 12f
         handler.post(
@@ -486,15 +493,16 @@ class VpnActivity : Activity() {
     private fun save() {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         require(endpoint.text.contains(':')) { "Укажите домен:порт" }
-        require(hostname.text.isNotBlank()) { "Укажите TLS hostname" }
+        if (transport.selectedItemPosition != 2) require(hostname.text.isNotBlank()) { "Укажите TLS hostname" }
         if (mode.selectedItemPosition == 1)
             require(apps.isNotEmpty()) { "Выберите хотя бы одно приложение" }
         if (mode.selectedItemPosition == 3) VpnRoutes.parse(routes.text.toString())
         else VpnRoutes.parse(dns.text.toString() + "/32")
-        VpnIdentity.load(this)
+        val keys = VpnIdentity.load(this)
+        require(keys.has("awg_config") == (transport.selectedItemPosition == 2)) { "Для другого протокола импортируйте отдельный профиль" }
         prefs
             .edit()
-            .putString("transport", if (transport.selectedItemPosition == 0) "quic" else "https")
+            .putString("transport", when(transport.selectedItemPosition) { 0 -> "quic"; 2 -> "awg"; else -> "https" })
             .putString("endpoint", endpoint.text.toString().trim())
             .putString("hostname", hostname.text.toString().trim())
             .putInt("mode", mode.selectedItemPosition)
@@ -577,6 +585,20 @@ class VpnActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
+        if (requestCode == 14) {
+            try {
+                val uri = data?.data ?: return
+                val raw = contentResolver.openInputStream(uri)!!.use { input ->
+                    val bytes = ByteArray(32769)
+                    var count = 0
+                    while (count < bytes.size) { val n = input.read(bytes, count, bytes.size - count); if (n < 0) break; count += n }
+                    require(count <= 32768) { "Конфиг слишком большой" }
+                    String(bytes, 0, count, Charsets.UTF_8).also { bytes.fill(0) }
+                }
+                AwgImport.review(this, raw, { recreate() })
+            } catch (e: Exception) { error(e) }
+            return
+        }
         if (requestCode == 13) {
             apps = (data?.getStringArrayListExtra("apps") ?: return).toMutableSet()
             if (useGlobalApps.isChecked) VpnProfiles.setGlobalApps(this, apps)

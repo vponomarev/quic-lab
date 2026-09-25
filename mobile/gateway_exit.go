@@ -36,7 +36,7 @@ func (g *Gateway) CheckExitIP() {
 		defer cancel()
 		g.emit("exit_ip_checking", map[string]any{})
 		ip, e := fetchExitIP(ctx, func(ctx context.Context) (net.Conn, error) {
-			st, e := gateway.Open(ctx, g.open, "exit-ip", "")
+			st, e := g.dialStream(ctx, "exit-ip", "")
 			if e != nil {
 				return nil, e
 			}
@@ -46,7 +46,7 @@ func (g *Gateway) CheckExitIP() {
 			return
 		}
 		if e != nil {
-			g.emit("exit_ip_failed", map[string]any{"detail": "Проверка внешнего IPv4 недоступна: " + e.Error()})
+			g.emit("exit_ip_failed", map[string]any{"detail": "РџСЂРѕРІРµСЂРєР° РІРЅРµС€РЅРµРіРѕ IPv4 РЅРµРґРѕСЃС‚СѓРїРЅР°: " + e.Error()})
 			return
 		}
 		g.emit("exit_ip", map[string]any{"ip": ip, "provider": "api.ipify.org"})

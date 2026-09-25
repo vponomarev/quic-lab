@@ -67,7 +67,7 @@ func TestTUNDNSRoundTripAndStop(t *testing.T) {
 	defer ln.Close()
 	go srv.ServeQUIC(ctx, ln)
 	g := NewGateway(nil)
-	cfg, _ := json.Marshal(gatewayConfig{"quic", ln.Addr().String(), "localhost", cp, kp, cp})
+	cfg, _ := json.Marshal(gatewayConfig{Transport: "quic", Endpoint: ln.Addr().String(), Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
 	if e = g.Start(string(cfg), nil); e != nil {
 		t.Fatal(e)
 	}

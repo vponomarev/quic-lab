@@ -1,0 +1,127 @@
+package mobile
+
+import (
+	"context"
+	"errors"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
+	"net"
+	"quiclab/internal/awg"
+	"quiclab/internal/gateway"
+	"time"
+)
+
+// ValidateAWGConfig returns only public metadata; keys stay in the encrypted profile.
+func ValidateAWGConfig(raw string) (string, error) {
+	c, e := awg.Parse(raw)
+	if e != nil {
+		return "", e
+	}
+	return c.Metadata(), nil
+}
+
+// flowDialer is the boundary between the Android flow router and protocol cores.
+// Future cores (including proxy engines) need not implement the QUIC wire protocol.
+type flowDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+type tcpFlow struct{ net.Conn }
+
+func (c tcpFlow) CloseWrite() error {
+	if v, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return v.CloseWrite()
+	}
+	return c.Close()
+}
+func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.Stream, error) {
+	g.mu.Lock()
+	var d flowDialer
+	if g.awg != nil {
+		d = g.awg
+	}
+	g.mu.Unlock()
+	if d == nil {
+		return gateway.Open(ctx, g.open, kind, target)
+	}
+	if kind == "exit-ip" {
+		target = "api.ipify.org:443"
+	}
+	c, e := d.DialContext(ctx, "tcp4", target)
+	if e != nil {
+		return nil, e
+	}
+	return tcpFlow{c}, nil
+}
+func (g *Gateway) datagramBackend() flowDialer {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.awg == nil {
+		return nil
+	}
+	return g.awg
+}
+
+// RTT is an ICMP round trip to the endpoint through AWG.
+// Probes also drive roaming when PersistentKeepalive is zero.
+func (g *Gateway) awgHeartbeat(ctx context.Context, d flowDialer, endpoint string) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var seq uint16
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		seq++
+		started := time.Now()
+		probe, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		e := awgPingProbe(probe, d, endpoint, seq)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		if e == nil {
+			g.emit("echo", map[string]any{"rtt_ms": float64(time.Since(started)) / float64(time.Millisecond), "connection_id": "awg", "probe": "icmp"})
+		} else {
+			g.emit("probe_unavailable", map[string]any{"detail": "Endpoint ICMP: no reply through AWG"})
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func awgPingProbe(ctx context.Context, d flowDialer, target string, seq uint16) error {
+	c, e := d.DialContext(ctx, "ping4", target)
+	if e != nil {
+		return e
+	}
+	defer c.Close()
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer stop()
+	deadline, _ := ctx.Deadline()
+	c.SetDeadline(deadline)
+	message := icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: 1, Seq: int(seq), Data: []byte("quic-lab-rtt")}}
+	packet, e := message.Marshal(nil)
+	if e != nil {
+		return e
+	}
+	if _, e = c.Write(packet); e != nil {
+		return e
+	}
+	b := make([]byte, 256)
+	n, e := c.Read(b)
+	if e != nil {
+		return e
+	}
+	response, e := icmp.ParseMessage(1, b[:n])
+	if e != nil {
+		return e
+	}
+	echo, ok := response.Body.(*icmp.Echo)
+	if !ok || response.Type != ipv4.ICMPTypeEchoReply || echo.Seq != int(seq) || string(echo.Data) != "quic-lab-rtt" {
+		return errors.New("invalid ICMP echo reply")
+	}
+	return nil
+}

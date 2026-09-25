@@ -58,7 +58,7 @@ internal object Diagnostics {
     @Synchronized fun event(source: String, event: JSONObject) {
         val kind = event.optString("event")
         if (kind in listOf("echo", "traffic")) return
-        if (kind in listOf("standby_ready", "standby_unavailable")) {
+        if (kind in listOf("standby_ready", "standby_unavailable", "probe_unavailable")) {
             val routineKey="$source/$kind"
             val time=SystemClock.elapsedRealtime()
             if (time-(routineAt[routineKey] ?: -30000L)<30000) return

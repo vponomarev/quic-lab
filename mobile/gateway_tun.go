@@ -112,7 +112,7 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 		id := c.ID()
 		dst := net.JoinHostPort(id.LocalAddress.String(), strconv.Itoa(int(id.LocalPort)))
 		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
-		s, e := gateway.Open(ctx, h.g.open, "tcp", dst)
+		s, e := h.g.dialStream(ctx, "tcp", dst)
 		cancel()
 		if e != nil {
 			h.g.emit("flow_failed", map[string]any{"destination": dst, "error": e.Error()})
@@ -124,10 +124,11 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 	}()
 }
 
-// Initial VPN supports DNS over UDP only; arbitrary UDP is rejected, never leaked.
+// QUIC/HTTPS support DNS datagrams; AWG can carry arbitrary IPv4 UDP.
 func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 	id := c.ID()
-	if id.LocalPort != 53 {
+	backend := h.g.datagramBackend()
+	if backend == nil && id.LocalPort != 53 {
 		c.Close()
 		return
 	}
@@ -150,6 +151,10 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 		defer h.wg.Done()
 		defer func() { <-h.slots }()
 		defer c.Close()
+		if backend != nil {
+			h.relayUDP(c, backend)
+			return
+		}
 		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
 		s, e := gateway.Open(ctx, h.g.open, "dns", net.JoinHostPort(id.LocalAddress.String(), "53"))
 		cancel()
@@ -180,4 +185,61 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 			}
 		}
 	}()
+}
+
+// A connected UDP flow uses independent read/write loops, preserving datagram boundaries.
+func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
+	id := c.ID()
+	dst := net.JoinHostPort(id.LocalAddress.String(), strconv.Itoa(int(id.LocalPort)))
+	ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
+	out, e := d.DialContext(ctx, "udp4", dst)
+	cancel()
+	if e != nil {
+		return
+	}
+	defer out.Close()
+	stop := context.AfterFunc(h.ctx, func() { out.Close(); c.Close() })
+	defer stop()
+	b := make([]byte, 65535)
+	c.SetDeadline(time.Now().Add(60 * time.Second))
+	n, from, e := c.ReadFrom(b)
+	if e != nil {
+		return
+	}
+	out.SetDeadline(time.Now().Add(60 * time.Second))
+	if _, e = out.Write(b[:n]); e != nil {
+		return
+	}
+	h.tx.Add(int64(n))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer c.Close()
+		reply := make([]byte, 65535)
+		for {
+			n, e := out.Read(reply)
+			if e != nil {
+				return
+			}
+			if _, e = c.WriteTo(reply[:n], from); e != nil {
+				return
+			}
+			h.rx.Add(int64(n))
+			c.SetDeadline(time.Now().Add(60 * time.Second))
+			out.SetDeadline(time.Now().Add(60 * time.Second))
+		}
+	}()
+	defer func() { out.Close(); <-done }()
+	for {
+		n, _, e = c.ReadFrom(b)
+		if e != nil {
+			return
+		}
+		if _, e = out.Write(b[:n]); e != nil {
+			return
+		}
+		h.tx.Add(int64(n))
+		c.SetDeadline(time.Now().Add(60 * time.Second))
+		out.SetDeadline(time.Now().Add(60 * time.Second))
+	}
 }
