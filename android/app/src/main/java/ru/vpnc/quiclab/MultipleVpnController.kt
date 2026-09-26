@@ -205,6 +205,7 @@ internal object MultipleVpnState {
         val name: String,
         val transport: String,
         var status: String = "Подключаем…",
+        var network: String = "—",
         var rtt: Double = 0.0,
         var echo: Long = 0,
         var tx: Long = 0,
@@ -233,6 +234,7 @@ internal object MultipleVpnState {
         val s = states[id] ?: return
         val now = SystemClock.elapsedRealtime()
         when (e.optString("event")) {
+            "active_network" -> s.network = e.optString("detail")
             "echo" -> {
                 s.rtt = e.optDouble("rtt_ms")
                 s.echo = now
@@ -267,6 +269,20 @@ internal object MultipleVpnState {
                 s.at = now
             }
         }
+    }
+
+    @Synchronized
+    fun notification(now: Long): VpnNotificationContent {
+        val channels = states.values.map { "${vpnNetworkLabel(it.network)} · ${it.transport}" }.distinct().joinToString(" / ")
+        val text = states.values.joinToString("\n\n") {
+            val fresh = it.echo > 0 && now - it.echo < 3500
+            val rateFresh = it.at > 0 && now - it.at < 3500
+            val latency = if(fresh) "RTT %.0f мс".format(it.rtt) else "RTT —"
+            val status = if(it.echo > 0 && !fresh) "Нет свежих ответов" else it.status
+            "${it.name} · ${vpnNetworkLabel(it.network)} · ${it.transport}\n$status · $latency\n" +
+                vpnTrafficRate(if(rateFresh) it.txRate else 0.0, if(rateFresh) it.rxRate else 0.0)
+        }
+        return VpnNotificationContent("VPN · ${states.size} профилей", channels, text)
     }
 
     @Synchronized

@@ -55,24 +55,10 @@ class LabVpnService : VpnService() {
                 Intent(this, VpnActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE,
             )
-        val stop =
-            PendingIntent.getService(
-                this,
-                1,
-                Intent(this, LabVpnService::class.java).setAction("stop"),
-                PendingIntent.FLAG_IMMUTABLE,
-            )
-        startForeground(
-            42,
-            Notification.Builder(this, "vpn")
-                .setSmallIcon(android.R.drawable.ic_lock_lock)
-                .setContentTitle("QUIC Lab VPN")
-                .setContentText("Экспериментальный IPv4 туннель")
-                .setContentIntent(open)
-                .addAction(Notification.Action.Builder(null, "Остановить", stop).build())
-                .setOngoing(true)
-                .build(),
-        )
+        multipleMode = false
+        status = "Подключаем…"
+        startForeground(42, vpnNotification())
+        handler.postDelayed(notificationTick, 1000)
         try {
             if (VpnProfiles.multiple(this)) {
                 val plan=MultipleVpnPlan.load(this)
@@ -159,6 +145,32 @@ class LabVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
+    private val notificationTick = object : Runnable {
+        override fun run() {
+            if (!active) return
+            getSystemService(NotificationManager::class.java).notify(42, vpnNotification())
+            handler.postDelayed(this, 2000)
+        }
+    }
+
+    private fun vpnNotification(): Notification {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val content = if (multipleMode) MultipleVpnState.notification(now) else notificationSnapshot(now)
+        val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val stop = PendingIntent.getService(this, 1, Intent(this, LabVpnService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE)
+        return Notification.Builder(this, "vpn")
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setContentTitle(content.title)
+            .setContentText(content.text)
+            .setStyle(Notification.BigTextStyle().bigText(content.details))
+            .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, "Остановить", stop).build())
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setOngoing(true)
+            .build()
+    }
+
     override fun onRevoke() {
         Diagnostics.event("vpn", JSONObject().put("event","permission_revoked"))
         shutdown()
@@ -224,6 +236,19 @@ class LabVpnService : VpnService() {
             lastEcho=0; network="—"; txBytes=0; rxBytes=0; txRate=0.0; rxRate=0.0
             lastTransition=0; trafficAt=startedAt; stats=TransportStats(); events.clear()
         }
+        @Synchronized internal fun notificationSnapshot(now: Long): VpnNotificationContent {
+            val fresh = lastEcho > 0 && now - lastEcho < 3500
+            val rateFresh = trafficAt > 0 && now - trafficAt < 3500
+            val rate = vpnTrafficRate(if(rateFresh) txRate else 0.0, if(rateFresh) rxRate else 0.0)
+            val latency = if(fresh) "RTT %.0f мс".format(rtt) else "RTT —"
+            val state = if(lastEcho > 0 && !fresh) "Нет свежих ответов · $status" else status
+            return VpnNotificationContent(
+                "${vpnNetworkLabel(network)} · ${transport.uppercase()}",
+                "$rate · $latency",
+                "$state\n$rate · $latency\nВсего ↑ ${vpnBytes(txBytes.toDouble())} · ↓ ${vpnBytes(rxBytes.toDouble())}",
+            )
+        }
+
         @Synchronized fun quality(now:Long):String {
             val jitter=stats.maxJitter(now)?.let{"%.1f мс".format(it)} ?: "—"
             val gap=if(lastEcho==0L) "—" else "%.0f мс".format(maxOf(stats.maxGap,if(active)(now-lastEcho).toDouble() else 0.0))
