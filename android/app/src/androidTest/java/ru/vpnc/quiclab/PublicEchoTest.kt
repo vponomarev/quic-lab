@@ -50,7 +50,7 @@ class PublicEchoTest {
         val p = c.getSharedPreferences("server", 0)
         assertEquals("Use the configured public lab", host, p.getString("hostname", ""))
         p.edit().putString("awg_enroll_url", "https://$host/lab/echo/awg").commit()
-        c.startActivity(Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity").use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
         Thread.sleep(1800)
         fun views(v: View): List<View> =
             listOf(v) +

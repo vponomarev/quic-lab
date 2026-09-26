@@ -236,7 +236,7 @@ class LabVpnService : VpnService() {
             val kind = e.optString("event")
             when(kind) {
                 "transit_echo" -> { transitEnabled=true; transitRtt=e.optDouble("rtt_ms"); lastTransitEcho=android.os.SystemClock.elapsedRealtime(); return }
-                "transit_probe_failed" -> { lastTransitEcho=0; return }
+                "transit_probe_failed" -> { return }
                 "exit_ip_checking" -> { exitState="Проверяем…"; return }
                 "exit_ip" -> { exitIP=e.optString("ip"); exitCheckedAt=android.os.SystemClock.elapsedRealtime(); exitState="Проверен через туннель"; return }
                 "exit_ip_failed" -> { exitState="Проверка недоступна"; return }

@@ -153,15 +153,15 @@ class MainActivity : Activity() {
         vpnCard.addView(exitRefresh)
         vpnCard.addView(text("TX ↑ отправка · RX ↓ приём. Данные TCP/UDP внутри туннеля; без keep-alive и шифрования. Средняя скорость за ~1 с.",11f,muted))
         vpnCard.visibility=View.GONE
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         panel.addView(row)
         echoRow=row
         qCard = MetricCard("QUIC", "Надёжный поток · UDP", teal)
         wCard = MetricCard("HTTPS", "WebSocket · TLS/TCP", amber)
-        row.addView(qCard.box, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
-        row.addView(wCard.box, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
+        row.addView(qCard.box, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        row.addView(wCard.box, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         aCard = MetricCard("AmneziaWG", "ICMP через туннель · 1 запрос/с", Color.rgb(100,80,175))
-        panel.addView(aCard.box, LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(10) })
+        row.addView(aCard.box, LinearLayout.LayoutParams(-1,-2))
         aCard.box.visibility=View.GONE
         space(panel, 12)
         val graphBox = card(panel)
@@ -257,33 +257,53 @@ class MainActivity : Activity() {
 
     private inner class MetricCard(private val title: String, subtitle: String, color: Int) {
         val box = LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(14), dp(12), dp(14)); background = background(Color.WHITE)
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            background = background(Color.WHITE)
+            contentDescription="$title · $subtitle"
         }
-        private val status = text("Готов к запуску", 12f, muted)
-        private val rtt = text("—", 29f, color, true)
-        private val gap = text("Пауза макс.   —", 12f, muted)
-        private val jitter = text("—", 21f, color, true)
-        private val sessions = text("Сеансов   0", 14f, ink, true)
-        private val network = text("Сеть   —", 12f, muted)
+        private val status = text("Готов к запуску", 11f, muted).apply {
+            maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END
+            gravity=android.view.Gravity.END
+        }
+        private val rtt = text("—", 23f, color, true)
+        private val rttLabel = text("RTT, мс · шлюз", 10f, muted)
+        private val gap = text("—", 18f, ink, true)
+        private val jitter = text("—", 18f, color, true)
+        private val footer = text("", 10f, muted)
         init {
-            box.addView(text(title, 20f, color, true)); box.addView(text(subtitle, 10f, muted))
-            space(box, 9); box.addView(status); box.addView(rtt); box.addView(text("RTT, мс · шлюз / транзит", 11f, muted))
-            space(box, 8); box.addView(text("Jitter max · 15 с", 11f, muted)); box.addView(jitter)
-            space(box, 8); box.addView(gap); space(box, 6); box.addView(sessions); box.addView(network)
+            box.addView(LinearLayout(this@MainActivity).apply {
+                gravity=android.view.Gravity.CENTER_VERTICAL
+                addView(text(title,17f,color,true),LinearLayout.LayoutParams(-2,-2))
+                addView(status,LinearLayout.LayoutParams(0,-2,1f).apply { leftMargin=dp(8) })
+            })
+            space(box,4)
+            val metrics=LinearLayout(this@MainActivity)
+            fun column(value:TextView,label:TextView,weight:Float) {
+                metrics.addView(LinearLayout(this@MainActivity).apply {
+                    orientation=LinearLayout.VERTICAL; addView(value); addView(label)
+                },LinearLayout.LayoutParams(0,-2,weight))
+            }
+            column(rtt,rttLabel,1.65f)
+            column(jitter,text("Jitter · 15 с, мс",10f,muted),1f)
+            column(gap,text("Пауза макс., мс",10f,muted),1f)
+            box.addView(metrics)
+            space(box,3);box.addView(footer)
         }
         fun render(model: TransportStats, now: Long, enabled: Boolean = true, freshness: Long = 1500) {
-            status.text = if (!enabled) "Сравнение выключено" else if (model.silence(now) > freshness) "Нет свежих ответов" else model.state
-            rtt.text = if (model.replies == 0L || model.silence(now) > freshness) "—" else "%.0f".format(model.rtt)
-            if (model.transitEnabled) {
-                val remote=if(model.lastTransitEcho>0 && now-model.lastTransitEcho<3500) "%.0f".format(model.transitRtt) else "—"
-                rtt.append(" / $remote")
-                rtt.textSize=23f
-            } else rtt.textSize=29f
-            gap.text = "Пауза макс.  ${if (model.replies > 1) "%.0f мс".format(maxOf(model.maxGap, model.silence(now).toDouble())) else "—"}"
-            jitter.text = model.maxJitter(now)?.let { "%.1f мс".format(it) } ?: "—"
-            sessions.text = if(title=="AmneziaWG") "Проб ICMP   ${model.replies}" else "Сеансов   ${model.sessions.size}"
-            network.text = model.network.replace("LTE/Cellular", "Мобильная")
-            box.alpha = if (enabled) 1f else 0.45f
+            val network=model.network.replace("LTE/Cellular", "Mobile")
+            status.text=if(!enabled) "Выключен" else if(!model.active) model.state else if(model.silence(now)>freshness) "$network · ждём ответ" else network
+            val local=if(model.replies==0L || model.silence(now)>freshness) "—" else "%.0f".format(model.rtt)
+            val remote=if(model.lastTransitEcho>0) "%.0f".format(model.transitRtt) else "—"
+            rtt.text=if(model.transitEnabled) "$local / $remote" else local
+            rttLabel.text=if(model.transitEnabled) "RTT · шлюз / транзит, мс" else "RTT · шлюз, мс"
+            gap.text=if(model.replies>1) "%.0f".format(maxOf(model.maxGap,model.silence(now).toDouble())) else "—"
+            jitter.text=model.maxJitter(now)?.let { "%.1f".format(it) } ?: "—"
+            val count=if(title=="AmneziaWG") "ICMP-проб: ${model.replies}" else "Сеансов: ${model.sessions.size}"
+            val age=if(model.lastTransitEcho>0) (now-model.lastTransitEcho).coerceAtLeast(0)/1000 else 0
+            val stale=if(model.transitEnabled && model.lastTransitEcho>0 && age>=4 && model.active) " · транзит: $age с назад" else ""
+            footer.text=count+stale
+            box.alpha=if(enabled) 1f else 0.45f
         }
     }
 
@@ -446,8 +466,10 @@ class MainActivity : Activity() {
             if(vpn) {
                 val fresh=LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho<1500
                 val localRtt=if(fresh) "%.0f".format(LabVpnService.rtt) else "—"
-                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0 && time-LabVpnService.lastTransitEcho<3500) "%.0f".format(LabVpnService.transitRtt) else "—"
-                val rtt=if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит" else "$localRtt мс"
+                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0) "%.0f".format(LabVpnService.transitRtt) else "—"
+                val transitAge=if(LabVpnService.lastTransitEcho>0) (time-LabVpnService.lastTransitEcho)/1000 else 0
+                val transitAgeLabel=if(transitAge>=4 && LabVpnService.active) " · транзит $transitAge с назад" else ""
+                val rtt=if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит$transitAgeLabel" else "$localRtt мс"
                 val transport=LabVpnService.transport.uppercase()
                 vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}\n${LabVpnService.flowSummary}"
                 vpnExit.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
