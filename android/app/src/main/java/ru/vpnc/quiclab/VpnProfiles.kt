@@ -52,8 +52,16 @@ internal object VpnProfiles {
     }
     fun globalApps(c:Context)=meta(c).getStringSet("global_apps",emptySet())!!.toSet()
     fun setGlobalApps(c:Context,apps:Set<String>){check(meta(c).edit().putStringSet("global_apps",apps.toSet()).commit())}
-    fun apps(c:Context):Set<String> {
-        val p=preferences(c)
+    fun apps(c:Context,id:String=current(c).id):Set<String> {
+        val p=preferences(c,id)
         return if(p.getBoolean("global_apps",false)) globalApps(c) else p.getStringSet("apps",emptySet())!!.toSet()
     }
+
+    fun multiple(c:Context)=meta(c).getBoolean("multiple",false)
+    fun setMultiple(c:Context,value:Boolean){editable();check(meta(c).edit().putBoolean("multiple",value).commit())}
+    fun enabled(c:Context)=meta(c).getStringSet("multiple_enabled",emptySet())!!.toSet()
+    fun setEnabled(c:Context,ids:Set<String>){editable();check(meta(c).edit().putStringSet("multiple_enabled",ids.toSet()).commit())}
+    fun dnsProfile(c:Context)=meta(c).getString("multiple_dns","").orEmpty()
+    fun setDnsProfile(c:Context,id:String){editable();check(meta(c).edit().putString("multiple_dns",id).commit())}
+    fun move(c:Context,id:String,delta:Int){editable();val ps=list(c).toMutableList();val i=ps.indexOfFirst{it.id==id};val j=i+delta;if(i>=0 && j in ps.indices){java.util.Collections.swap(ps,i,j);write(c,ps,current(c).id)}}
 }

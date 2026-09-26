@@ -23,6 +23,7 @@
         </service>
         <activity android:name=".ProfileScanActivity" android:exported="false" />
         <activity android:name=".AppSelectionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".MultipleVpnActivity" android:exported="false" />
         <activity android:name=".VpnActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

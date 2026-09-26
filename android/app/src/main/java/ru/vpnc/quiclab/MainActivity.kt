@@ -306,9 +306,11 @@ class MainActivity : Activity() {
         if(LabVpnService.active) { startService(android.content.Intent(this,LabVpnService::class.java).setAction("stop")); return }
         if(running) { Toast.makeText(this,"Сначала остановите Echo",Toast.LENGTH_SHORT).show(); return }
         try {
+            if(VpnProfiles.multiple(this)) MultipleVpnPlan.load(this) else {
             val p=VpnProfiles.preferences(this)
             require(!p.getString("endpoint","").isNullOrBlank()) { "Импортируйте VPN-профиль или заполните настройки" }
             VpnIdentity.load(this)
+            }
             val consent=android.net.VpnService.prepare(this)
             if(consent!=null) startActivityForResult(consent,51)
             else startForegroundService(android.content.Intent(this,LabVpnService::class.java))
@@ -377,6 +379,7 @@ class MainActivity : Activity() {
             val time = SystemClock.elapsedRealtime()
             val vpn=LabVpnService.active || (!running && LabVpnService.startedAt>0)
             vpnChoice.text="${VpnProfiles.current(this@MainActivity).name} · VPN: ${if(LabVpnService.active) LabVpnService.transport.uppercase() else VpnProfiles.preferences(this@MainActivity).getString("transport","quic")!!.uppercase()} · Настроить ›"
+            if(VpnProfiles.multiple(this@MainActivity)) vpnChoice.text="Multiple · ${VpnProfiles.enabled(this@MainActivity).size} профилей · Настроить ›"
             vpnButton.text=if(LabVpnService.active) "Stop VPN" else "Start VPN"
             vpnButton.isEnabled=!running
             startButton.isEnabled=!LabVpnService.active
@@ -400,6 +403,12 @@ class MainActivity : Activity() {
                 vpnTraffic.text="TX ↑ ${size(LabVpnService.txRate)}/с    RX ↓ ${size(LabVpnService.rxRate)}/с\nВсего: ↑ ${size(LabVpnService.txBytes.toDouble())}    ↓ ${size(LabVpnService.rxBytes.toDouble())}"
                 banner.text=if(LabVpnService.active && !fresh) "VPN · ждём ответы" else LabVpnService.status
                 reserveView.text=if(transport=="AWG") "ICMP endpoint через AWG · 1 запрос/с · ${LabVpnService.network}" else "Keep-alive: 10 запросов/с · $transport · ${LabVpnService.network}"
+                if(LabVpnService.multipleMode) {
+                    vpnMetrics.text=MultipleVpnState.summary()
+                    vpnTraffic.text="Статистика показана отдельно для каждого профиля"
+                    banner.text=LabVpnService.status
+                    reserveView.text="Multiple · управление профилями в настройках VPN"
+                }
                 if(vpnChartSession!=LabVpnService.startedAt) { chart.clear(); vpnChartSession=LabVpnService.startedAt }
                 if(vpnTransition!=LabVpnService.lastTransition) { vpnTransition=LabVpnService.lastTransition; chart.mark(time) }
                 if(LabVpnService.active) chart.sample(if(fresh && transport=="QUIC") LabVpnService.rtt.toFloat() else null,if(fresh && transport!="QUIC") LabVpnService.rtt.toFloat() else null)

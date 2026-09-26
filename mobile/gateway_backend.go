@@ -35,7 +35,7 @@ func (c tcpFlow) CloseWrite() error {
 }
 func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.Stream, error) {
 	g.mu.Lock()
-	var d flowDialer
+	d := g.direct
 	if g.awg != nil {
 		d = g.awg
 	}
@@ -55,6 +55,9 @@ func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.
 func (g *Gateway) datagramBackend() flowDialer {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.direct != nil {
+		return g.direct
+	}
 	if g.awg != nil {
 		return g.awg
 	}

@@ -24,6 +24,8 @@ internal class VpnSession(
     private val availability: (Network, Int, Boolean) -> Unit = { _, _, _ -> },
     private val validation: (Network, Int, Boolean) -> Unit = { _, _, _ -> },
     private val output: (JSONObject) -> Unit,
+    private val attached: ((Gateway) -> Unit)? = null,
+    private val detached: ((Gateway) -> Unit)? = null,
 ) {
     private val isAWG = config.optString("transport") == "awg"
     private val worker = Executors.newSingleThreadScheduledExecutor()
@@ -164,7 +166,7 @@ internal class VpnSession(
                         .put("endpoint", resolved.address)
                         .put("hostname", name.ifBlank { resolved.hostname })
                     current.start(config.toString(), binder(network))
-                    current.attach(tunFD.toLong())
+                    if (attached != null) attached.invoke(current) else current.attach(tunFD.toLong())
                     nextExitCheckAt = 0L
                     alive = true
                     intervalMS = if (isAWG) 1000 else interval
@@ -406,6 +408,7 @@ internal class VpnSession(
         failures.clear()
         lastAttemptAt = 0
         nextProbeAt = 0
+        client?.let { detached?.invoke(it) }
         client?.stop()
         client = null
     }

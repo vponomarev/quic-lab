@@ -30,6 +30,7 @@ import (
 	"quiclab/internal/gateway"
 )
 
+func TestMultipleTUNTCPAndUDP(t *testing.T)            { testTUNRoundTrip(t, "multiple") }
 func TestTUNDNSRoundTripAndStop(t *testing.T)          { testTUNRoundTrip(t, "legacy") }
 func TestTUNQUICDatagramRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, "quic") }
 func TestTUNWebSocketUDPRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, "https") }
@@ -106,7 +107,21 @@ func testTUNRoundTrip(t *testing.T, mode string) {
 	}
 	defer unix.Close(fds[0])
 	defer unix.Close(fds[1])
-	if e = g.Attach(fds[0]); e != nil {
+	stop := g.Stop
+	if mode == "multiple" {
+		router, err := NewMultiRouter(`[{"id":"q","mode":"all"}]`, "q", nil, &multipleBinder{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer router.Close()
+		if err = router.SetGateway("q", g); err != nil {
+			t.Fatal(err)
+		}
+		if err = router.Attach(fds[0]); err != nil {
+			t.Fatal(err)
+		}
+		stop = func() { router.Close(); g.Stop() }
+	} else if e = g.Attach(fds[0]); e != nil {
 		t.Fatal(e)
 	}
 	payload := []byte("DNS roundtrip through TUN")
@@ -200,7 +215,7 @@ func testTUNRoundTrip(t *testing.T, mode string) {
 		t.Fatalf("TUN TCP response: %d/%d", len(result), len(body))
 	}
 	done := make(chan struct{})
-	go func() { g.Stop(); close(done) }()
+	go func() { stop(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):

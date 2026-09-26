@@ -11,12 +11,16 @@ import org.json.JSONObject
 
 class LabVpnService : VpnService() {
     private var session: VpnSession? = null
+    private var multiple: MultipleVpnController? = null
     private var tun: ParcelFileDescriptor? = null
     private val handler = Handler(Looper.getMainLooper())
     private var starting = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Diagnostics.init(applicationContext)
+        if (intent?.action == "toggle-profile") {
+            multiple?.toggle(intent.getStringExtra("profile_id").orEmpty());return START_NOT_STICKY
+        }
         if (intent?.action == "exit-ip") {
             if (active && exitEnabled) session?.checkExitIP()
             return START_NOT_STICKY
@@ -29,12 +33,13 @@ class LabVpnService : VpnService() {
         }
         if (intent?.action == "move") {
             if (active) {
+                multiple?.let { it.move(intent.getIntExtra("network",VpnSession.WIFI));return START_NOT_STICKY }
                 val p=VpnProfiles.preferences(this)
                 session?.startOrMigrate(intent.getIntExtra("network",VpnSession.WIFI),p.getString("endpoint","")!!,p.getString("hostname","")!!,"",100)
             }
             return START_NOT_STICKY
         }
-        if (session != null) return START_NOT_STICKY
+        if (session != null || multiple != null) return START_NOT_STICKY
         resetMetrics(VpnProfiles.preferences(this).getString("transport","quic")!!)
         transitEnabled = !VpnProfiles.preferences(this).getString("transit_endpoint", "").isNullOrBlank()
         connection = "—"
@@ -69,6 +74,16 @@ class LabVpnService : VpnService() {
                 .build(),
         )
         try {
+            if (VpnProfiles.multiple(this)) {
+                val plan=MultipleVpnPlan.load(this)
+                tun=Builder().setSession("QUIC Lab · multiple").setMtu(1280).addAddress("10.254.254.1",32)
+                    .addRoute("0.0.0.0",0).addDnsServer(plan.dns).addDisallowedApplication(packageName)
+                    .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
+                active=true; multipleMode=true;transport="multiple";exitEnabled=false;status="Несколько VPN · ${plan.profiles.size} профилей"
+                multiple=MultipleVpnController(this,plan,tun!!.fd)
+                return START_NOT_STICKY
+            }
+            multipleMode=false
             val prefs = VpnProfiles.preferences(this)
             val mode = prefs.getInt("mode", 0)
             exitEnabled = mode != 3
@@ -156,6 +171,8 @@ class LabVpnService : VpnService() {
         active = false
         exitState = "VPN остановлен"
         handler.removeCallbacksAndMessages(null)
+        multiple?.close()
+        multiple = null
         session?.close()
         session = null
         tun?.close()
@@ -174,6 +191,7 @@ class LabVpnService : VpnService() {
     }
 
     companion object {
+        @Volatile var multipleMode = false
         @Volatile var exitEnabled = true
         @Volatile var exitIP = ""
         @Volatile var exitState = "Не проверен"

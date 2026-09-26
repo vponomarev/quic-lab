@@ -35,6 +35,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	direct       flowDialer // Set only before publishing a direct-only router backend.
 	udpStream    bool
 	datagrams    *gateway.DatagramMux
 	awg          *awg.Engine

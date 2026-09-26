@@ -29,7 +29,8 @@ type ownedLinkEndpoint struct {
 func (e *ownedLinkEndpoint) Close() { e.once.Do(e.LinkEndpoint.Close) }
 
 // Attach duplicates a borrowed Android TUN fd. The service retains its original.
-func (g *Gateway) Attach(fd int) error {
+func (g *Gateway) Attach(fd int) error { return g.attachRouter(fd, nil) }
+func (g *Gateway) attachRouter(fd int, router *MultiRouter) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.tunStop != nil {
@@ -47,7 +48,7 @@ func (g *Gateway) Attach(fd int) error {
 	}
 	link := &ownedLinkEndpoint{LinkEndpoint: dev}
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &tunHandler{g: g, ctx: ctx, slots: make(chan struct{}, gateway.MaxFlows)}
+	h := &tunHandler{g: g, router: router, ctx: ctx, slots: make(chan struct{}, gateway.MaxFlows)}
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -56,6 +57,10 @@ func (g *Gateway) Attach(fd int) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if router != nil {
+					router.emitTraffic()
+					continue
+				}
 				g.mu.Lock()
 				m := g.datagrams
 				g.mu.Unlock()
@@ -87,6 +92,7 @@ func (g *Gateway) Attach(fd int) error {
 }
 
 type tunHandler struct {
+	router                                        *MultiRouter
 	tcpFlows, udpFlows, udpRejected, udpTx, udpRx atomic.Int64
 	tx, rx                                        atomic.Int64
 	mu                                            sync.Mutex
@@ -98,6 +104,16 @@ type tunHandler struct {
 }
 
 func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
+	if h.router != nil {
+		id := c.ID()
+		next := h.router.selectFlow(6, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+		if next == nil {
+			c.Close()
+		} else {
+			next.HandleTCP(c)
+		}
+		return
+	}
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -136,6 +152,16 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 // Negotiated QUIC DATAGRAM, HTTPS packet streams and AWG carry UDP.
 // Older servers retain DNS-only compatibility.
 func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
+	if h.router != nil {
+		id := c.ID()
+		next := h.router.selectFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+		if next == nil {
+			c.Close()
+		} else {
+			next.HandleUDP(c)
+		}
+		return
+	}
 	id := c.ID()
 	backend := h.g.datagramBackend()
 	if backend == nil && id.LocalPort != 53 {

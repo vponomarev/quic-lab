@@ -58,13 +58,13 @@ internal object Diagnostics {
     @Synchronized fun event(source: String, event: JSONObject) {
         val kind = event.optString("event")
         if (kind in listOf("echo", "transit_echo")) return
-        if (kind in listOf("traffic", "udp_rejected", "standby_ready", "standby_unavailable", "probe_unavailable")) {
-            val routineKey="$source/$kind"
+        if (kind in listOf("traffic", "profile_traffic", "udp_rejected", "standby_ready", "standby_unavailable", "probe_unavailable")) {
+            val routineKey="$source/$kind/${event.optString("profile_id")}"
             val time=SystemClock.elapsedRealtime()
             if (time-(routineAt[routineKey] ?: -30000L)<30000) return
             routineAt[routineKey]=time
         }
-        val fields = listOf("detail", "error", "ip", "connection_id", "local", "remote", "transport", "key", "network", "destination", "up", "down", "tcp_flows", "udp_flows", "udp_tx", "udp_rx", "udp_rejected", "datagram_drops")
+        val fields = listOf("profile_id", "reason", "uid", "tx_bytes", "rx_bytes", "detail", "error", "ip", "connection_id", "local", "remote", "transport", "key", "network", "destination", "up", "down", "tcp_flows", "udp_flows", "udp_tx", "udp_rx", "udp_rejected", "datagram_drops")
             .filter { event.has(it) && it != "key" }
             .joinToString(" ") { "$it=${sanitize(event.optString(it))}" }
         entries.addLast("${Instant.now()} +${SystemClock.elapsedRealtime()}ms ${sanitize(source)} ${sanitize(kind)} $fields".take(1400))
@@ -110,6 +110,11 @@ internal object Diagnostics {
             appendLine(LabVpnService.flowSummary)
             appendLine("TX=${LabVpnService.txBytes}; RX=${LabVpnService.rxBytes}; TX/s=${LabVpnService.txRate}; RX/s=${LabVpnService.rxRate}")
             appendLine("Exit IP=${LabVpnService.exitIP}; ${LabVpnService.exitState}; check age=${if(LabVpnService.exitCheckedAt>0) now-LabVpnService.exitCheckedAt else -1}ms")
+            if (LabVpnService.multipleMode) {
+                appendLine("Multiple VPN · per-profile metrics:")
+                appendLine(sanitize(MultipleVpnState.summary()))
+                appendLine("DNS profile=${VpnProfiles.dnsProfile(context).ifBlank { "first enabled" }}")
+            }
             appendLine("Networks: ${networks.joinToString("; ")}")
             appendLine(sanitize(echoSummary))
             appendLine("\nLast $LIMIT events (UTC and monotonic time). No packet payloads, keys, certificates, SSID, BSSID or cell IDs.\n")

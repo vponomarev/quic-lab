@@ -239,6 +239,7 @@ class VpnActivity : Activity() {
             }
         }
         var panel = section("ПРОФИЛЬ")
+        button(panel, "Несколько VPN одновременно ›") { startActivity(Intent(this, MultipleVpnActivity::class.java)) }
         val profiles = VpnProfiles.list(this)
         val selectedProfile = VpnProfiles.current(this)
         val profileChoice =
@@ -468,7 +469,7 @@ class VpnActivity : Activity() {
             finish()
         }
         button(panel, "Запустить VPN") {
-            save()
+            if(VpnProfiles.multiple(this)) MultipleVpnPlan.load(this) else save()
             val request = VpnService.prepare(this)
             if (request != null) startActivityForResult(request, 12) else startVPN()
         }
@@ -480,7 +481,7 @@ class VpnActivity : Activity() {
             "Смена транспорта или маршрутов: остановите VPN, измените настройки и запустите снова. Текущие соединения завершатся.",
         )
         val diagnostics = section("ДИАГНОСТИКА")
-        label(diagnostics, "IPv4: QUIC/HTTPS поддерживают TCP и DNS; AmneziaWG — TCP и UDP. IPv6 заблокирован для захваченного VPN трафика.")
+        label(diagnostics, "IPv4: QUIC, HTTPS и AmneziaWG поддерживают TCP и UDP. IPv6 заблокирован для захваченного VPN трафика.")
         logs = label(diagnostics, "")
         logs.textSize = 12f
         handler.post(
@@ -488,7 +489,7 @@ class VpnActivity : Activity() {
                 override fun run() {
                     state.text =
                         if (LabVpnService.active)
-                            "${LabVpnService.status} · RTT ${"%.0f".format(LabVpnService.rtt)} мс"
+                            if(LabVpnService.multipleMode) MultipleVpnState.summary() else "${LabVpnService.status} · RTT ${"%.0f".format(LabVpnService.rtt)} мс"
                         else LabVpnService.status
                     logs.text = LabVpnService.log()
                     handler.postDelayed(this, 500)

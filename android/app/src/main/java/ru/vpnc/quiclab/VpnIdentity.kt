@@ -112,8 +112,8 @@ internal object VpnIdentity {
         save(context, JSONObject().put("awg_config", raw).put("subject", "AmneziaWG").toString().toByteArray())
     }
 
-    fun load(context: Context): JSONObject {
-        val bytes = VpnProfiles.identityFile(context).readBytes()
+    fun load(context: Context, id: String = VpnProfiles.current(context).id): JSONObject {
+        val bytes = VpnProfiles.identityFile(context, id).readBytes()
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))

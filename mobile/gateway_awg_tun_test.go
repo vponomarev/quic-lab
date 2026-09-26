@@ -24,7 +24,9 @@ import (
 	"quiclab/internal/awg/netstack"
 )
 
-func TestAWGTUNDatagramBoundariesAndStop(t *testing.T) {
+func TestAWGTUNDatagramBoundariesAndStop(t *testing.T)         { testAWGTUN(t, false) }
+func TestMultipleAWGTUNDatagramBoundariesAndStop(t *testing.T) { testAWGTUN(t, true) }
+func testAWGTUN(t *testing.T, multiple bool) {
 	clientKey, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	serverKey, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	tun, n, e := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr("10.56.0.1")}, nil, 1280)
@@ -60,7 +62,21 @@ func TestAWGTUNDatagramBoundariesAndStop(t *testing.T) {
 	}
 	defer unix.Close(fds[0])
 	defer unix.Close(fds[1])
-	if e = g.Attach(fds[0]); e != nil {
+	stop := g.Stop
+	if multiple {
+		router, err := NewMultiRouter(`[{"id":"awg","mode":"all"}]`, "awg", nil, &multipleBinder{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer router.Close()
+		if err = router.SetGateway("awg", g); err != nil {
+			t.Fatal(err)
+		}
+		if err = router.Attach(fds[0]); err != nil {
+			t.Fatal(err)
+		}
+		stop = func() { router.Close(); g.Stop() }
+	} else if e = g.Attach(fds[0]); e != nil {
 		t.Fatal(e)
 	}
 	server, e := n.ListenUDPAddrPort(netip.MustParseAddrPort("10.56.0.1:9999"))
@@ -141,7 +157,7 @@ func TestAWGTUNDatagramBoundariesAndStop(t *testing.T) {
 		t.Fatal("AWG TCP half-close", e)
 	}
 	done := make(chan struct{})
-	go func() { g.Stop(); close(done) }()
+	go func() { stop(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
