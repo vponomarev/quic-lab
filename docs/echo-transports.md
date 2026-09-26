@@ -80,3 +80,15 @@ Userspace AWG Echo не создаёт Linux TUN и не использует ho
 На Android 12 также пройден PublicEchoTest#anonymousAwgSession: автоматическая
 публичная выдача peer, локальный/транзитный RTT без VPN-профиля и VpnService.
 UI-проверка публичных трёх карточек пройдена на Android 12; все три пары RTT видны.
+
+### Исправление выбора LTE-сети после v0.7.0
+
+Публичная выдача AWG Echo теперь выбирает физическую сеть с INTERNET и NOT_VPN,
+а не первую сеть с транспортом CELLULAR. На телефонах с отдельной IMS-сетью
+старый выбор приводил к ошибке DNS ещё до AWG handshake. После ошибки выдачи
+разрешена повторная попытка по кнопке выбора сети.
+
+Проверено на Android 12 с выключенным WiFi: отдельная IMS-сеть отклоняется;
+anonymousAwgSession получает локальный и транзитный Echo через LTE;
+publicThreeTransportsWithoutIdentity показывает три пары RTT на главном экране.
+Android assembleDebug/assembleDebugAndroidTest и lintDebug проходят.

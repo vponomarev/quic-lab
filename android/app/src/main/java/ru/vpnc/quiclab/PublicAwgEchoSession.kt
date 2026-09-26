@@ -2,6 +2,7 @@ package ru.vpnc.quiclab
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -41,7 +42,7 @@ internal class PublicAwgEchoSession(
                 val cm = context.getSystemService(ConnectivityManager::class.java)
                 val network =
                     cm.allNetworks.firstOrNull {
-                        cm.getNetworkCapabilities(it)?.hasTransport(kind) == true
+                        isPublicEchoNetwork(cm.getNetworkCapabilities(it), kind)
                     } ?: error("Сеть недоступна")
                 val http = network.openConnection(u) as HttpsURLConnection
                 connection = http
@@ -101,6 +102,7 @@ internal class PublicAwgEchoSession(
                     )
                 }
             } catch (e: Exception) {
+                synchronized(this) { started = false }
                 if (!closed)
                     output(
                         JSONObject()
@@ -133,3 +135,10 @@ internal class PublicAwgEchoSession(
         return out.toByteArray()
     }
 }
+
+// Cellular also includes IMS/MMS networks: only an Internet-capable physical
+// network may carry enrollment. Validation is not required during a handover.
+internal fun isPublicEchoNetwork(caps: NetworkCapabilities?, kind: Int): Boolean =
+    caps != null && caps.hasTransport(kind) &&
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)

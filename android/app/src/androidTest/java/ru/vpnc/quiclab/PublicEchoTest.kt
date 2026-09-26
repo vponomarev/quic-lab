@@ -13,6 +13,28 @@ import org.junit.Test
 
 class PublicEchoTest {
     @Test
+    fun enrollmentRejectsImsAndVpnNetworks() {
+        val cm = InstrumentationRegistry.getInstrumentation().targetContext
+            .getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = cm.allNetworks.mapNotNull { cm.getNetworkCapabilities(it) }
+        val ims = caps.firstOrNull {
+            it.hasTransport(VpnSession.CELLULAR) &&
+                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_IMS) &&
+                !it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+        assumeTrue("Requires a phone exposing a separate IMS network", ims != null)
+        assertFalse(isPublicEchoNetwork(ims, VpnSession.CELLULAR))
+        val internet = caps.first {
+            it.hasTransport(VpnSession.CELLULAR) &&
+                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        }
+        assertTrue(isPublicEchoNetwork(internet, VpnSession.CELLULAR))
+        assertFalse(isPublicEchoNetwork(internet, VpnSession.WIFI))
+        assertFalse(isPublicEchoNetwork(null, VpnSession.CELLULAR))
+    }
+
+    @Test
     fun anonymousAwgSession() {
         val inst = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
@@ -24,7 +46,7 @@ class PublicEchoTest {
                 events.offer(it)
             }
         try {
-            s.move(VpnSession.WIFI)
+            s.move(if (args.getString("network") == "cellular") VpnSession.CELLULAR else VpnSession.WIFI)
             val seen = mutableSetOf<String>()
             val until = System.currentTimeMillis() + 30000
             while (System.currentTimeMillis() < until && seen.size < 2) {
