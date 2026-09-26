@@ -217,6 +217,9 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 					conn.CloseWithError(1, "send failed")
 					return
 				}
+				if c.gatewayTLS == nil && seq%uint64(max(1, 1000/intervalMS)) == 0 {
+					enc.Encode(protocol.Frame{Transit: true, Seq: seq, SentNS: time.Since(start).Nanoseconds()})
+				}
 			}
 		}
 	}()
@@ -230,6 +233,10 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 			if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
 				conn.CloseWithError(1, "invalid echo")
 				break
+			}
+			if frame.Transit {
+				emitTransit(c.emit, frame, float64(time.Since(start).Nanoseconds()-frame.SentNS)/1e6)
+				continue
 			}
 			now := time.Now()
 			c.emit("echo", map[string]any{"seq": frame.Seq, "rtt_ms": float64(time.Since(start).Nanoseconds()-frame.SentNS) / 1e6,

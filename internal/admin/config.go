@@ -13,6 +13,7 @@ import (
 )
 
 type Profile struct {
+	AWGEnrollURL    string   `json:"awg_enroll_url,omitempty"`
 	TransitEndpoint string   `json:"transit_endpoint,omitempty"`
 	Transports      []string `json:"transports,omitempty"`
 	AWGConfig       string   `json:"awg_config,omitempty"`
@@ -32,6 +33,7 @@ type Profile struct {
 	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
+	EchoAWG   string            `json:"echo_awg,omitempty"`
 	Transit   *transit.Config   `json:"transit,omitempty"`
 	AWG       *awgserver.Config `json:"awg,omitempty"`
 	APKPath   string            `json:"apk_path,omitempty"`

@@ -28,6 +28,7 @@ class MainActivity : Activity() {
     private var w = TransportStats()
     private var a = TransportStats()
     private var profileEcho: ProfileEchoSession? = null
+    private var publicAwg: PublicAwgEchoSession? = null
     private var echoTransports = emptySet<String>()
     private lateinit var profileCompare: CheckBox
     private lateinit var aCard: MetricCard
@@ -311,6 +312,8 @@ class MainActivity : Activity() {
         } catch(e:Exception) { Toast.makeText(this,e.message ?: "Не удалось открыть профиль",Toast.LENGTH_LONG).show(); return } else null
         profileEcho=selectedProfile
         echoTransports=selectedProfile?.transports ?: setOf("quic", "https")
+        val publicEnroll=getSharedPreferences("server",MODE_PRIVATE).getString("awg_enroll_url", "").orEmpty()
+        if(selectedProfile==null && publicEnroll.isNotBlank()) echoTransports=echoTransports+"awg"
         q = TransportStats(); w = TransportStats(); a = TransportStats(); timeline.clear(); raw.clear(); chart.clear()
         if(selectedProfile!=null && !VpnProfiles.preferences(this).getString("transit_endpoint", "").isNullOrBlank()) {
             q.transitEnabled=true; w.transitEnabled=true; a.transitEnabled=true
@@ -326,11 +329,16 @@ class MainActivity : Activity() {
             selectedProfile.move(kind)
             return
         }
+        if(publicEnroll.isNotBlank()) {
+            a.active=true
+            publicAwg=PublicAwgEchoSession(this,publicEnroll) { acceptAwg(it) }
+            publicAwg?.move(kind)
+        }
         if (comparing) { w.state = "Ждём выбранную сеть"; wss.enable(hostname.text.toString().trim()) }
         quic.startOrMigrate(kind, endpoint.text.toString().trim(), hostname.text.toString().trim(), pin.text.toString().trim(), 50)
     }
     private fun stopExperiment() {
-        running = false; quic.stop(); wss.stop(); profileEcho?.close(); profileEcho=null
+        running = false; quic.stop(); wss.stop(); profileEcho?.close(); profileEcho=null; publicAwg?.close(); publicAwg=null
         val time=SystemClock.elapsedRealtime()
         listOf(q,w,a).forEach { it.accept(JSONObject().put("event","stopped"),time) }
         profileCompare.isEnabled=true; compare.isEnabled = !profileCompare.isChecked; endpoint.isEnabled = true; hostname.isEnabled = true; pin.isEnabled = true
@@ -367,6 +375,7 @@ class MainActivity : Activity() {
         if (!running) { Toast.makeText(this, "Сначала начните опыт", Toast.LENGTH_SHORT).show(); return }
         if (kind !in available) { Toast.makeText(this, "Эта сеть сейчас недоступна", Toast.LENGTH_SHORT).show(); return }
         if(profileEcho!=null) { profileEcho?.move(kind); return }
+        publicAwg?.move(kind)
         quic.startOrMigrate(kind, endpoint.text.toString().trim(), hostname.text.toString().trim(), pin.text.toString().trim(), 50)
     }
     private fun acceptAwg(e: JSONObject) {
@@ -479,6 +488,6 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         destroyed = true; handler.removeCallbacksAndMessages(null)
-        radios.close(); quic.close(); wss.close(); profileEcho?.close(); super.onDestroy()
+        radios.close(); quic.close(); wss.close(); profileEcho?.close(); publicAwg?.close(); super.onDestroy()
     }
 }

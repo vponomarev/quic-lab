@@ -23,6 +23,7 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	PublicAWG        http.Handler
 	ListenerBindings map[string]string
 	uplinkState      uplinkCache
 	Config           Config
@@ -62,6 +63,13 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /users/delete", w.delete)
 	m.HandleFunc("POST /users/qr", w.qr)
 	m.HandleFunc("POST /enroll", w.enroll)
+	m.HandleFunc("POST /echo/awg", func(rw http.ResponseWriter, r *http.Request) {
+		if w.PublicAWG == nil {
+			http.NotFound(rw, r)
+			return
+		}
+		w.PublicAWG.ServeHTTP(rw, r)
+	})
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Cache-Control", "no-store")
 		rw.Header().Set("Pragma", "no-cache")
@@ -183,6 +191,9 @@ func qrImage(raw string) (template.URL, error) {
 }
 func (w *Web) home(rw http.ResponseWriter, r *http.Request) {
 	p := w.Config.Echo
+	if w.PublicAWG != nil {
+		p.AWGEnrollURL = w.Config.PublicURL + "echo/awg"
+	}
 	p.Version = 1
 	p.Kind = "echo"
 	b, _ := json.Marshal(p)

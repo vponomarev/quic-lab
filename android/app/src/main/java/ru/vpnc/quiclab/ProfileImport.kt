@@ -58,7 +58,7 @@ internal object ProfileImport {
         val kind=validate(p)
         if(kind=="echo") { check(context.getSharedPreferences("server",Context.MODE_PRIVATE).edit()
             .putString("endpoint",p.getString("endpoint")).putString("hostname",p.getString("hostname"))
-            .putString("pin",p.optString("pin")).putBoolean("compare",true).commit()) }
+            .putString("pin",p.optString("pin")).putString("awg_enroll_url",p.optString("awg_enroll_url")).putBoolean("compare",true).commit()) }
         else {
             val previous=VpnProfiles.current(context).id
             val added=VpnProfiles.create(context,(p.optString("name","VPN")+" · "+p.getString("hostname")).take(100))

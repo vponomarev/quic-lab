@@ -22,15 +22,17 @@ import (
 )
 
 type gatewayConfig struct {
-	TransitEndpoint string `json:"transit_endpoint"`
-	DNS             string `json:"dns"`
-	AWGConfig       string `json:"awg_config"`
-	Transport       string `json:"transport"`
-	Endpoint        string `json:"endpoint"`
-	Hostname        string `json:"hostname"`
-	Certificate     string `json:"certificate"`
-	Key             string `json:"key"`
-	CA              string `json:"ca"`
+	AWGProbeEndpoint string `json:"awg_probe_endpoint"`
+	TransitUDP       bool   `json:"transit_udp"`
+	TransitEndpoint  string `json:"transit_endpoint"`
+	DNS              string `json:"dns"`
+	AWGConfig        string `json:"awg_config"`
+	Transport        string `json:"transport"`
+	Endpoint         string `json:"endpoint"`
+	Hostname         string `json:"hostname"`
+	Certificate      string `json:"certificate"`
+	Key              string `json:"key"`
+	CA               string `json:"ca"`
 }
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
@@ -89,7 +91,11 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 		g.ctx, g.cancel = context.WithCancel(context.Background())
 		g.session++
 		g.emit("connected", map[string]any{"transport": "awg", "session": g.session, "detail": "AWG engine ready; waiting for tunnel probe"})
-		go g.awgHeartbeat(g.ctx, engine, g.cfg.Endpoint)
+		probeEndpoint := g.cfg.AWGProbeEndpoint
+		if probeEndpoint == "" {
+			probeEndpoint = g.cfg.Endpoint
+		}
+		go g.awgHeartbeat(g.ctx, engine, probeEndpoint)
 		if g.cfg.TransitEndpoint != "" {
 			go g.transitHeartbeat(g.ctx, engine, g.cfg.TransitEndpoint)
 		}

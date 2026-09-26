@@ -14,6 +14,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"quiclab/internal/admin"
 	"quiclab/internal/echo"
+	"quiclab/internal/echoawg"
 	"quiclab/internal/gateway"
 	"quiclab/internal/labcert"
 	"quiclab/internal/protocol"
@@ -67,6 +68,7 @@ func main() {
 	var adminBase string
 	var managed *admin.Store
 	var uplink *transit.Config
+	var echoProbe func(context.Context) error
 	if *adminFile != "" {
 		cfg, e := admin.ReadConfig(*adminFile)
 		if e != nil {
@@ -74,6 +76,9 @@ func main() {
 			os.Exit(1)
 		}
 		uplink = cfg.Transit
+		if uplink != nil {
+			echoProbe = uplink.Probe
+		}
 		managed, e = admin.OpenStore(cfg.DataDir)
 		if e != nil {
 			log.Error("admin_store", "error", e)
@@ -87,6 +92,19 @@ func main() {
 			go managed.WatchAWG(ctx, cfg.DataDir)
 		}
 		ui := admin.NewWeb(cfg, managed)
+		if cfg.EchoAWG != "" {
+			var probe func(context.Context) error
+			if uplink != nil {
+				probe = uplink.Probe
+			}
+			publicAWG, e := echoawg.Start(ctx, cfg.EchoAWG, probe)
+			if e != nil {
+				log.Error("echo_awg", "error", e)
+				os.Exit(1)
+			}
+			defer publicAWG.Close()
+			ui.PublicAWG = publicAWG
+		}
 		ui.ListenerBindings = map[string]string{"public": *publicHTTPS, "echo-https": *webListen, "echo-quic": ln.Addr().String(), "vpn-quic": *gatewayQUIC, "vpn-https": *gatewayHTTPS}
 		publicAdmin = ui.Handler()
 		adminBase = cfg.PublicURL
@@ -145,7 +163,7 @@ func main() {
 			var handler http.Handler = mux
 			if *publicHTTPS == *gatewayHTTPS {
 				tc = publicTLS(tc)
-				handler = publicHandler(publicAdmin, adminBase, log, http.HandlerFunc(gw.WebSocket))
+				handler = publicHandler(publicAdmin, adminBase, log, http.HandlerFunc(gw.WebSocket), echoProbe)
 			}
 			hs := &http.Server{Addr: *gatewayHTTPS, Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 			defer hs.Close()
@@ -158,7 +176,7 @@ func main() {
 		}
 	}
 	if *publicHTTPS != "" && *publicHTTPS != *gatewayHTTPS {
-		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil, echoProbe), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 		defer ps.Close()
 		go func() {
 			if e := ps.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
@@ -179,7 +197,7 @@ func main() {
 	}
 	if *webListen != "" {
 		mux := http.NewServeMux()
-		mux.Handle("/echo", echo.WebSocketHandler(log))
+		mux.Handle("/echo", echo.WebSocketHandler(log, echoProbe))
 		srv := &http.Server{Addr: *webListen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
 		go func() {
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -189,7 +207,7 @@ func main() {
 		}()
 		defer srv.Close()
 	}
-	if err := echo.Serve(ctx, ln, log); err != nil && ctx.Err() == nil {
+	if err := echo.Serve(ctx, ln, log, echoProbe); err != nil && ctx.Err() == nil {
 		log.Error("serve", "error", err)
 		os.Exit(1)
 	}

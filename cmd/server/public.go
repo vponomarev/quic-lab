@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"net/http"
@@ -29,7 +30,7 @@ func publicTLS(strict *tls.Config) *tls.Config {
 	return c
 }
 
-func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel http.Handler) http.Handler {
+func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel http.Handler, probes ...func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	if admin != nil {
 		u, err := url.Parse(adminURL)
@@ -42,7 +43,7 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 			mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, base, http.StatusFound) })
 		}
 	}
-	mux.Handle("/echo", echo.WebSocketHandler(log))
+	mux.Handle("/echo", echo.WebSocketHandler(log, probes...))
 	mux.Handle("/vpn-demo/", http.StripPrefix("/vpn-demo", gateway.Demo(log)))
 	if tunnel != nil {
 		mux.Handle("/tunnel", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

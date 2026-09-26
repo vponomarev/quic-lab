@@ -1,7 +1,9 @@
 package mobile
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -150,7 +152,11 @@ func (g *Gateway) transitHeartbeat(ctx context.Context, awgDialer flowDialer, en
 		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 		var e error
 		if awgDialer != nil {
-			e = awgPingProbe(probe, awgDialer, endpoint, seq)
+			if g.cfg.TransitUDP {
+				e = transitUDPProbe(probe, awgDialer, endpoint)
+			} else {
+				e = awgPingProbe(probe, awgDialer, endpoint, seq)
+			}
 		} else {
 			var stream gateway.Stream
 			stream, e = gateway.Open(probe, g.open, "transit-probe", "")
@@ -207,4 +213,34 @@ func (d httpsUDP) DialContext(ctx context.Context, network, address string) (net
 		return nil, e
 	}
 	return &gateway.PacketStream{Stream: st}, nil
+}
+
+// Echo-only AWG transit service accepts an opaque nonce, never a destination.
+func transitUDPProbe(ctx context.Context, d flowDialer, target string) error {
+	c, e := d.DialContext(ctx, "udp4", target)
+	if e != nil {
+		return e
+	}
+	defer c.Close()
+	deadline, _ := ctx.Deadline()
+	c.SetDeadline(deadline)
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer stop()
+	b := make([]byte, 24)
+	copy(b, "QLPROBE1")
+	if _, e = rand.Read(b[8:]); e != nil {
+		return e
+	}
+	if _, e = c.Write(b); e != nil {
+		return e
+	}
+	response := make([]byte, 32)
+	n, e := c.Read(response)
+	if e != nil {
+		return e
+	}
+	if !bytes.Equal(b, response[:n]) {
+		return errors.New("invalid transit echo")
+	}
+	return nil
 }

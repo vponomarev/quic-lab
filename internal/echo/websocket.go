@@ -15,7 +15,7 @@ import (
 
 // WebSocketHandler runs behind the local nginx HTTPS endpoint. Each successful
 // upgrade receives a new server-generated identity, never a client session ID.
-func WebSocketHandler(log *slog.Logger) http.Handler {
+func WebSocketHandler(log *slog.Logger, probes ...func(context.Context) error) http.Handler {
 	slots := make(chan struct{}, 128)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -38,6 +38,13 @@ func WebSocketHandler(log *slog.Logger) http.Handler {
 		identity := hex.EncodeToString(id[:])
 		log.Info("wss_connection_accepted", "connection_id", identity)
 		defer log.Info("wss_connection_closed", "connection_id", identity)
+		replies := newTransitReplies(r.Context(), probes)
+		defer replies.close()
+		write := func(f protocol.Frame) error {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			return wsjson.Write(ctx, conn, f)
+		}
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			var f protocol.Frame
@@ -49,6 +56,9 @@ func WebSocketHandler(log *slog.Logger) http.Handler {
 			f.ConnectionID = identity
 			f.StreamID = 0
 			f.Peer = r.RemoteAddr // reverse proxy peer; do not present this as phone IP
+			if replies.handle(f, write) {
+				continue
+			}
 			ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 			err = wsjson.Write(ctx, conn, f)
 			cancel()

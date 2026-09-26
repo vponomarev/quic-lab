@@ -15,7 +15,7 @@ import (
 )
 
 // Serve keeps one identity per accepted connection, never per client-provided session.
-func Serve(ctx context.Context, ln *quic.Listener, log *slog.Logger) error {
+func Serve(ctx context.Context, ln *quic.Listener, log *slog.Logger, probes ...func(context.Context) error) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for {
@@ -24,11 +24,11 @@ func Serve(ctx context.Context, ln *quic.Listener, log *slog.Logger) error {
 			return err
 		}
 		wg.Add(1)
-		go func() { defer wg.Done(); handle(ctx, conn, log) }()
+		go func() { defer wg.Done(); handle(ctx, conn, log, probes...) }()
 	}
 }
 
-func handle(ctx context.Context, conn *quic.Conn, log *slog.Logger) {
+func handle(ctx context.Context, conn *quic.Conn, log *slog.Logger, probes ...func(context.Context) error) {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		conn.CloseWithError(1, "random failed")
@@ -50,6 +50,15 @@ func handle(ctx context.Context, conn *quic.Conn, log *slog.Logger) {
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 1024), 4096)
 	enc := json.NewEncoder(stream)
+	var writeMu sync.Mutex
+	write := func(f protocol.Frame) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		stream.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		return enc.Encode(f)
+	}
+	replies := newTransitReplies(conn.Context(), probes)
+	defer replies.close()
 	peer := ""
 	for {
 		stream.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -68,7 +77,10 @@ func handle(ctx context.Context, conn *quic.Conn, log *slog.Logger) {
 			peer = frame.Peer
 		}
 		stream.SetWriteDeadline(time.Now().Add(90 * time.Second))
-		if err := enc.Encode(frame); err != nil {
+		if replies.handle(frame, write) {
+			continue
+		}
+		if err := write(frame); err != nil {
 			log.Info("write_failed", "error", err)
 			return
 		}
