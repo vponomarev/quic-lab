@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"quiclab/internal/gateway"
 	"quiclab/internal/protocol"
 )
 
@@ -42,6 +43,8 @@ type preparedPath struct {
 }
 
 type Client struct {
+	gatewayTLS *tls.Config
+
 	prepared   *preparedPath
 	parked     *preparedPath // retain another candidate while both networks recover
 	retirement sync.WaitGroup
@@ -150,12 +153,15 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 	if err != nil {
 		return err
 	}
+	if c.gatewayTLS != nil {
+		cfg = c.gatewayTLS.Clone()
+	}
 	t, err := c.newTransport(addr.IP, binder, c.pathUnavailable)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	conn, err := t.q.Dial(ctx, addr, cfg, &quic.Config{MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second})
+	conn, err := t.q.Dial(ctx, addr, cfg, &quic.Config{EnableDatagrams: c.gatewayTLS != nil, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second})
 	if err != nil {
 		cancel()
 		t.close()
@@ -167,6 +173,23 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 		conn.CloseWithError(1, "stream failed")
 		t.close()
 		return err
+	}
+	if c.gatewayTLS != nil {
+		stream.SetDeadline(time.Now().Add(10 * time.Second))
+		err = gateway.WriteJSON(stream, gateway.Request{Network: "echo"})
+		if err == nil {
+			var reply gateway.Reply
+			err = gateway.ReadJSON(stream, &reply)
+			if err == nil && reply.Error != "" {
+				err = errors.New(reply.Error)
+			}
+		}
+		if err != nil {
+			conn.CloseWithError(1, "gateway echo failed")
+			t.close()
+			return err
+		}
+		stream.SetDeadline(time.Time{})
 	}
 	ctx, c.cancel = context.WithCancel(context.Background())
 	c.conn = conn
@@ -194,6 +217,9 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 					conn.CloseWithError(1, "send failed")
 					return
 				}
+				if c.gatewayTLS == nil && seq%uint64(max(1, 1000/intervalMS)) == 0 {
+					enc.Encode(protocol.Frame{Transit: true, Seq: seq, SentNS: time.Since(start).Nanoseconds()})
+				}
 			}
 		}
 	}()
@@ -207,6 +233,10 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 			if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
 				conn.CloseWithError(1, "invalid echo")
 				break
+			}
+			if frame.Transit {
+				emitTransit(c.emit, frame, float64(time.Since(start).Nanoseconds()-frame.SentNS)/1e6)
+				continue
 			}
 			now := time.Now()
 			c.emit("echo", map[string]any{"seq": frame.Seq, "rtt_ms": float64(time.Since(start).Nanoseconds()-frame.SentNS) / 1e6,

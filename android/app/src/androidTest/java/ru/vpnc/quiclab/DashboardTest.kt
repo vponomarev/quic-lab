@@ -36,7 +36,7 @@ class DashboardTest {
                 fields[0].setText(TestConfig.endpoint)
                 fields[1].setText(TestConfig.host)
                 fields[2].setText("")
-                texts(activity.window.decorView).filterIsInstance<Button>().first { it.text == "Начать опыт" }.performClick()
+                texts(activity.window.decorView).filterIsInstance<Button>().first { it.text == "Start Echo" }.performClick()
             }
             var ready = false
             val until = SystemClock.elapsedRealtime() + 15000
@@ -73,7 +73,7 @@ class DashboardTest {
                 }
             }
             inst.runOnMainSync {
-                texts(activity.window.decorView).filterIsInstance<Button>().first { it.text == "Завершить опыт" }.performClick()
+                texts(activity.window.decorView).filterIsInstance<Button>().first { it.text == "Stop Echo" }.performClick()
             }
         } finally { inst.runOnMainSync { activity.finish() } }
     }

@@ -19,7 +19,7 @@ try {
     if ($LASTEXITCODE) { throw 'gobind build failed' }
     $env:PATH = "$labRoot/bin;$env:PATH"
     # NDK r27 needs explicit ELF alignment for Android devices with 16 KB pages.
-    & ./bin/gomobile.exe bind -trimpath '-target=android/arm64,android/amd64' -androidapi=31 '-ldflags=-s -w -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384' -o android/app/libs/quiclab.aar ./mobile
+    & ./bin/gomobile.exe bind -trimpath '-target=android/arm64,android/amd64' -androidapi=30 '-ldflags=-s -w -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384' -o android/app/libs/quiclab.aar ./mobile
     if ($LASTEXITCODE) { throw 'AAR build failed' }
     if ($BuildApk) {
         & ./android/gradlew.bat -p android assembleDebug lintDebug --console=plain

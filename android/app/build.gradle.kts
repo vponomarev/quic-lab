@@ -4,10 +4,10 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "ru.vpnc.quiclab"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 13
+        versionName = "0.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -17,6 +17,10 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    // CaptureManager uses ContextCompat and ActivityCompat at runtime.
+    implementation("androidx.core:core:1.16.0")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.3")
     implementation(files("libs/quiclab.aar"))
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

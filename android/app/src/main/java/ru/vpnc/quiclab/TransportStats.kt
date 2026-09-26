@@ -22,6 +22,9 @@ internal class TransportStats {
         }
         return maximum
     }
+    var transitRtt = 0.0
+    var lastTransitEcho = 0L
+    var transitEnabled = false
     var state = "Готов к запуску"
     var network = "—"
     var rtt = 0.0
@@ -33,6 +36,12 @@ internal class TransportStats {
     val sessions = linkedSetOf<String>()
     fun accept(e: JSONObject, now: Long) {
         when (e.optString("event")) {
+            "transit_echo" -> {
+                transitEnabled = true
+                val value=e.optDouble("rtt_ms")
+                if(value.isFinite() && value>=0) { transitRtt=value; lastTransitEcho=now }
+            }
+            "transit_probe_failed" -> { transitEnabled = true }
             "connecting" -> { active = true; state = "Подключение…" }
             "connected" -> { active = true; state = "Подключён" }
             "echo" -> {
@@ -41,7 +50,7 @@ internal class TransportStats {
                     trimRtt(now)
                     recentRtt.addLast(RttSample(now, rtt))
                 }
-                if (lastEcho != 0L) maxGap = maxOf(maxGap, (now - lastEcho).toDouble(), e.optDouble("gap_ms"))
+                if (lastEcho != 0L) maxGap = maxOf(maxGap, (now - lastEcho).toDouble(), (e.optDouble("gap_ms", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0))
                 lastEcho = now
                 replies++
                 e.optString("connection_id").takeIf { it.isNotBlank() }?.let { sessions.add(it) }

@@ -5,3 +5,6 @@ dependencyResolutionManagement {
 }
 rootProject.name = "QuicLab"
 include(":app")
+
+// Optional on-device traffic generator; never included in the production app.
+if (providers.gradleProperty("withProbe").isPresent) include(":probe")

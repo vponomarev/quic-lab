@@ -1,0 +1,19 @@
+{
+  "listen": "127.0.0.1:8083",
+  "public_url": "https://your.domain/lab/",
+  "username": "admin",
+  "password": "CHANGE-ME-BEFORE-START",
+  "data_dir": "/var/lib/quic-lab",
+  "apk_path": "/var/lib/quic-lab/downloads/quic-lab.apk",
+  "echo": {
+    "endpoint": "your.domain:4433",
+    "hostname": "your.domain"
+  },
+  "vpn": {
+    "quic": "your.domain:4434",
+    "https": "your.domain:8443",
+    "hostname": "your.domain",
+    "dns": "1.1.1.1",
+    "mode": 0
+  }
+}

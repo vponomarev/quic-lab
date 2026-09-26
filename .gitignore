@@ -15,3 +15,13 @@ artifacts/
 .env.*
 android/.kotlin/
 !android/gradle/wrapper/gradle-wrapper.jar
+
+# Local client identities and CA material
+*.p12
+*.pfx
+*.key
+*.csr
+*.srl
+
+__pycache__/
+*.pyc

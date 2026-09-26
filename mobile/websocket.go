@@ -112,6 +112,9 @@ func (c *WebSocketClient) Start(numericEndpoint, hostname string, intervalMS int
 				seq++
 				writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
 				err := wsjson.Write(writeCtx, conn, protocol.Frame{Seq: seq, SentNS: time.Since(started).Nanoseconds()})
+				if err == nil && seq%uint64(max(1, 1000/intervalMS)) == 0 {
+					err = wsjson.Write(writeCtx, conn, protocol.Frame{Transit: true, Seq: seq, SentNS: time.Since(started).Nanoseconds()})
+				}
 				done()
 				if err != nil {
 					cancel()
@@ -132,6 +135,10 @@ func (c *WebSocketClient) Start(numericEndpoint, hostname string, intervalMS int
 				cancel()
 				conn.CloseNow()
 				return
+			}
+			if f.Transit {
+				emitTransit(c.emit, f, float64(time.Since(started).Nanoseconds()-f.SentNS)/1e6)
+				continue
 			}
 			now := time.Now()
 			c.emit("echo", map[string]any{"seq": f.Seq, "rtt_ms": float64(time.Since(started).Nanoseconds()-f.SentNS) / 1e6, "gap_ms": float64(now.Sub(last)) / float64(time.Millisecond), "connection_id": f.ConnectionID})

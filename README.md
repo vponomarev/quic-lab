@@ -1,23 +1,36 @@
 # QUIC Lab
 
-Учебный Android-клиент и Go-сервер для сравнения **QUIC stream** и
-**WebSocket поверх HTTPS / HTTP/1.1 / TLS / TCP** при смене Wi-Fi и мобильной сети.
-Android 12+ (API 31), ARM64 и x86_64. Интерфейс на русском языке.
+Android-клиент и Go-сервер для лабораторных работ по QUIC и самостоятельного
+использования как IPv4 VPN. Android 11+ (API 30), ARM64 и x86_64.
+Интерфейс на русском языке.
+
+**Веха v0.7.0:** Echo и VPN сосуществуют в одном приложении и на одном сервере.
+[Состав вехи и проверки](docs/milestone-v0.7.0.md) ·
+[Планы развития](docs/vpn-plan.md).
 
 ## Возможности
 
-- Одновременный echo через оба транспорта: по 20 сообщений/с.
-- QUIC connection migration, предварительная проверка резерва, обнаружение
-  отсутствия ответов и выдержка стабильности перед возвратом на Wi-Fi.
-- HTTPS восстанавливается и возвращается на Wi-Fi независимо от QUIC.
-- RTT, максимальная пауза, максимум изменения RTT за последние 15 секунд,
-  число настоящих серверных сеансов, график и отметки обнаруженных переходов.
-- SSID/BSSID и параметры Wi-Fi, доступные сведения об обслуживающей соте.
-- Одна кнопка запуска, ручной выбор канала, лента событий и диагностика.
+- Echo: сравнение QUIC, HTTPS/WebSocket и AmneziaWG, публичный стенд либо
+  аутентифицированный VPN-профиль. Публичный AWG включается на сервере отдельно.
+- RTT до шлюза и через транзит до удалённого gateway, jitter, максимальная пауза,
+  график, события смены сети и сведения WiFi/сотовой сети.
+- VPN: QUIC, HTTPS/WebSocket и AmneziaWG; TCP и IPv4 UDP. Для HTTPS UDP
+  переносится поверх TCP и подвержен head-of-line blocking.
+- Сохранённые профили; all apps, only selected apps, exclude selected apps,
+  маршрутизация по IPv4-подсетям; общий или индивидуальный список приложений.
+- Multiple: несколько подключений через один Android TUN, приоритеты правил,
+  независимая остановка профилей и блокировка их маршрутов без скрытого fallback.
+- Веб-админка: управление пользователями и протоколами, QR/конфиги, отзыв доступа,
+  живая статистика, состояние транзита и скачивание APK.
+- mTLS для QUIC/HTTPS VPN, управляемый AWG-сервер, общий AWG-транзит,
+  установщик Linux с поддержкой существующего nginx.
 
-QUIC не переподключается автоматически после окончательного закрытия сеанса:
-новый опыт начинается по кнопке. Это позволяет отличать миграцию от reconnect.
-Полное отсутствие покрытия и блокировка UDP могут прервать соединение.
+IPv6 не поддерживается. Multiple имеет один DNS-профиль; split DNS и Fake IP
+отложены. Смена транспорта не обещает сохранения существующих TCP-соединений.
+Границы проверки multiple описаны [отдельно](docs/multiple-vpn.md).
+
+[VPN и сертификаты](docs/vpn-gateway.md) · [AmneziaWG](docs/amneziawg.md) ·
+[Три транспорта Echo](docs/echo-transports.md)
 
 ## APK и первый запуск
 
@@ -37,6 +50,13 @@ QUIC не переподключается автоматически после
 [Памятка для опыта](docs/student-quickstart.md) · [Архитектура](docs/architecture.md)
 
 ## Сервер на готовом Linux
+
+**Быстрая установка echo + VPN + админки:** [архив с установщиком](docs/install-server.md).
+Debian 12/13, Ubuntu 22.04/24.04; DNS-имя на входе, случайные учётные данные
+при первом запуске, бинарник в `/opt/quic-lab`. Без nginx приложение само
+обслуживает публичный HTTPS и mTLS VPN на TCP/443; при установленном nginx
+он обслуживает сайт/echo на 443, а VPN использует 8443. Режим и порты сохраняются.
+Ниже — ручной вариант.
 
 Нужны Linux с systemd, nginx, certbot, Git и Go 1.26+; модуль фиксирует toolchain.
 Домен должен указывать на сервер. Откройте TCP/80 для ACME, TCP/443 для HTTPS,
@@ -87,7 +107,7 @@ mkdir -p bin android/app/libs
 go build -trimpath -o bin/gomobile golang.org/x/mobile/cmd/gomobile
 go build -trimpath -o bin/gobind golang.org/x/mobile/cmd/gobind
 export PATH="$PWD/bin:$PATH"
-gomobile bind -trimpath -target=android/arm64,android/amd64 -androidapi=31 \
+gomobile bind -trimpath -target=android/arm64,android/amd64 -androidapi=30 \
   '-ldflags=-s -w -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384' \
   -o android/app/libs/quiclab.aar ./mobile
 sh android/gradlew -p android assembleDebug lintDebug
@@ -126,3 +146,20 @@ ComparisonTest. Локальные тесты метрик: класс `ru.vpnc.
 `third_party/quic-go/` — экспериментальный локальный fork v0.63.0, используемый
 через `replace`. [Описание патчей](third_party/README.md). Клиент и сервер следует
 собирать из одной версии репозитория. Это не официальный выпуск quic-go.
+
+Администрирование пользователей и импорт QR: [инструкция](docs/admin.md).
+
+## AmneziaWG в Android
+
+Дополнительный VPN-профиль: импорт `.conf` или QR, прежние режимы маршрутизации, TCP/UDP и ICMP RTT до endpoint через туннель. Echo и QUIC/HTTPS сохранены. [Настройка, совместимость и ограничения](docs/amneziawg.md).
+
+
+## Мультипротокольный сервер
+
+Админка управляет разрешениями QUIC / HTTPS / AmneziaWG для каждого пользователя,
+включением и отключением доступа, выдачей общего профиля QUIC Lab и стандартного
+AWG `.conf` / QR. Статистика обновляется через WebSocket каждые 5 секунд.
+Опциональный AWG-процесс использует Linux TUN; ядро AWG устанавливать не нужно.
+[Установка и сетевые настройки](docs/install-server.md#опциональный-сервер-amneziawg).
+
+VPN поддерживает общий исходящий транзит через удалённый AWG gateway, NAT и блокировку прямого выхода при отказе uplink. Android показывает локальный / транзитный RTT; график использует локальный RTT. [Настройка транзита](docs/install-server.md#глобальный-транзит-vpn-через-удалённый-amneziawg).
