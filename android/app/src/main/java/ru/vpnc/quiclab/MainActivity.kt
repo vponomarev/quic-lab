@@ -26,6 +26,11 @@ class MainActivity : Activity() {
     private lateinit var radios: RadioMonitor
     private var q = TransportStats()
     private var w = TransportStats()
+    private var a = TransportStats()
+    private var profileEcho: ProfileEchoSession? = null
+    private var echoTransports = emptySet<String>()
+    private lateinit var profileCompare: CheckBox
+    private lateinit var aCard: MetricCard
     private lateinit var qCard: MetricCard
     private lateinit var wCard: MetricCard
     private lateinit var banner: TextView
@@ -105,7 +110,7 @@ class MainActivity : Activity() {
         panel.addView(text("NETWORK LAB  /  04", 12f, teal, true))
         space(panel, 8)
         panel.addView(text("Связь в движении", 28f, ink, true))
-        panel.addView(text("Один сервер. Два транспорта. Смена сети.", 14f, muted))
+        panel.addView(text("Один сервер. Разные транспорты. Смена сети.", 14f, muted))
         space(panel, 16)
         banner = text("Готовы к эксперименту", 16f, ink, true)
         panel.addView(banner)
@@ -154,16 +159,20 @@ class MainActivity : Activity() {
         wCard = MetricCard("HTTPS", "WebSocket · TLS/TCP", amber)
         row.addView(qCard.box, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(5) })
         row.addView(wCard.box, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(5) })
+        aCard = MetricCard("AmneziaWG", "ICMP через туннель · 1 запрос/с", Color.rgb(100,80,175))
+        panel.addView(aCard.box, LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(10) })
+        aCard.box.visibility=View.GONE
         space(panel, 12)
         val graphBox = card(panel)
         graphTitle=text("Echo · задержка ответа",15f,ink,true)
         graphBox.addView(graphTitle)
         graphBox.addView(LinearLayout(this).apply {
             addView(text("● QUIC     ", 12f, teal))
-            addView(text("● HTTPS / WSS", 12f, amber))
+            addView(text("● HTTPS    ", 12f, amber))
+            addView(text("● AWG", 12f, Color.rgb(100,80,175)))
         })
         chart = LatencyChart(this)
-        chart.contentDescription = "График RTT: QUIC зелёный, HTTPS оранжевый. Пробел означает отсутствие свежих ответов."
+        chart.contentDescription = "График RTT до шлюза: QUIC зелёный, HTTPS оранжевый, AWG фиолетовый. Пробел означает отсутствие свежих ответов."
         graphBox.addView(chart, LinearLayout.LayoutParams(-1, dp(100)))
         graphBox.addView(text("│ Обнаружена смена сети, точки, соты или QUIC-пути", 11f, muted))
 
@@ -171,6 +180,12 @@ class MainActivity : Activity() {
             text = "Сравнивать с HTTPS / WebSocket"; isChecked = true; textSize = 14f; setTextColor(ink)
         }
         panel.addView(compare)
+        profileCompare = CheckBox(this).apply {
+            text="Echo через VPN-профиль · QUIC / HTTPS / AWG"
+            textSize=14f; setTextColor(ink)
+            setOnCheckedChangeListener { _, checked -> compare.isEnabled=!checked }
+        }
+        panel.addView(profileCompare)
         panel.addView(button("Сканировать QR") {
             if(running || LabVpnService.active) android.widget.Toast.makeText(this,"Сначала остановите опыт / VPN",android.widget.Toast.LENGTH_SHORT).show()
             else startActivityForResult(android.content.Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST)
@@ -210,11 +225,11 @@ class MainActivity : Activity() {
         events.addView(text("Ход эксперимента", 16f, ink, true))
         timelineView = text("Здесь появятся события смены сети.", 13f, muted)
         events.addView(timelineView)
-        panel.addView(text("Echo: 20 сообщений/с; VPN keep-alive: 10 сообщений/с. При смене сети WSS открывает новый сеанс; может восстановиться и вернуться на Wi-Fi независимо от QUIC. Это демонстрация механики, не тест максимальной скорости.", 12f, muted))
+        panel.addView(text("Публичный Echo: 20 сообщений/с. Echo VPN-профиля: QUIC/HTTPS 10/с, AWG ICMP 1/с. AWG требует ключ профиля; график и jitter сравнивают разные виды проб. При смене сети WSS открывает новый сеанс; может восстановиться и вернуться на Wi-Fi независимо от QUIC. Это демонстрация механики, не тест максимальной скорости.", 12f, muted))
         space(panel, 10)
 
         panel.addView(button("Поделиться диагностикой") {
-            Diagnostics.preview(this, "Echo QUIC: replies=${q.replies}, migrations=${q.migrations}, RTT=${q.rtt}, maxGap=${q.maxGap}\nEcho HTTPS: replies=${w.replies}, RTT=${w.rtt}, maxGap=${w.maxGap}")
+            Diagnostics.preview(this, "Echo QUIC: replies=${q.replies}, migrations=${q.migrations}, RTT=${q.rtt}, maxGap=${q.maxGap}\nEcho HTTPS: replies=${w.replies}, RTT=${w.rtt}, maxGap=${w.maxGap}\nEcho AWG: replies=${a.replies}, RTT=${a.rtt}; transit RTT: QUIC=${q.transitRtt}, HTTPS=${w.transitRtt}, AWG=${a.transitRtt}")
         })
         val preferences = getSharedPreferences("server", MODE_PRIVATE)
         val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = if (preferences.getString("endpoint", "").isNullOrBlank()) View.VISIBLE else View.GONE }
@@ -239,7 +254,7 @@ class MainActivity : Activity() {
         radios.start()
     }
 
-    private inner class MetricCard(title: String, subtitle: String, color: Int) {
+    private inner class MetricCard(private val title: String, subtitle: String, color: Int) {
         val box = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(14), dp(12), dp(14)); background = background(Color.WHITE)
         }
@@ -251,16 +266,21 @@ class MainActivity : Activity() {
         private val network = text("Сеть   —", 12f, muted)
         init {
             box.addView(text(title, 20f, color, true)); box.addView(text(subtitle, 10f, muted))
-            space(box, 9); box.addView(status); box.addView(rtt); box.addView(text("RTT, мс", 11f, muted))
+            space(box, 9); box.addView(status); box.addView(rtt); box.addView(text("RTT, мс · шлюз / транзит", 11f, muted))
             space(box, 8); box.addView(text("Jitter max · 15 с", 11f, muted)); box.addView(jitter)
             space(box, 8); box.addView(gap); space(box, 6); box.addView(sessions); box.addView(network)
         }
-        fun render(model: TransportStats, now: Long, enabled: Boolean = true) {
-            status.text = if (!enabled) "Сравнение выключено" else if (model.silence(now) > 400) "Нет свежих ответов" else model.state
-            rtt.text = if (model.replies == 0L || model.silence(now) > 1500) "—" else "%.0f".format(model.rtt)
+        fun render(model: TransportStats, now: Long, enabled: Boolean = true, freshness: Long = 1500) {
+            status.text = if (!enabled) "Сравнение выключено" else if (model.silence(now) > freshness) "Нет свежих ответов" else model.state
+            rtt.text = if (model.replies == 0L || model.silence(now) > freshness) "—" else "%.0f".format(model.rtt)
+            if (model.transitEnabled) {
+                val remote=if(model.lastTransitEcho>0 && now-model.lastTransitEcho<3500) "%.0f".format(model.transitRtt) else "—"
+                rtt.append(" / $remote")
+                rtt.textSize=23f
+            } else rtt.textSize=29f
             gap.text = "Пауза макс.  ${if (model.replies > 1) "%.0f мс".format(maxOf(model.maxGap, model.silence(now).toDouble())) else "—"}"
             jitter.text = model.maxJitter(now)?.let { "%.1f мс".format(it) } ?: "—"
-            sessions.text = "Сеансов   ${model.sessions.size}"
+            sessions.text = if(title=="AmneziaWG") "Проб ICMP   ${model.replies}" else "Сеансов   ${model.sessions.size}"
             network.text = model.network.replace("LTE/Cellular", "Мобильная")
             box.alpha = if (enabled) 1f else 0.45f
         }
@@ -281,24 +301,39 @@ class MainActivity : Activity() {
 
         val kind = if (QuicSession.WIFI in available) QuicSession.WIFI else QuicSession.CELLULAR
         if (kind !in available) { Toast.makeText(this, "Подключите Wi-Fi или мобильную сеть", Toast.LENGTH_SHORT).show(); return }
-        if (compare.isChecked && hostname.text.isBlank()) { Toast.makeText(this, "Для HTTPS нужен публичный домен", Toast.LENGTH_SHORT).show(); return }
-        if (endpoint.text.isBlank()) { Toast.makeText(this, "Укажите сервер в настройках стенда ниже", Toast.LENGTH_LONG).show(); return }
+        if (!profileCompare.isChecked && compare.isChecked && hostname.text.isBlank()) { Toast.makeText(this, "Для HTTPS нужен публичный домен", Toast.LENGTH_SHORT).show(); return }
+        if (!profileCompare.isChecked && endpoint.text.isBlank()) { Toast.makeText(this, "Укажите сервер в настройках стенда ниже", Toast.LENGTH_LONG).show(); return }
         getSharedPreferences("server", MODE_PRIVATE).edit()
             .putString("endpoint", endpoint.text.toString().trim()).putString("hostname", hostname.text.toString().trim())
             .putString("pin", pin.text.toString().trim()).putBoolean("compare", compare.isChecked).apply()
-        q = TransportStats(); w = TransportStats(); timeline.clear(); raw.clear(); chart.clear()
-        running = true; comparing = compare.isChecked; compare.isEnabled = false
+        val selectedProfile = if(profileCompare.isChecked) try {
+            ProfileEchoSession(this) { transport, event -> if(transport=="awg") acceptAwg(event) else accept(transport=="quic", event) }
+        } catch(e:Exception) { Toast.makeText(this,e.message ?: "Не удалось открыть профиль",Toast.LENGTH_LONG).show(); return } else null
+        profileEcho=selectedProfile
+        echoTransports=selectedProfile?.transports ?: setOf("quic", "https")
+        q = TransportStats(); w = TransportStats(); a = TransportStats(); timeline.clear(); raw.clear(); chart.clear()
+        if(selectedProfile!=null && !VpnProfiles.preferences(this).getString("transit_endpoint", "").isNullOrBlank()) {
+            q.transitEnabled=true; w.transitEnabled=true; a.transitEnabled=true
+        }
+        running = true; comparing = if(selectedProfile!=null) "https" in echoTransports else compare.isChecked; compare.isEnabled = false; profileCompare.isEnabled=false
         experimentStart = SystemClock.elapsedRealtime()
         endpoint.isEnabled = false; hostname.isEnabled = false; pin.isEnabled = false
         startButton.text = "Stop Echo"
         banner.text = "Эксперимент идёт"
         q.state = "Подключение…"; q.active = true
+        if(selectedProfile!=null) {
+            q.active="quic" in echoTransports; w.active="https" in echoTransports; a.active="awg" in echoTransports
+            selectedProfile.move(kind)
+            return
+        }
         if (comparing) { w.state = "Ждём выбранную сеть"; wss.enable(hostname.text.toString().trim()) }
         quic.startOrMigrate(kind, endpoint.text.toString().trim(), hostname.text.toString().trim(), pin.text.toString().trim(), 50)
     }
     private fun stopExperiment() {
-        running = false; quic.stop(); wss.stop()
-        compare.isEnabled = true; endpoint.isEnabled = true; hostname.isEnabled = true; pin.isEnabled = true
+        running = false; quic.stop(); wss.stop(); profileEcho?.close(); profileEcho=null
+        val time=SystemClock.elapsedRealtime()
+        listOf(q,w,a).forEach { it.accept(JSONObject().put("event","stopped"),time) }
+        profileCompare.isEnabled=true; compare.isEnabled = !profileCompare.isChecked; endpoint.isEnabled = true; hostname.isEnabled = true; pin.isEnabled = true
         startButton.text = "Start Echo"; banner.text = "Опыт завершён · результаты сохранены"
         reserveView.text = "Сравните число сеансов и максимальную паузу."
     }
@@ -331,7 +366,17 @@ class MainActivity : Activity() {
         }
         if (!running) { Toast.makeText(this, "Сначала начните опыт", Toast.LENGTH_SHORT).show(); return }
         if (kind !in available) { Toast.makeText(this, "Эта сеть сейчас недоступна", Toast.LENGTH_SHORT).show(); return }
+        if(profileEcho!=null) { profileEcho?.move(kind); return }
         quic.startOrMigrate(kind, endpoint.text.toString().trim(), hostname.text.toString().trim(), pin.text.toString().trim(), 50)
+    }
+    private fun acceptAwg(e: JSONObject) {
+        Diagnostics.event("echo-awg",e)
+        val time=SystemClock.elapsedRealtime()
+        runOnUiThread {
+            if(destroyed) return@runOnUiThread
+            a.accept(e,time)
+            if(running && e.optString("event") in listOf("migration_started","path_switched")) chart.mark(time)
+        }
     }
     private fun accept(isQuic: Boolean, e: JSONObject) {
         Diagnostics.event(if(isQuic) "echo-quic" else "echo-https",e)
@@ -385,7 +430,9 @@ class MainActivity : Activity() {
             startButton.isEnabled=!LabVpnService.active
             echoRow.visibility=if(vpn) View.GONE else View.VISIBLE
             vpnCard.visibility=if(vpn) View.VISIBLE else View.GONE
-            compare.visibility=if(vpn) View.GONE else View.VISIBLE
+            compare.visibility=if(vpn || profileCompare.isChecked) View.GONE else View.VISIBLE
+            profileCompare.visibility=if(vpn) View.GONE else View.VISIBLE
+            aCard.box.visibility=if(!vpn && "awg" in echoTransports) View.VISIBLE else View.GONE
             graphTitle.text=if(vpn) "VPN · RTT до локального шлюза" else "Echo · задержка ответа"
             if(vpn) {
                 val fresh=LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho<1500
@@ -414,14 +461,17 @@ class MainActivity : Activity() {
                 if(LabVpnService.active) chart.sample(if(fresh && transport=="QUIC") LabVpnService.rtt.toFloat() else null,if(fresh && transport!="QUIC") LabVpnService.rtt.toFloat() else null)
                 timelineView.text=LabVpnService.log()
             }
-            qCard.render(q, time); wCard.render(w, time, comparing)
+            qCard.render(q, time, !profileCompare.isChecked || "quic" in echoTransports); wCard.render(w, time, comparing); aCard.render(a,time,"awg" in echoTransports,2500)
             networksView.text = "Wi-Fi: ${if (QuicSession.WIFI in available) "доступен" else "нет"}    ·    Мобильная: ${if (QuicSession.CELLULAR in available) "доступна" else "нет"}"
             if(shortWifi.isNotBlank() && QuicSession.WIFI in available) networksView.append("\n$shortWifi")
             if(shortCell.isNotBlank() && QuicSession.CELLULAR in available) networksView.append("\n$shortCell")
+            profileCompare.text="Echo через VPN-профиль · ${VpnProfiles.current(this@MainActivity).name}"
             if (running) {
                 banner.text = if (!q.active) "QUIC: ${q.state}" else if (q.silence(time) > 400) "Сеть меняется · ждём ответы" else "Эксперимент идёт · ${q.network.replace("LTE/Cellular", "мобильная сеть")}"
+                if(profileEcho!=null) banner.text="Сравнение: ${echoTransports.joinToString(" / ") { it.uppercase() }}"
                 chart.sample(if (q.active && q.lastEcho != 0L && q.silence(time) < 500) q.rtt.toFloat() else null,
-                    if (comparing && w.active && w.lastEcho != 0L && w.silence(time) < 500) w.rtt.toFloat() else null)
+                    if (comparing && w.active && w.lastEcho != 0L && w.silence(time) < 500) w.rtt.toFloat() else null,
+                    if(a.active && a.lastEcho!=0L && a.silence(time)<2500) a.rtt.toFloat() else null)
             }
             if (detailsView.isShown) detailsView.text = "QUIC: ${q.replies} ответов, ${q.migrations} миграций\nСеансы: ${q.sessions.joinToString()}\nHTTPS: ${w.replies} ответов\nСеансы: ${w.sessions.joinToString()}\n\n${raw.joinToString("\n")}"
             handler.postDelayed(this, 250)
@@ -429,6 +479,6 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         destroyed = true; handler.removeCallbacksAndMessages(null)
-        radios.close(); quic.close(); wss.close(); super.onDestroy()
+        radios.close(); quic.close(); wss.close(); profileEcho?.close(); super.onDestroy()
     }
 }

@@ -17,7 +17,7 @@ import org.json.JSONObject
 /** Serializes connection lifecycle and Android network events; never auto-dials. */
 internal class VpnSession(
     private val cm: ConnectivityManager,
-    private val service: android.net.VpnService,
+    private val service: android.net.VpnService?,
     private val config: JSONObject,
     private val tunFD: Int,
     private val selected: (Network, Int) -> Unit = { _, _ -> },
@@ -62,6 +62,7 @@ internal class VpnSession(
     @Volatile private var closed = false
 
     init {
+        require(service != null || (tunFD == -1 && attached != null)) { "Probe sessions must not attach a TUN" }
         watch(WIFI)
         watch(CELLULAR)
         worker.scheduleWithFixedDelay(
@@ -428,7 +429,7 @@ internal class VpnSession(
     private fun binder(network: Network) =
         object : SocketBinder {
             override fun bind(fd: Long) {
-                check(service.protect(fd.toInt())) { "Cannot protect tunnel socket" }
+                check(service?.protect(fd.toInt()) ?: (attached != null)) { "Cannot protect tunnel socket" }
                 ParcelFileDescriptor.fromFd(fd.toInt()).use {
                     network.bindSocket(it.fileDescriptor)
                 }

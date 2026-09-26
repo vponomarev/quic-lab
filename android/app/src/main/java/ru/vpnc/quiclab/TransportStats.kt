@@ -22,6 +22,9 @@ internal class TransportStats {
         }
         return maximum
     }
+    var transitRtt = 0.0
+    var lastTransitEcho = 0L
+    var transitEnabled = false
     var state = "Готов к запуску"
     var network = "—"
     var rtt = 0.0
@@ -33,6 +36,8 @@ internal class TransportStats {
     val sessions = linkedSetOf<String>()
     fun accept(e: JSONObject, now: Long) {
         when (e.optString("event")) {
+            "transit_echo" -> { transitEnabled = true; transitRtt = e.optDouble("rtt_ms"); lastTransitEcho = now }
+            "transit_probe_failed" -> { transitEnabled = true; lastTransitEcho = 0L }
             "connecting" -> { active = true; state = "Подключение…" }
             "connected" -> { active = true; state = "Подключён" }
             "echo" -> {
