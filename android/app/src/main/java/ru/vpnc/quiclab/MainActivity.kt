@@ -461,7 +461,14 @@ class MainActivity : Activity() {
             vpnCard.visibility=if(vpn) View.VISIBLE else View.GONE
             compare.visibility=if(vpn || profileCompare.isChecked) View.GONE else View.VISIBLE
             profileCompare.visibility=if(vpn) View.GONE else View.VISIBLE
-            aCard.box.visibility=if(!vpn && "awg" in echoTransports) View.VISIBLE else View.GONE
+            val displayedTransports=if(running) echoTransports else if(profileCompare.isChecked) {
+                val prefs=VpnProfiles.preferences(this@MainActivity)
+                val allowed=prefs.getStringSet("available_transports",setOf("quic","https","awg")).orEmpty()
+                allowed.filter { !prefs.getString("${it}_endpoint", "").isNullOrBlank() }.toSet()
+            } else {
+                setOf("quic","https") + if(!getSharedPreferences("server",MODE_PRIVATE).getString("awg_enroll_url", "").isNullOrBlank()) setOf("awg") else emptySet()
+            }
+            aCard.box.visibility=if(!vpn && "awg" in displayedTransports) View.VISIBLE else View.GONE
             graphTitle.text=if(vpn) "VPN · RTT до локального шлюза" else "Echo · задержка ответа"
             if(vpn) {
                 val fresh=LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho<1500
@@ -492,7 +499,7 @@ class MainActivity : Activity() {
                 if(LabVpnService.active) chart.sample(if(fresh && transport=="QUIC") LabVpnService.rtt.toFloat() else null,if(fresh && transport!="QUIC") LabVpnService.rtt.toFloat() else null)
                 timelineView.text=LabVpnService.log()
             }
-            qCard.render(q, time, !profileCompare.isChecked || "quic" in echoTransports); wCard.render(w, time, comparing); aCard.render(a,time,"awg" in echoTransports,2500)
+            qCard.render(q, time, "quic" in displayedTransports); wCard.render(w, time, "https" in displayedTransports && (if(running) comparing else profileCompare.isChecked || compare.isChecked)); aCard.render(a,time,"awg" in displayedTransports,2500)
             networksView.text = "Wi-Fi: ${if (QuicSession.WIFI in available) "доступен" else "нет"}    ·    Мобильная: ${if (QuicSession.CELLULAR in available) "доступна" else "нет"}"
             if(shortWifi.isNotBlank() && QuicSession.WIFI in available) networksView.append("\n$shortWifi")
             if(shortCell.isNotBlank() && QuicSession.CELLULAR in available) networksView.append("\n$shortCell")
