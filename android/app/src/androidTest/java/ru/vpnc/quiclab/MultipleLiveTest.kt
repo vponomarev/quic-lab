@@ -27,6 +27,10 @@ class MultipleLiveTest {
         val meta = c.getSharedPreferences("vpn_profiles", Context.MODE_PRIVATE)
         val saved = meta.all.toMap()
         val created = mutableListOf<String>()
+        val migrate = args.getString("multiple_migration") == "true"
+        val wifi = c.getSystemService(android.net.wifi.WifiManager::class.java)
+        val wifiWasEnabled = wifi.isWifiEnabled
+        listOf(selected, direct).forEach { c.packageManager.getApplicationInfo(it, 0) }
         fun restore(p: SharedPreferences, values: Map<String, *>) {
             val e = p.edit().clear()
             values.forEach { (k, v) ->
@@ -173,8 +177,62 @@ class MultipleLiveTest {
                 }
                 img.recycle()
             }
-            println("MULTIPLE_LIVE_OK")
+            if (migrate) {
+                require(wifiWasEnabled) { "Start migration test with Wi-Fi enabled" }
+                val cm = c.getSystemService(android.net.ConnectivityManager::class.java)
+                for ((command, transport) in
+                    listOf(
+                        "disable" to android.net.NetworkCapabilities.TRANSPORT_CELLULAR,
+                        "enable" to android.net.NetworkCapabilities.TRANSPORT_WIFI,
+                    )) {
+                    shell("svc wifi $command")
+                    waitFor("physical network $command", 40) {
+                        cm.allNetworks.any { n ->
+                            cm.getNetworkCapabilities(n)?.let {
+                                it.hasTransport(transport) &&
+                                    it.hasCapability(
+                                        android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                                    )
+                            } == true
+                        } && wifi.isWifiEnabled == (command == "enable")
+                    }
+                    Thread.sleep(10000)
+                    waitFor("profiles after $command") {
+                        MultipleVpnState.summary().split("Работает").size >= 3
+                    }
+                    probe(selected, "tcp")
+                    probe(selected, "udp")
+                    probe(direct, "tcp")
+                    probe(direct, "udp")
+                }
+                println("MULTIPLE_MIGRATION_OK")
+            }
+            stop()
+            VpnProfiles.setMultiple(c, false)
+            VpnProfiles.select(c, apps.id)
+            for (transport in listOf("quic", "https")) {
+                val prefs = VpnProfiles.preferences(c, apps.id)
+                check(
+                    prefs
+                        .edit()
+                        .putString("transport", transport)
+                        .putString("endpoint", prefs.getString("${transport}_endpoint", ""))
+                        .commit()
+                )
+                c.startActivity(
+                    Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                Thread.sleep(500)
+                c.startForegroundService(Intent(c, LabVpnService::class.java))
+                waitFor("single $transport") { LabVpnService.active && LabVpnService.lastEcho > 0 }
+                probe(selected, "tcp")
+                probe(selected, "udp")
+                stop()
+            }
+            println("MULTIPLE_LIVE_OK; SINGLE_REGRESSION_OK")
         } finally {
+            if (migrate && wifi.isWifiEnabled != wifiWasEnabled)
+                shell("svc wifi " + if (wifiWasEnabled) "enable" else "disable")
             File(c.filesDir, "multiple-live-report.txt")
                 .writeText(Diagnostics.report(c, "multiple live integration"))
             stop()
