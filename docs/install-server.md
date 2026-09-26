@@ -37,8 +37,8 @@ HTTPS останется на 443. UDP echo и VPN остаются раздел
 Проверьте `sha256sum --ignore-missing -c SHA256SUMS`, затем распакуйте архив:
 
 ```sh
-tar xzf quic-lab-server-0.4.5-dev-linux-amd64.tar.gz
-cd quic-lab-server-0.4.5-dev-linux-amd64
+tar xzf quic-lab-server-0.7.0-linux-amd64.tar.gz
+cd quic-lab-server-0.7.0-linux-amd64
 sudo ./install-server.py quic.example.org
 ```
 
