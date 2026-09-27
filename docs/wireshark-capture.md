@@ -67,6 +67,14 @@ powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -Server https://l
 
 Установка только для текущего пользователя: `%LOCALAPPDATA%/QUIC Lab Capture`, схема `quic-lab` в `HKCU/Software/Classes`. Администратор Windows не требуется. Обработчик запускается по клику; постоянной службы и расширения браузера нет.
 
+Для portable или нестандартной установки Windows добавьте параметр:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -Server https://lab.example/lab/ -WiresharkPath "D:\Tools\WiresharkPortable64\WiresharkPortable64.exe"
+```
+
+Путь сохраняется в обработчике ссылки. Для PortableApps установщик выбирает внутренний `App\Wireshark\Wireshark.exe`, чтобы передавать поток stdin напрямую. Можно указать обычный `Wireshark.exe`. Повторная установка без параметра сохраняет ранее выбранный путь.
+
 ## macOS: установка преподавателю
 
 Распакуйте `quic-lab-capture-darwin.zip`, установите Wireshark в `/Applications`. Затем:
