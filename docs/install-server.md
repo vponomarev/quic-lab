@@ -491,3 +491,7 @@ systemctl status quic-lab-transit quic-lab-transit-guard
 journalctl -u quic-lab-transit -n 50 --no-pager
 ip -4 route show table 51821
 ```
+
+## Серверный захват TLS и hot reload
+
+Сервер поддерживает экспорт TLS secrets для Wireshark без настройки клиента, SNI passthrough к существующему nginx на loopback и перезагрузку сертификата по SIGHUP. Это отдельная явная настройка; установщик не переносит существующие сайты автоматически. См. [инструкцию по capture и сертификатам](wireshark-capture.md). В серверный архив включён `reload-certificate.py` для атомарной установки пары после Certbot renewal.

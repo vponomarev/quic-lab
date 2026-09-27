@@ -38,7 +38,14 @@ func TestCaptureExistingPorts(t *testing.T) {
 	cp, kp, _ := labcert.Generate()
 	cert, _ := tls.X509KeyPair(cp, kp)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ql, e := quic.ListenAddr("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{protocol.ALPN}}, nil)
+	router := new(debugcapture.Router)
+	udp, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer udp.Close()
+	udpPort := udp.LocalAddr().(*net.UDPAddr).Port
+	ql, e := quic.Listen(udp, &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{protocol.ALPN}, KeyLogWriter: router.Writer(udpPort, true)}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -47,11 +54,10 @@ func TestCaptureExistingPorts(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewUnstartedServer(mux)
 	defer server.Close()
+	server.TLS = &tls.Config{KeyLogWriter: router.Writer(listenerPort(server.Listener.Addr().String()), false)}
 	server.StartTLS()
 	_, p, _ := net.SplitHostPort(server.Listener.Addr().String())
 	tcpPort, _ := strconv.Atoi(p)
-	_, p, _ = net.SplitHostPort(ql.Addr().String())
-	udpPort, _ := strconv.Atoi(p)
 	cfg := admin.Config{PublicURL: "https://lab.example/", DataDir: t.TempDir(), Username: "test", Password: "synthetic-test-password"}
 	store, _ := admin.OpenStore(cfg.DataDir)
 	web := admin.NewWeb(cfg, store)
@@ -61,6 +67,7 @@ func TestCaptureExistingPorts(t *testing.T) {
 		t.Fatal(e)
 	}
 	web.Capture = manager
+	router.Set(manager)
 	mux.Handle("/echo", echo.WebSocketHandler(log))
 	mux.Handle("/", web.Handler())
 	s, e := manager.Start("teacher", "echo", "")
@@ -95,8 +102,7 @@ func TestCaptureExistingPorts(t *testing.T) {
 			live.Write(b)
 		}
 	}()
-	var keys bytes.Buffer
-	c, e := quic.DialAddr(ctx, ql.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{protocol.ALPN}, KeyLogWriter: &keys}, nil)
+	c, e := quic.DialAddr(ctx, ql.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{protocol.ALPN}}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -108,7 +114,6 @@ func TestCaptureExistingPorts(t *testing.T) {
 	c.CloseWithError(0, "done")
 	tr := httpClient.Transport.(*http.Transport).Clone()
 	tr.TLSClientConfig = tr.TLSClientConfig.Clone()
-	tr.TLSClientConfig.KeyLogWriter = &keys
 	phone, _, e := websocket.Dial(ctx, "wss"+strings.TrimPrefix(server.URL, "https")+"/echo", &websocket.DialOptions{HTTPClient: &http.Client{Transport: tr}})
 	if e != nil {
 		t.Fatal(e)
@@ -119,15 +124,8 @@ func TestCaptureExistingPorts(t *testing.T) {
 	}
 	phone.CloseNow()
 	tr.CloseIdleConnections()
-	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/capture/keys?id="+s.ID, bytes.NewReader(keys.Bytes()))
-	req.Header.Set("Authorization", "Bearer "+s.UploadToken())
-	resp, e = httpClient.Do(req)
-	if e != nil {
-		t.Fatal(e)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 204 {
-		t.Fatal("key upload", resp.StatusCode)
+	if len(s.Keys()) == 0 {
+		t.Fatal("server did not export TLS secrets")
 	}
 	time.Sleep(2500 * time.Millisecond)
 	s.Stop("test finished")

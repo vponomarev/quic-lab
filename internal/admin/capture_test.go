@@ -29,7 +29,7 @@ func TestCaptureAccessAndDisabled(t *testing.T) {
 	if page.Code != 200 || !strings.Contains(page.Body.String(), "выключена") {
 		t.Fatal("disabled page")
 	}
-	for _, path := range []string{"/capture/start", "/capture/launch", "/capture/stop", "/capture/qr"} {
+	for _, path := range []string{"/capture/start", "/capture/launch", "/capture/stop"} {
 		if out := call(h, "POST", path, "id=x", cookie); out.Code != 403 {
 			t.Fatal("CSRF bypass", path, out.Code)
 		}
@@ -40,6 +40,16 @@ func TestCaptureAccessAndDisabled(t *testing.T) {
 	}
 	if out = call(h, "POST", "/capture/redeem", "", nil); out.Code != 404 {
 		t.Fatal(out.Code)
+	}
+}
+func TestClientSecretEndpointsRetired(t *testing.T) {
+	c := config(t)
+	store, _ := OpenStore(c.DataDir)
+	h := NewWeb(c, store).Handler()
+	for _, path := range []string{"/capture/keys", "/capture/enroll", "/capture/qr"} {
+		if out := call(h, "POST", path, "", nil); out.Code != 410 {
+			t.Fatalf("%s: %d", path, out.Code)
+		}
 	}
 }
 func TestHelperDownloadFixedNames(t *testing.T) {

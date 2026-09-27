@@ -94,9 +94,9 @@ func TestCaptureHTTPFlow(t *testing.T) {
 	_, page = request("GET", "/capture", "")
 	id := extract(`name="id" value="([^"]+)"`, page)
 	form.Set("id", id)
-	code, page = request("POST", "/capture/qr", form.Encode())
-	if code != 200 || !strings.Contains(page, "data:image/png;base64,") || strings.Contains(page, "PRIVATE KEY") {
-		t.Fatal("public debug QR")
+	code, _ = request("POST", "/capture/qr", form.Encode())
+	if code != 410 {
+		t.Fatal("client QR must be retired")
 	}
 	_, page = request("POST", "/capture/launch", form.Encode())
 	uri, _ := url.Parse(extract(`href="(quic-lab:[^"]+)"`, page))

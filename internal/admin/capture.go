@@ -2,11 +2,9 @@ package admin
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/skip2/go-qrcode"
 	"quiclab/internal/debugcapture"
 )
 
@@ -40,6 +37,7 @@ type captureView struct {
 	Enabled                   bool
 	Sessions                  []debugcapture.Info
 	Users                     []User
+	Termination               []string
 	Launch, QR                template.URL
 }
 
@@ -49,6 +47,16 @@ func (w *Web) renderCapture(rw http.ResponseWriter, s session, message string, l
 		v.Sessions = w.Capture.List(s.CSRF)
 		sort.Slice(v.Sessions, func(i, j int) bool { return v.Sessions[i].Until.After(v.Sessions[j].Until) })
 		v.Users = w.Store.List()
+		for _, kind := range []string{"echo", "vpn"} {
+			capability := w.Capture.Config.Termination[kind]
+			for i, name := range []string{"QUIC", "HTTPS"} {
+				state := "внешняя терминация или слушатель выключен — расшифровка недоступна"
+				if capability[i] {
+					state = "терминация QUIC Lab — ключи с сервера"
+				}
+				v.Termination = append(v.Termination, strings.ToUpper(kind)+" / "+name+": "+state)
+			}
+		}
 	}
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = captureTemplate.Execute(rw, v)
@@ -119,33 +127,7 @@ func (w *Web) captureLaunch(rw http.ResponseWriter, r *http.Request) {
 	w.renderCapture(rw, ss, "Ссылка действует одну минуту. Откройте Wireshark, затем запустите новое Echo/VPN-соединение.", template.URL(u.String()), "")
 }
 func (w *Web) captureQR(rw http.ResponseWriter, r *http.Request) {
-	ss, s := w.ownedCapture(rw, r, true)
-	if s == nil {
-		return
-	}
-	if s.Snapshot().State != "running" {
-		http.Error(rw, "Capture stopped", 410)
-		return
-	}
-	ticket, e := s.Enrollment()
-	if e != nil {
-		http.Error(rw, "Capture stopped", 410)
-		return
-	}
-	link := w.Config.PublicURL + "capture/enroll#" + ticket
-	code, e := qrcode.New(link, qrcode.Medium)
-	if e != nil {
-		http.Error(rw, "QR unavailable", 500)
-		return
-	}
-	// Integer module size avoids blurred, uneven cells after bitmap scaling.
-	png, e := code.PNG(-6)
-	img := template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
-	if e != nil {
-		http.Error(rw, "QR unavailable", 500)
-		return
-	}
-	w.renderCapture(rw, ss, "QR действует 2 минуты и используется один раз. Требуется Android 0.7.3-dev. После подтверждения экспорт TLS secrets действует до конца сессии. Адреса подключения и VPN-профили не меняются.", "", img)
+	http.Error(rw, "Phone QR is no longer needed: TLS secrets come from the server", http.StatusGone)
 }
 func (w *Web) captureDownload(rw http.ResponseWriter, r *http.Request) {
 	_, s := w.ownedCapture(rw, r, false)
@@ -274,8 +256,8 @@ func (w *Web) captureStream(rw http.ResponseWriter, r *http.Request) {
 var captureTemplate = template.Must(template.New("capture").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wireshark · QUIC Lab</title><style>
 body{font:16px system-ui;margin:0;background:#eff5f7;color:#173248}main{max-width:1700px;margin:auto;padding:28px}nav,.actions,form{display:flex;align-items:center;gap:12px;flex-wrap:wrap}nav{justify-content:space-between}a{color:#00877e}h1{font-size:28px}.card{background:white;border-radius:18px;padding:22px;margin:18px 0}.muted{color:#62798c}button,.launch{border:0;border-radius:8px;padding:11px 16px;background:#00877e;color:white;text-decoration:none;cursor:pointer}select{padding:10px;border:1px solid #bdcfd9;border-radius:7px;max-width:100%}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:14px 8px;border-bottom:1px solid #e6eef1}code{overflow-wrap:anywhere}.table{overflow:auto}.qr img{max-width:100%;width:auto;height:auto;image-rendering:pixelated}.alert{border-left:4px solid #00877e;padding:12px}.danger{background:#a33a40}small{display:block}.actions form{display:inline-flex}li{margin:8px 0}
 </style><main><nav><a href="{{.Base}}users">← Пользователи QUIC Lab</a><a href="{{.Base}}capture">Обновить статус</a></nav><h1>Wireshark · учебная отладка</h1>{{if .Message}}<p class="alert">{{.Message}}</p>{{end}}{{if .Launch}}<section class="card"><h2>Без установки</h2><p>Скопируйте одноразовую ссылку (действует минуту). Распакуйте ZIP и передайте её программе параметром <code>-connect</code>.</p><textarea readonly aria-label="Одноразовая ссылка" style="width:100%;height:90px;box-sizing:border-box">{{.Launch}}</textarea><p><code>.\quic-lab-capture-cli.exe -connect "ССЫЛКА" -wireshark "ПУТЬ К WIRESHARK.EXE"</code></p><p class="muted">Для macOS: ./quic-lab-capture-darwin-arm64 -connect "ССЫЛКА" (Intel: amd64). Установщик и регистрация схемы не нужны.</p><details><summary>Если обработчик ссылки уже установлен</summary><p><a class="launch" href="{{.Launch}}">Открыть в Wireshark</a></p></details></section>{{end}}{{if .QR}}<section class="card qr"><img src="{{.QR}}" alt="QR отладки"><p class="muted">Сканируйте в QUIC Lab. Держите весь код в рамке камеры; если не распознаётся, немного отдалите телефон. Масштаб страницы: 100%.</p></section>{{end}}
-<section class="card"><ol><li>Подготовьте Wireshark и распакуйте QUIC Lab Capture для Windows или macOS: <a href="{{.Base}}download/capture/windows">Windows ZIP</a> · <a href="{{.Base}}download/capture/darwin">macOS ZIP</a>. Можно запускать из командной строки без установщика.</li><li>Создайте сессию и нажмите «Подготовить запуск», затем скопируйте одноразовую ссылку в команду.</li><li>Импортируйте QR отладки на обновлённый Android-клиент и подтвердите экспорт TLS secrets. Запустите новое Echo/VPN-соединение на обычных портах.</li><li>Переключайте Wi-Fi/LTE. После занятия остановите захват; запись уже сохранена на компьютере.</li></ol><p class="muted">Существующие порты, 10 минут / 32 MiB. Запись содержит TLS secrets и позволяет читать учебный трафик. AWG не расшифровывается этим способом. На выбранных портах записываются и другие зашифрованные подключения; ключи передаёт только телефон, включивший отладку. Сам поток Wireshark исключён из захвата. Сервер хранит запись до 5 минут после срока сессии. Поток отстаёт примерно на 2 секунды, чтобы получить секреты с телефона. Если ключи пришли поздно, скачайте и откройте завершённую запись.</p></section>
-{{if .Enabled}}<section class="card"><form method="post" action="{{.Base}}capture/start"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Режим <select name="kind"><option value="echo">Echo · QUIC + HTTPS</option><option value="vpn">VPN · QUIC + HTTPS</option></select></label><button>Начать отладочную сессию</button></form></section><section class="card table"><table><thead><tr><th>Сессия</th><th>UDP / TCP</th><th>Статус</th><th>До (UTC)</th><th>Действия</th></tr></thead><tbody>{{range .Sessions}}<tr><td>{{.Kind}}<small>{{printf "%.8s" .ID}}</small></td><td>{{.Port}} / {{.TCPPort}}</td><td>{{.State}}<small>{{.Bytes}} байт</small></td><td>{{.Until.UTC.Format "15:04:05"}}</td><td class="actions">{{if eq .State "running"}}<form method="post" action="{{$.Base}}capture/launch"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>Подготовить запуск</button></form><form method="post" action="{{$.Base}}capture/qr"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>QR отладки</button></form><form method="post" action="{{$.Base}}capture/stop"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="danger">Остановить</button></form>{{end}}<a href="{{$.Base}}capture/download?id={{.ID}}">Скачать pcapng</a></td></tr>{{else}}<tr><td colspan="5">Ваших сессий пока нет.</td></tr>{{end}}</tbody></table></section>{{else}}<section class="card">Отладка выключена в конфиге сервера. Инструкция: <code>docs/wireshark-capture.md</code>.</section>{{end}}</main></html>`))
+<section class="card"><h2>Источник ключей: сервер</h2>{{range .Termination}}<p>{{.}}</p>{{end}}<ol><li>Подготовьте Wireshark и распакуйте QUIC Lab Capture для Windows или macOS: <a href="{{.Base}}download/capture/windows">Windows ZIP</a> · <a href="{{.Base}}download/capture/darwin">macOS ZIP</a>. Можно запускать из командной строки без установщика.</li><li>Создайте сессию и нажмите «Подготовить запуск», затем скопируйте одноразовую ссылку в команду.</li><li>Запустите новое Echo/VPN-соединение на телефоне. QR и экспорт ключей с телефона не нужны. Секреты записываются только во время активного захвата, если TLS завершается в QUIC Lab.</li><li>Переключайте Wi-Fi/LTE. После занятия остановите захват; запись уже сохранена на компьютере.</li></ol><p class="muted">Существующие порты, 10 минут / 32 MiB. Запись содержит TLS secrets и позволяет читать учебный трафик. AWG не расшифровывается этим способом. На выбранных портах записываются и другие зашифрованные подключения; ключи новых соединений на выбранных слушателях записывает сервер. Захват может расшифровать подключения других клиентов этого слушателя; используйте учебный сервер. Сам поток Wireshark исключён из захвата. Сервер хранит запись до 5 минут после срока сессии. Поток отстаёт примерно на 2 секунды, для синхронизации пакетов и секретов сессии. Если ключи пришли поздно, скачайте и откройте завершённую запись.</p></section>
+{{if .Enabled}}<section class="card"><form method="post" action="{{.Base}}capture/start"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Режим <select name="kind"><option value="echo">Echo · QUIC + HTTPS</option><option value="vpn">VPN · QUIC + HTTPS</option></select></label><button>Начать отладочную сессию</button></form></section><section class="card table"><table><thead><tr><th>Сессия</th><th>UDP / TCP</th><th>Статус</th><th>До (UTC)</th><th>Действия</th></tr></thead><tbody>{{range .Sessions}}<tr><td>{{.Kind}}<small>{{printf "%.8s" .ID}}</small></td><td>{{.Port}} / {{.TCPPort}}</td><td>{{.State}}<small>{{.Bytes}} байт</small></td><td>{{.Until.UTC.Format "15:04:05"}}</td><td class="actions">{{if eq .State "running"}}<form method="post" action="{{$.Base}}capture/launch"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>Подготовить запуск</button></form><form method="post" action="{{$.Base}}capture/stop"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="danger">Остановить</button></form>{{end}}<a href="{{$.Base}}capture/download?id={{.ID}}">Скачать pcapng</a></td></tr>{{else}}<tr><td colspan="5">Ваших сессий пока нет.</td></tr>{{end}}</tbody></table></section>{{else}}<section class="card">Отладка выключена в конфиге сервера. Инструкция: <code>docs/wireshark-capture.md</code>.</section>{{end}}</main></html>`))
 
 func (w *Web) captureHelperDownload(rw http.ResponseWriter, r *http.Request) {
 	platform := r.PathValue("platform")
@@ -289,17 +271,7 @@ func (w *Web) captureHelperDownload(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Web) captureKeys(rw http.ResponseWriter, r *http.Request) {
-	if w.Capture == nil {
-		http.NotFound(rw, r)
-		return
-	}
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	body, e := io.ReadAll(io.LimitReader(r.Body, 8193))
-	if !ok || e != nil || !w.Capture.Upload(r.URL.Query().Get("id"), token, body) {
-		http.Error(rw, "Capture upload rejected", 403)
-		return
-	}
-	rw.WriteHeader(204)
+	http.Error(rw, "Client TLS secret upload is disabled", http.StatusGone)
 }
 func capturePeer(r *http.Request) (string, error) {
 	peer := r.RemoteAddr
@@ -323,27 +295,5 @@ func capturePeer(r *http.Request) (string, error) {
 }
 
 func (w *Web) captureEnroll(rw http.ResponseWriter, r *http.Request) {
-	rw.Header().Set("Cache-Control", "no-store")
-	if w.Capture == nil {
-		http.NotFound(rw, r)
-		return
-	}
-	var in struct {
-		Token string `json:"token"`
-	}
-	if json.NewDecoder(io.LimitReader(r.Body, 256)).Decode(&in) != nil {
-		http.Error(rw, "Invalid token", 400)
-		return
-	}
-	s := w.Capture.Enroll(in.Token)
-	if s == nil {
-		http.Error(rw, "QR expired or already used", 410)
-		return
-	}
-	host := w.Config.Echo.Hostname
-	if s.Kind == "vpn" {
-		host = w.Config.VPN.Hostname
-	}
-	rw.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(rw).Encode(map[string]any{"version": 1, "kind": "capture", "hostname": host, "capture_kind": s.Kind, "capture_url": w.Config.PublicURL + "capture/keys?id=" + s.ID, "capture_token": s.UploadToken(), "capture_until": s.Until.Unix()})
+	http.Error(rw, "Phone enrollment is no longer needed", http.StatusGone)
 }

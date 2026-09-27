@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -30,6 +31,8 @@ func main() {
 	certPath := flag.String("cert", "", "PEM certificate file")
 	keyPath := flag.String("key", "", "PEM private key file")
 	ephemeral := flag.Bool("ephemeral-cert", false, "generate an in-memory lab certificate; pin printed SHA-256 on client")
+	fallback := flag.String("tls-fallback", "", "optional loopback TCP address for TLS passthrough of other SNI names; requires -https-listen and -tls-host")
+	tlsHost := flag.String("tls-host", "", "only this SNI hostname terminates at the public HTTPS listener when fallback is enabled")
 	publicHTTPS := flag.String("https-listen", "", "optional public HTTPS listener for admin, echo and demo; shares gateway mTLS listener when addresses match")
 	webListen := flag.String("web-listen", "", "optional loopback HTTP WebSocket endpoint behind nginx")
 	gatewayQUIC := flag.String("gateway-quic", "", "optional authenticated gateway UDP address, e.g. :4434")
@@ -58,7 +61,9 @@ func main() {
 		log.Error("certificate", "error", err)
 		os.Exit(1)
 	}
-	ln, err := quic.ListenAddr(*addr, &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{protocol.ALPN}, MinVersion: tls.VersionTLS13},
+	reloadable := labcert.NewReloadable(cert)
+	keys := new(debugcapture.Router)
+	ln, err := quic.ListenAddr(*addr, &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*addr), true), NextProtos: []string{protocol.ALPN}, MinVersion: tls.VersionTLS13},
 		&quic.Config{MaxIdleTimeout: 90 * time.Second, MaxIncomingStreams: 1, MaxIncomingUniStreams: -1})
 	if err != nil {
 		log.Error("listen", "error", err)
@@ -68,6 +73,30 @@ func main() {
 	log.Info("listening", "address", ln.Addr().String(), "certificate_sha256", labcert.Fingerprint(cert))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if *fallback != "" && (*publicHTTPS == "" || *tlsHost == "") {
+		log.Error("tls-fallback requires https-listen and tls-host")
+		os.Exit(1)
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				if *ephemeral {
+					continue
+				}
+				if e := reloadable.Reload(*certPath, *keyPath); e != nil {
+					log.Error("certificate_reload_failed", "error", e)
+				} else {
+					log.Info("certificate_reloaded")
+				}
+			}
+		}
+	}()
 	var publicAdmin http.Handler
 	var adminBase string
 	var managed *admin.Store
@@ -107,11 +136,13 @@ func main() {
 				}
 			}
 			cfg.Capture.Ports = map[string][2]int{"echo": {portOf(*addr), echoTCP}, "vpn": {portOf(*gatewayQUIC), portOf(*gatewayHTTPS)}}
+			cfg.Capture.Termination = map[string][2]bool{"echo": {true, *publicHTTPS != "" && listenerPort(*publicHTTPS) == echoTCP}, "vpn": {*gatewayQUIC != "", *gatewayHTTPS != ""}}
 			ui.Capture, e = debugcapture.New(ctx, *cfg.Capture, nil)
 			if e != nil {
 				log.Error("capture_config", "error", e)
 				os.Exit(1)
 			}
+			keys.Set(ui.Capture)
 		}
 		if cfg.EchoAWG != "" {
 			var probe func(context.Context) error
@@ -162,6 +193,9 @@ func main() {
 			log.Error("gateway_tls", "error", e)
 			os.Exit(1)
 		}
+		mtls.Certificates = nil
+		mtls.GetCertificate = reloadable.GetCertificate
+		mtls.KeyLogWriter = keys.Writer(listenerPort(*gatewayQUIC), true)
 		if *gatewayQUIC != "" {
 			ql, e := quic.ListenAddr(*gatewayQUIC, mtls, &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxFlows, MaxIncomingUniStreams: -1})
 			if e != nil {
@@ -178,6 +212,7 @@ func main() {
 		}
 		if *gatewayHTTPS != "" {
 			tc := mtls.Clone()
+			tc.KeyLogWriter = keys.Writer(listenerPort(*gatewayHTTPS), false)
 			tc.NextProtos = []string{"http/1.1"}
 			mux := http.NewServeMux()
 			mux.HandleFunc("/tunnel", gw.WebSocket)
@@ -189,7 +224,7 @@ func main() {
 			hs := &http.Server{Addr: *gatewayHTTPS, Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 			defer hs.Close()
 			go func() {
-				if e := hs.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
+				if e := servePublicTLS(ctx, hs, *publicHTTPS == *gatewayHTTPS, *tlsHost, *fallback); e != nil && e != http.ErrServerClosed {
 					log.Error("gateway_https", "error", e)
 					cancel()
 				}
@@ -197,10 +232,10 @@ func main() {
 		}
 	}
 	if *publicHTTPS != "" && *publicHTTPS != *gatewayHTTPS {
-		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil, echoProbe), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil, echoProbe), TLSConfig: &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*publicHTTPS), false), MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 		defer ps.Close()
 		go func() {
-			if e := ps.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
+			if e := servePublicTLS(ctx, ps, true, *tlsHost, *fallback); e != nil && e != http.ErrServerClosed {
 				log.Error("public_https", "error", e)
 				cancel()
 			}
@@ -232,4 +267,26 @@ func main() {
 		log.Error("serve", "error", err)
 		os.Exit(1)
 	}
+}
+
+func listenerPort(addr string) int {
+	_, p, _ := net.SplitHostPort(addr)
+	n, _ := strconv.Atoi(p)
+	return n
+}
+func servePublicTLS(ctx context.Context, s *http.Server, public bool, host, fallback string) error {
+	if !public || fallback == "" {
+		return s.ListenAndServeTLS("", "")
+	}
+	ln, e := net.Listen("tcp", s.Addr)
+	if e != nil {
+		return e
+	}
+	routed, e := newSNIRouter(ctx, ln, host, fallback)
+	if e != nil {
+		ln.Close()
+		return fmt.Errorf("TLS frontend: %w", e)
+	}
+	defer routed.Close()
+	return s.ServeTLS(routed, "", "")
 }

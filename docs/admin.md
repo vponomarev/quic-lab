@@ -174,4 +174,4 @@ RTT **от сервера до gateway** и внешний IP выхода. По
 
 ## Учебный захват Wireshark
 
-[Отладочные QUIC/HTTPS сессии и запуск Wireshark из браузера](wireshark-capture.md): отдельные порты, встроенные TLS secrets, Windows/macOS. По умолчанию выключено.
+[Отладочные QUIC/HTTPS сессии и запуск Wireshark из браузера](wireshark-capture.md): существующий HTTPS-порт, серверные TLS secrets без QR на телефоне, Windows/macOS. По умолчанию выключено.

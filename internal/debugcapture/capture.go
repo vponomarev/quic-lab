@@ -21,11 +21,12 @@ const MaxBytes = 32 << 20
 const Lifetime = 10 * time.Minute
 
 type Config struct {
-	Interface string            `json:"interface"`
-	FirstPort int               `json:"-"` // integration-test listeners only
-	Ports     map[string][2]int `json:"-"` // existing UDP/TCP endpoints from server config
-	Slots     int               `json:"slots"`
-	TCPDump   string            `json:"tcpdump"`
+	Interface   string             `json:"interface"`
+	FirstPort   int                `json:"-"` // integration-test listeners only
+	Termination map[string][2]bool `json:"-"`
+	Ports       map[string][2]int  `json:"-"` // existing UDP/TCP endpoints from server config
+	Slots       int                `json:"slots"`
+	TCPDump     string             `json:"tcpdump"`
 }
 
 func (c Config) Validate() error {
@@ -87,7 +88,7 @@ func (s *Session) emit(b []byte) error {
 	return nil
 }
 
-// Write is used only by the isolated debug TLS configs, never normal listeners.
+// Write receives server TLS secrets only for selected active capture listeners.
 func (s *Session) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	if s.State != "running" || len(s.keyLines)+len(p) > 1<<20 {

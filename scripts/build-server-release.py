@@ -39,8 +39,10 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                  (root / "scripts/install-awg.py", "install-awg.py", 0o755),
                  (root / "scripts/awg-network.py", "awg-network.py", 0o755),
                  (root / "scripts/install-server.py", "install-server.py", 0o755),
+                 (root / "scripts/reload-certificate.py", "reload-certificate.py", 0o755),
                  (root / "scripts/publish-apk.sh", "publish-apk.sh", 0o755),
                  (root / "docs/install-server.md", "README.md", 0o644),
+                 (root / "docs/wireshark-capture.md", "wireshark-capture.md", 0o644),
                  (root / "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", 0o644)]
         files.extend((source, "licenses/" + source.name, 0o644)
                      for source in sorted((root / "android/app/src/main/assets/licenses").glob("*.txt")))
