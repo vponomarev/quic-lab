@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory() as temp:
             binaries.append(cli)
         files=binaries+([root/'desktop/capture/install-windows.ps1'] if target=='windows' else [root/'desktop/capture/install-macos.sh',root/'desktop/capture/launcher.applescript'])
         files.append(root/'docs/wireshark-capture.md')
+        files.append(root/'cmd/capture/quiclab.lua')
         archive=out/f'quic-lab-capture-{target}.zip'
         with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
             for f in files:

@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,9 @@ import (
 
 	"github.com/coder/websocket"
 )
+
+//go:embed quiclab.lua
+var luaDissector []byte
 
 type settings struct {
 	Servers []string `json:"servers"`
@@ -217,7 +221,20 @@ func run() error {
 	var pipe io.WriteCloser
 	var cmd *exec.Cmd
 	if !*saveOnly {
-		cmd = exec.Command(executable, "-k", "-i", "-", "-d", fmt.Sprintf("udp.port==%d,quic", auth.Port), "-d", fmt.Sprintf("tcp.port==%d,tls", auth.TCPPort))
+		plugin, err := os.CreateTemp("", "quiclab-dissector-*.lua")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(plugin.Name())
+		_, err = plugin.Write(luaDissector)
+		closeErr := plugin.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		cmd = exec.Command(executable, "-X", "lua_script:"+plugin.Name(), "-k", "-i", "-", "-d", fmt.Sprintf("udp.port==%d,quic", auth.Port), "-d", fmt.Sprintf("tcp.port==%d,tls", auth.TCPPort))
 		pipe, e = cmd.StdinPipe()
 		if e != nil {
 			return e
