@@ -357,6 +357,7 @@ func (s *Server) serveUDP(ctx context.Context, st Stream, req Request, id string
 		WriteJSON(st, Reply{Error: "destination unavailable"})
 		return
 	}
+	out = captureConnection(ctx, "udp4", req.Address, out)
 	defer out.Close()
 	f, e := m.Register(uint64(q.StreamID()))
 	if e != nil {

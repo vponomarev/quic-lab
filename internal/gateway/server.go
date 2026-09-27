@@ -27,6 +27,7 @@ import (
 )
 
 type Server struct {
+	Capture          func(tls.ConnectionState, string, string, net.Conn) net.Conn
 	DialContext      func(context.Context, string, string) (net.Conn, error)
 	Probe            func(context.Context) error
 	Resolver         *net.Resolver
@@ -108,7 +109,7 @@ func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
 			if c.ConnectionState().SupportsDatagrams.Remote {
 				datagrams = NewDatagramMux(c)
 			}
-			s.serve(c.Context(), datagrams, "quic", func() (Stream, error) {
+			s.serve(s.captureContext(c.Context(), c.ConnectionState().TLS), datagrams, "quic", func() (Stream, error) {
 				v, e := c.AcceptStream(c.Context())
 				if e != nil {
 					return nil, e
@@ -145,7 +146,7 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 	defer m.Close()
 	count, done := s.track(*r.TLS, "HTTPS / WebSocket", func() string { return r.RemoteAddr })
 	defer done()
-	s.serve(ctx, nil, "https", func() (Stream, error) {
+	s.serve(s.captureContext(ctx, *r.TLS), nil, "https", func() (Stream, error) {
 		v, e := m.AcceptStream()
 		if e != nil {
 			return nil, e
@@ -306,6 +307,7 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 		WriteJSON(st, Reply{Error: "destination unavailable"})
 		return
 	}
+	dst = captureConnection(ctx, network, req.Address, dst)
 	defer dst.Close()
 	if WriteJSON(st, Reply{Session: id}) != nil {
 		return

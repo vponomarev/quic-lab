@@ -7,6 +7,8 @@ import (
 )
 
 func (w *Web) protocols(rw http.ResponseWriter, r *http.Request) {
+	w.userCaptureMu.Lock()
+	defer w.userCaptureMu.Unlock()
 	if _, ok := w.authorized(rw, r, true); !ok {
 		return
 	}
@@ -32,6 +34,8 @@ func (w *Web) protocols(rw http.ResponseWriter, r *http.Request) {
 	http.Redirect(rw, r, w.base+"users", 303)
 }
 func (w *Web) toggle(rw http.ResponseWriter, r *http.Request) {
+	w.userCaptureMu.Lock()
+	defer w.userCaptureMu.Unlock()
 	if _, ok := w.authorized(rw, r, true); !ok {
 		return
 	}
@@ -59,6 +63,9 @@ func (w *Web) toggle(rw http.ResponseWriter, r *http.Request) {
 	http.NotFound(rw, r)
 }
 func (w *Web) revokeTickets(id string) {
+	if w.Capture != nil {
+		w.Capture.StopUser(id)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for k, t := range w.tickets {

@@ -99,6 +99,7 @@ func main() {
 	}()
 	var publicAdmin http.Handler
 	var adminBase string
+	var captureManager *debugcapture.Manager
 	var managed *admin.Store
 	var uplink *transit.Config
 	var echoProbe func(context.Context) error
@@ -143,6 +144,7 @@ func main() {
 				os.Exit(1)
 			}
 			keys.Set(ui.Capture)
+			captureManager = ui.Capture
 		}
 		if cfg.EchoAWG != "" {
 			var probe func(context.Context) error
@@ -186,6 +188,14 @@ func main() {
 			mtls.NextProtos = []string{gateway.ALPN}
 			gw.RegisterProtocol = managed.RegisterProtocol
 			gw.Track = managed.Track
+			if captureManager != nil {
+				gw.Capture = func(cs tls.ConnectionState, network, address string, c net.Conn) net.Conn {
+					if len(cs.VerifiedChains) == 0 || len(cs.PeerCertificates) == 0 || managed.Verify(cs) != nil {
+						return c
+					}
+					return captureManager.Wrap(cs.PeerCertificates[0].Subject.CommonName, network, address, c)
+				}
+			}
 		} else {
 			mtls, e = gateway.TLS(cert, *clientCA)
 		}

@@ -202,13 +202,14 @@ func run() error {
 		return errors.New("cannot contact trusted lab server")
 	}
 	var auth struct {
+		Mode    string `json:"mode"`
 		Token   string `json:"token"`
 		Port    int    `json:"port"`
 		TCPPort int    `json:"tcp_port"`
 	}
 	e = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&auth)
 	response.Body.Close()
-	if response.StatusCode != 200 || e != nil || auth.Port < 1 || auth.Port > 65535 || auth.TCPPort < 1 || auth.TCPPort > 65535 || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(auth.Token) {
+	if response.StatusCode != 200 || e != nil || (auth.Mode != "inner" && (auth.Port < 1 || auth.Port > 65535 || auth.TCPPort < 1 || auth.TCPPort > 65535)) || (auth.Mode != "" && auth.Mode != "inner" && auth.Mode != "transport") || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(auth.Token) {
 		return errors.New("launch link expired or was already used; prepare a new link in the admin")
 	}
 	stream := "wss" + strings.TrimPrefix(base, "https") + "capture/stream?id=" + id
@@ -234,7 +235,11 @@ func run() error {
 		if closeErr != nil {
 			return closeErr
 		}
-		cmd = exec.Command(executable, "-X", "lua_script:"+plugin.Name(), "-k", "-i", "-", "-d", fmt.Sprintf("udp.port==%d,quic", auth.Port), "-d", fmt.Sprintf("tcp.port==%d,tls", auth.TCPPort))
+		args := []string{"-X", "lua_script:" + plugin.Name(), "-k", "-i", "-"}
+		if auth.Mode != "inner" {
+			args = append(args, "-d", fmt.Sprintf("udp.port==%d,quic", auth.Port), "-d", fmt.Sprintf("tcp.port==%d,tls", auth.TCPPort))
+		}
+		cmd = exec.Command(executable, args...)
 		pipe, e = cmd.StdinPipe()
 		if e != nil {
 			return e

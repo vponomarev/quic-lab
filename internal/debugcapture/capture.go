@@ -170,6 +170,9 @@ func (m *Manager) Start(owner, kind, user string) (*Session, error) {
 	if m.closing {
 		return nil, errors.New("server stopping")
 	}
+	if user != "" {
+		return nil, errors.New("use dedicated per-user capture")
+	}
 	if kind != "echo" && kind != "vpn" {
 		return nil, errors.New("unknown capture mode")
 	}

@@ -26,7 +26,7 @@ func (w *serverKeys) Write(b []byte) (int, error) {
 	var selected []*Session
 	for _, s := range m.sessions {
 		v := s.Snapshot()
-		if v.State == "running" && ((w.udp && v.Port == w.port) || (!w.udp && v.TCPPort == w.port)) {
+		if v.User == "" && v.State == "running" && ((w.udp && v.Port == w.port) || (!w.udp && v.TCPPort == w.port)) {
 			selected = append(selected, s)
 		}
 	}
