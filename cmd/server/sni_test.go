@@ -24,7 +24,7 @@ func TestSNIFrontendAndPassthrough(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	front, e := newSNIRouter(ctx, raw, "lab.test", backend.Listener.Addr().String())
+	front, e := newSNIRouter(ctx, raw, "lab.test", strings.Replace(backend.Listener.Addr().String(), "127.0.0.1", "localhost", 1))
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -60,7 +60,7 @@ proxy_set_header X-Quic-Lab-Peer "$remote_addr:$remote_port";
 - QUIC Lab получает `-https-listen :443 -tls-host lab.example -tls-fallback 127.0.0.1:9443`.
 - HTTPS virtual hosts nginx переводятся с публичного 443 на `listen 127.0.0.1:9443 ssl;`. Порт 80 и HTTP-01 webroot остаются у nginx.
 - SNI `lab.example` завершается в QUIC Lab. Другие SNI и соединения без SNI передаются в nginx как исходный TLS-поток. Их сертификаты и TLS secrets остаются у nginx, не попадают в серверный экспорт QUIC Lab.
-- Fallback разрешён только на literal loopback IP. Для такого проксирования nginx видит peer как loopback; PROXY protocol пока не добавлен. Это нужно учесть, если другие virtual hosts используют ограничения по IP клиента.
+- `tls_fallback` в `server.json` может указывать на локальный или удалённый TLS backend: IP/DNS и порт. Backend видит адрес сервера QUIC Lab (для loopback — loopback); PROXY protocol не добавляется. Это нужно учесть для ограничений по IP клиента. См. [конфигурацию сервера](server-config.md).
 - `/lab/`, `/echo`, `/vpn-demo/` обслуживаются приложением напрямую. `/tunnel` доступен на общем порту, только если `-gateway-https` совпадает с `-https-listen`; отдельный существующий mTLS-порт также можно сохранить.
 
 Перед миграцией сохраните nginx/unit, проверьте занятость loopback-порта и перечень доменов; после — `nginx -t`, каждый домен и доступ к ACME challenge. У systemd последующий drop-in может переопределить ExecStart: проверяйте `systemctl cat quic-lab`.

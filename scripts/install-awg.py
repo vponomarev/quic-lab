@@ -80,13 +80,9 @@ def main():
     if a.address:
         awg["address"] = a.address
     if not cfg.get("awg"):
-        policy = Path("/etc/quic-lab/server.env")
-        inherited = "0.0.0.0/0"
-        if policy.exists():
-            import shlex
-            for line in policy.read_text().splitlines():
-                if line.startswith("GATEWAY_ALLOW="):
-                    inherited = shlex.split(line.split("=", 1)[1])[0]
+        server_path = Path("/etc/quic-lab/server.json")
+        inherited = (json.loads(server_path.read_text()).get("gateway_allow", "0.0.0.0/0")
+                     if server_path.exists() else installer.legacy_policy(Path("/etc/quic-lab/server.env")))
         awg["allowed_ips"] = installer.cidrs(a.allowed_ips or inherited).split(",")
     elif a.allowed_ips:
         p.error("AWG policy already exists; edit both admin.json and awg.json explicitly")

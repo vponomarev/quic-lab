@@ -48,12 +48,13 @@ def run(*args, **kwargs):
                 raise subprocess.CalledProcessError(1, args)
             state = json.loads((i.CONFIG / "install.json").read_text())
             Path("/var/lib/quic-lab").mkdir(exist_ok=True)
-            cmd = ["/opt/quic-lab/quic-lab-server", "-listen", f"0.0.0.0:{state['ports']['echo_quic_port']}", "-web-listen", "127.0.0.1:8081",
-                   "-gateway-quic", f"0.0.0.0:{state['ports']['vpn_quic_port']}", "-gateway-https", f"0.0.0.0:{state['ports']['mtls_port']}", "-gateway-allow", "0.0.0.0/0",
-                   "-demo-listen", "127.0.0.1:8082", "-cert", state["cert"], "-key", state["key"],
-                   "-admin-config", "/etc/quic-lab/admin.json"]
-            if state["frontend"] == "direct":
-                cmd += ["-https-listen", "0.0.0.0:443"]
+            credentials = Path("/run/test-credentials")
+            credentials.mkdir(exist_ok=True)
+            import shutil
+            for name, source in (("cert.pem", state["cert"]), ("key.pem", state["key"]), ("admin.json", "/etc/quic-lab/admin.json")):
+                shutil.copyfile(source, credentials / name)
+            os.environ["CREDENTIALS_DIRECTORY"] = str(credentials)
+            cmd = ["/opt/quic-lab/quic-lab-server", "-config", "/etc/quic-lab/server.json"]
             server = subprocess.Popen(cmd, stdout=open("/tmp/server.log", "a"), stderr=subprocess.STDOUT)
             time.sleep(0.3)
             if server.poll() is not None:
@@ -94,6 +95,7 @@ try:
     assert cfg["vpn"]["quic"].endswith(":14434")
     assert cfg["vpn"]["https"].endswith(":443" if frontend == "direct" else ":18443")
     assert json.loads((i.CONFIG / "install.json").read_text())["frontend"] == frontend
+    server_before = (i.CONFIG / "server.json").read_bytes()
     state_before = (i.CONFIG / "install.json").read_bytes()
     identity = Path("/var/lib/quic-lab/identities.json").read_bytes()
     with urllib.request.urlopen("http://127.0.0.1:8083/", timeout=3) as response:
@@ -121,6 +123,7 @@ try:
         pass
     else:
         raise AssertionError("Expected a simulated restart failure")
+    assert (i.CONFIG / "server.json").read_bytes() == server_before
     assert server and server.poll() is None
     assert (i.CONFIG / "install.json").read_bytes() == state_before
     assert (i.CONFIG / "admin.json").read_bytes() == before

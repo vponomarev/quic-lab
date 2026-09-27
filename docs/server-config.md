@@ -1,0 +1,80 @@
+# Конфигурация сервера
+
+Основной процесс запускается с `-config /path/to/server.json`. Установщик сохраняет исходник в `/etc/quic-lab/server.json` (root, 0600), а systemd передаёт защищённую копию через `LoadCredential`. В `ps` поэтому виден `/run/credentials/quic-lab.service/server.json`. Редактируйте исходник в `/etc`, не временную копию.
+
+## Пример: свой HTTPS-вход и TLS-проброс на веб-сервер
+
+```json
+{
+  "listen": "0.0.0.0:4433",
+  "web_listen": "127.0.0.1:8081",
+  "gateway_quic": "0.0.0.0:4434",
+  "gateway_https": "0.0.0.0:8443",
+  "gateway_allow": "0.0.0.0/0",
+  "demo_listen": "127.0.0.1:8082",
+  "https_listen": "0.0.0.0:443",
+  "tls_host": "vpn.example.org",
+  "tls_fallback": "192.0.2.20:9443",
+  "cert": "${CREDENTIALS_DIRECTORY}/cert.pem",
+  "key": "${CREDENTIALS_DIRECTORY}/key.pem",
+  "admin_config": "${CREDENTIALS_DIRECTORY}/admin.json"
+}
+```
+
+Замените пример домена и адрес backend своими. `tls_fallback` принимает IPv4, IPv6 (`[2001:db8::20]:443`) или DNS-имя с портом (`web.internal.example:443`). Для nginx на этом же сервере можно указать `127.0.0.1:9443`.
+
+QUIC Lab принимает TCP/443 и смотрит SNI в ClientHello. Имя `tls_host` завершается в QUIC Lab: `/lab/`, `/echo`, `/vpn-demo/`. Остальные имена и запросы без SNI передаются в `tls_fallback` как исходный TLS-поток, без расшифровки и подмены сертификата. Backend должен говорить TLS, а не HTTP. В качестве источника он видит сервер QUIC Lab; PROXY protocol не добавляется. Backend не должен указывать обратно на публичный вход QUIC Lab, в том числе через DNS/NAT.
+
+Это маршрутизация по SNI, не по HTTP-пути. Внешний TLS-захват расшифровывает только соединения, завершаемые в QUIC Lab; TLS исходного веб-сервера остаётся зашифрованным. Echo QUIC и VPN QUIC продолжают слушать отдельные UDP-порты.
+
+Чтобы также разместить VPN HTTPS/mTLS на TCP/443, задайте `gateway_https` **точно такой же строкой**, как `https_listen`: `0.0.0.0:443`. Путь `/tunnel` требует клиентский сертификат, публичные маршруты — нет. Обновите публичный VPN endpoint в `admin.json` и импортированные профили клиентов.
+
+При установке можно использовать:
+
+```sh
+sudo ./install-server.py vpn.example.org --frontend direct \
+  --tls-fallback 192.0.2.20:9443 --cert /path/fullchain.pem --key /path/privkey.pem
+```
+
+Установщик не перемещает работающий nginx. Сначала самостоятельно освободите TCP/443, перенесите исходный TLS listener на адрес backend и проверьте доступность. Для первого получения LE-сертификата при занятом HTTP/80 используйте существующий certbot/webroot и передайте `--cert`/`--key`; автоматический direct-режим использует standalone HTTP/80.
+
+## Остальные поля и обновление
+
+- `listen`: обязательный адрес Echo QUIC. `web_listen`, `demo_listen`, `https_listen`, `gateway_quic`, `gateway_https`: пустая строка отключает соответствующий дополнительный listener.
+- `gateway_allow`: разрешённые IPv4 CIDR через запятую; не заменяет маршруты клиента.
+- `client_ca`: PEM CA при работе без управляемой CA из `admin_config`.
+- `ephemeral_cert`: временный сертификат для тестов вместо `cert`/`key`, не для постоянной установки.
+- `tls_fallback`: пустая строка отключает проброс; тогда `tls_host` не ограничивает TLS listener.
+
+Неизвестные поля и некорректные адреса отвергаются. Приоритет: встроенные значения → JSON → явно переданные CLI-флаги. Старый CLI сохраняется. `${CREDENTIALS_DIRECTORY}` подставляется только в путях сертификата, ключа, CA и admin-конфига; остальные переменные и shell-команды не интерпретируются.
+
+Проверка синтаксиса и значений без открытия портов:
+
+```sh
+sudo env CREDENTIALS_DIRECTORY=/run/credentials/quic-lab.service \
+  /opt/quic-lab/quic-lab-server -config /etc/quic-lab/server.json -check-config
+sudo systemctl restart quic-lab
+sudo systemctl status quic-lab
+```
+
+`-check-config` не проверяет доступность файлов TLS, backend или свободу портов; они проверяются при запуске/подключении. Изменения JSON применяются перезапуском, `daemon-reload` не нужен. SIGHUP / `systemctl reload` перечитывает только сертификат, не весь JSON.
+
+Установщик сохраняет существующий `server.json`, меняя только явно заданные порты или frontend/fallback. ACL старых установок переносится из `server.env`, который больше не участвует в запуске. AWG при первоначальной настройке наследует ACL из `server.json`. Адреса, выдаваемые клиентам, хранятся отдельно в `admin.json`; аргументы портов установщика синхронизируют их. `install.json` содержит параметры установки, а не переопределяет вручную отредактированные порты в `server.json`.
+
+Перед обновлением сохраняется резервная копия конфигов в `/etc/quic-lab/backup-*`. При ошибке запуска откатываются бинарник, unit, server/admin/install JSON. Пользовательские drop-in с `ExecStart` требуют ручной миграции: установщик останавливается до изменений, чтобы старый override не скрывал новый запуск. Перенесите параметры в JSON, сохраните копию override вне `.service.d`, затем удалите только перенесённые директивы. Зависимости транзита и capabilities захвата сохраняйте.
+
+## Сертификаты
+
+В стандартной установке `cert.pem`/`key.pem` — systemd credentials, скопированные из путей, сохранённых в `install.json` и unit. Обновление certbot вызывает перезапуск службы, чтобы загрузить новые копии.
+
+Для горячей замены используйте поставляемый `reload-certificate.py`: он проверяет пару, сохраняет её в `/var/lib/quic-lab/tls/generation-*`, атомарно переключает `current` и отправляет SIGHUP. В `server.json` тогда задайте абсолютные пути `/var/lib/quic-lab/tls/current/cert.pem` и `/var/lib/quic-lab/tls/current/key.pem`. Пример команды для собственного certbot deploy hook:
+
+```sh
+/usr/bin/python3 /opt/quic-lab/reload-certificate.py \
+  --cert "$RENEWED_LINEAGE/fullchain.pem" --key "$RENEWED_LINEAGE/privkey.pem" \
+  --hostname vpn.example.org
+```
+
+Hook должен фильтровать свой `RENEWED_LINEAGE`. При первой публикации используйте `--no-signal` после создания пользователя/StateDirectory службой. Установщик с `--cert`/`--key` не создаёт hook продления: сохраните собственный. Не оставляйте одновременно hook горячей замены и стандартный hook с restart, если нужна непрерывность сессий.
+
+Не публикуйте `/etc/quic-lab` и `/var/lib/quic-lab` в Git: там пароли, ключи и пользовательские данные. В репозитории хранятся только обезличенные примеры.

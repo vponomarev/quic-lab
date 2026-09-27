@@ -64,9 +64,8 @@ type sniRouter struct {
 }
 
 func newSNIRouter(parent context.Context, ln net.Listener, host, fallback string) (net.Listener, error) {
-	h, _, e := net.SplitHostPort(fallback)
-	if e != nil || net.ParseIP(h) == nil || !net.ParseIP(h).IsLoopback() {
-		return nil, errors.New("TLS fallback must use a literal loopback IP")
+	if err := validateAddress(fallback, true); err != nil {
+		return nil, err
 	}
 	if host == "" || strings.ContainsAny(host, "/ :") {
 		return nil, errors.New("invalid TLS host")

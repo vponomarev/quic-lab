@@ -16,11 +16,11 @@ spec.loader.exec_module(i)
 
 class InstallerTests(unittest.TestCase):
     def test_existing_nginx_is_never_installed_or_upgraded(self):
-        with patch.object(i.shutil, "which", side_effect=lambda c: "/usr/bin/" + c if c in ("nginx", "openssl") else None), patch.object(i.Path, "is_file", return_value=True):
+        with patch.object(i.shutil, "which", side_effect=lambda c: "/usr/bin/" + c if c in ("nginx", "openssl", "kill") else None), patch.object(i.Path, "is_file", return_value=True):
             self.assertEqual(i.missing_packages(False), ["certbot"])
             self.assertEqual(i.missing_packages(True), [])
         with patch.object(i.shutil, "which", return_value=None), patch.object(i.Path, "is_file", return_value=False):
-            self.assertEqual(set(i.missing_packages(False)), {"nginx", "openssl", "certbot", "ca-certificates"})
+            self.assertEqual(set(i.missing_packages(False)), {"nginx", "openssl", "procps", "certbot", "ca-certificates"})
 
     def test_running_nginx_only_validated_and_reloaded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -45,14 +45,48 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(cfg["vpn"]["quic"], "lab.example.org:443")
         self.assertEqual(cfg["vpn"]["https"], "lab.example.org:9443")
         unit = i.unit_config("/cert.pem", "/key.pem", ports)
-        self.assertIn("-gateway-quic 0.0.0.0:443", unit)
-        self.assertIn("-gateway-https 0.0.0.0:9443", unit)
+        self.assertEqual(i.server_config(ports, "nginx", "lab.example.org")["gateway_quic"], "0.0.0.0:443")
+        self.assertIn("-config ${CREDENTIALS_DIRECTORY}/server.json", unit)
         self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE", unit)
         self.assertEqual(i.resolve_ports(SimpleNamespace(), {"ports": ports}, cfg), ports)
         self.assertEqual(i.resolve_ports(SimpleNamespace(), None, cfg), ports)
         self.assertEqual(i.resolve_ports(SimpleNamespace()), i.DEFAULT_PORTS)
         self.assertNotIn("AmbientCapabilities", i.unit_config("/cert", "/key"))
         self.assertEqual(i.resolve_ports(SimpleNamespace(mtls_port=10443), {"ports": ports}, cfg)["mtls_port"], 10443)
+
+    def test_server_config_preserves_custom_bindings_and_fallback(self):
+        saved = i.server_config(i.DEFAULT_PORTS, "direct", "lab.example.org")
+        saved.update(tls_fallback="192.0.2.20:9443", cert="/custom/cert.pem", key="/custom/key.pem", gateway_allow="10.0.0.0/8", listen="192.0.2.10:24433")
+        self.assertEqual(i.server_config(i.DEFAULT_PORTS, "direct", "lab.example.org", previous=saved, args=SimpleNamespace()), saved)
+        changed = i.server_config(i.DEFAULT_PORTS, "direct", "lab.example.org", previous=saved, args=SimpleNamespace(echo_quic_port=4433))
+        self.assertEqual(changed["listen"], "192.0.2.10:4433")
+        self.assertEqual(changed["tls_fallback"], "192.0.2.20:9443")
+        self.assertEqual(changed["gateway_allow"], "10.0.0.0/8")
+
+    def test_legacy_policy_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "server.env"
+            p.write_text('GATEWAY_ALLOW="10.0.0.0/8,1.1.1.1/32"\n')
+            self.assertEqual(i.legacy_policy(p), "10.0.0.0/8,1.1.1.1/32")
+
+    def test_failed_acme_retry_preserves_restricted_acl(self):
+        import subprocess
+        import json
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            root = Path(tmp)
+            for name, target in (("CONFIG", "etc"), ("OPT", "opt"), ("UNIT", "unit"), ("HOOK", "hook"), ("SITE", "site")):
+                stack.enter_context(patch.object(i, name, root / target))
+            stack.enter_context(patch.object(i, "missing_packages", return_value=[]))
+            def run(*args, **kwargs):
+                if args[0] == "certbot": raise subprocess.CalledProcessError(1, args)
+                return subprocess.CompletedProcess(args, 0)
+            stack.enter_context(patch.object(i, "run", side_effect=run))
+            args = SimpleNamespace(domain="acl-retry.example.invalid", cert=None, key=None, apk=None, binary=root / "binary", frontend="direct", tls_fallback=None, gateway_allow="10.0.0.0/8", email=None)
+            for attempt in range(2):
+                with self.assertRaises(subprocess.CalledProcessError), contextlib.redirect_stdout(io.StringIO()):
+                    i.install(args)
+                self.assertEqual(json.loads((root / "etc/server.json").read_text())["gateway_allow"], "10.0.0.0/8")
+                args.gateway_allow = None
 
     def test_port_validation(self):
         for value in ("0", "65536", "-1", "https", "443;false"):
@@ -73,7 +107,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(i.resolve_frontend({"frontend": "direct"}), "direct")
         ports = i.resolve_ports(SimpleNamespace(), frontend="direct")
         self.assertEqual(ports["mtls_port"], 443)
-        self.assertIn("-https-listen 0.0.0.0:443", i.unit_config("/cert", "/key", ports, "direct"))
+        self.assertEqual(i.server_config(ports, "direct", "lab.example.org")["https_listen"], "0.0.0.0:443")
         self.assertNotIn("-https-listen", i.unit_config("/cert", "/key"))
         with patch.object(i.shutil, "which", return_value=None), patch.object(i.Path, "is_file", return_value=False):
             self.assertNotIn("nginx", i.missing_packages(False, "direct"))

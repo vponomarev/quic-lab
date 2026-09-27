@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -27,24 +26,19 @@ import (
 )
 
 func main() {
-	addr := flag.String("listen", "127.0.0.1:4433", "UDP listen address")
-	certPath := flag.String("cert", "", "PEM certificate file")
-	keyPath := flag.String("key", "", "PEM private key file")
-	ephemeral := flag.Bool("ephemeral-cert", false, "generate an in-memory lab certificate; pin printed SHA-256 on client")
-	fallback := flag.String("tls-fallback", "", "optional loopback TCP address for TLS passthrough of other SNI names; requires -https-listen and -tls-host")
-	tlsHost := flag.String("tls-host", "", "only this SNI hostname terminates at the public HTTPS listener when fallback is enabled")
-	publicHTTPS := flag.String("https-listen", "", "optional public HTTPS listener for admin, echo and demo; shares gateway mTLS listener when addresses match")
-	webListen := flag.String("web-listen", "", "optional loopback HTTP WebSocket endpoint behind nginx")
-	gatewayQUIC := flag.String("gateway-quic", "", "optional authenticated gateway UDP address, e.g. :4434")
-	gatewayHTTPS := flag.String("gateway-https", "", "optional direct mTLS HTTPS address, e.g. :8443")
-	clientCA := flag.String("client-ca", "", "trusted client CA PEM; required for gateway")
-	allow := flag.String("gateway-allow", "", "required comma-separated IPv4 destination CIDRs")
-	demoListen := flag.String("demo-listen", "", "optional HTTP download demo, bind loopback behind nginx")
-	adminFile := flag.String("admin-config", "", "optional admin JSON config; enables managed client CA")
-	flag.Parse()
+	opts, err := parseServerConfig(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	addr, certPath, keyPath := &opts.Listen, &opts.Cert, &opts.Key
+	ephemeral, fallback, tlsHost := &opts.EphemeralCert, &opts.TLSFallback, &opts.TLSHost
+	publicHTTPS, webListen := &opts.HTTPSListen, &opts.WebListen
+	gatewayQUIC, gatewayHTTPS := &opts.GatewayQUIC, &opts.GatewayHTTPS
+	clientCA, allow := &opts.ClientCA, &opts.GatewayAllow
+	demoListen, adminFile := &opts.DemoListen, &opts.AdminConfig
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	var cert tls.Certificate
-	var err error
 	if *ephemeral && *certPath == "" && *keyPath == "" {
 		var cp, kp []byte
 		cp, kp, err = labcert.Generate()

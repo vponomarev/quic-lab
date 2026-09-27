@@ -176,10 +176,43 @@ server {{
 """
 
 
+def server_config(ports, frontend, domain, allow="0.0.0.0/0", previous=None, args=None):
+    if previous is not None:
+        result = dict(previous)
+    else:
+        result = dict(listen=f"0.0.0.0:{ports['echo_quic_port']}",
+                      web_listen="127.0.0.1:8081", demo_listen="127.0.0.1:8082",
+                      gateway_quic=f"0.0.0.0:{ports['vpn_quic_port']}",
+                      gateway_https=f"0.0.0.0:{ports['mtls_port']}", gateway_allow=allow,
+                      cert="${CREDENTIALS_DIRECTORY}/cert.pem", key="${CREDENTIALS_DIRECTORY}/key.pem",
+                      admin_config="${CREDENTIALS_DIRECTORY}/admin.json",
+                      https_listen="0.0.0.0:443" if frontend == "direct" else "",
+                      tls_host=domain if frontend == "direct" else "", tls_fallback="")
+    for option, field in (("echo_quic_port", "listen"), ("vpn_quic_port", "gateway_quic"), ("mtls_port", "gateway_https")):
+        if args and getattr(args, option, None) is not None:
+            host = result.get(field, "0.0.0.0:0").rsplit(":", 1)[0]
+            result[field] = f"{host}:{ports[option]}"
+    if args and getattr(args, "frontend", None) is not None:
+        result["https_listen"] = "0.0.0.0:443" if frontend == "direct" else ""
+        if frontend == "direct": result["tls_host"] = domain
+    if args and getattr(args, "tls_fallback", None) is not None:
+        result["tls_fallback"] = args.tls_fallback
+        result["tls_host"] = domain
+    return result
+
+
+def legacy_policy(path):
+    import shlex
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line.startswith("GATEWAY_ALLOW="):
+                return cidrs(shlex.split(line.split("=", 1)[1])[0])
+    return "0.0.0.0/0"
+
+
 def unit_config(cert, key, ports=None, frontend="nginx"):
     ports = ports or DEFAULT_PORTS
     capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" if frontend == "direct" or min(ports.values()) < 1024 else ""
-    public = " -https-listen 0.0.0.0:443" if frontend == "direct" else ""
     return f"""{MARKER}
 [Unit]
 Description=QUIC Lab echo, mTLS gateway and admin
@@ -196,8 +229,9 @@ UMask=0077
 LoadCredential=cert.pem:{cert}
 LoadCredential=key.pem:{key}
 LoadCredential=admin.json:/etc/quic-lab/admin.json
-EnvironmentFile=/etc/quic-lab/server.env
-ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:{ports["echo_quic_port"]} -web-listen 127.0.0.1:8081 -gateway-quic 0.0.0.0:{ports["vpn_quic_port"]} -gateway-https 0.0.0.0:{ports["mtls_port"]} -gateway-allow ${{GATEWAY_ALLOW}} -demo-listen 127.0.0.1:8082 -cert ${{CREDENTIALS_DIRECTORY}}/cert.pem -key ${{CREDENTIALS_DIRECTORY}}/key.pem -admin-config ${{CREDENTIALS_DIRECTORY}}/admin.json{public}
+LoadCredential=server.json:/etc/quic-lab/server.json
+ExecStart=/opt/quic-lab/quic-lab-server -config ${{CREDENTIALS_DIRECTORY}}/server.json
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=yes
@@ -240,7 +274,7 @@ def apply_nginx(content):
 def missing_packages(custom_cert, frontend="nginx"):
     # An existing nginx (including an independently installed build) is never
     # passed to apt. Only install missing prerequisites, without upgrades.
-    commands = {"openssl": "openssl"}
+    commands = {"openssl": "openssl", "kill": "procps"}
     if frontend == "nginx":
         commands["nginx"] = "nginx"
     if not custom_cert:
@@ -254,6 +288,8 @@ def missing_packages(custom_cert, frontend="nginx"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog="Example: sudo ./install-server.py quic.example.org --vpn-quic-port 443 --mtls-port 9443. Omitted ports retain saved settings on updates.")
     parser.add_argument("domain", type=domain_name)
+    parser.add_argument("--frontend", choices=("nginx", "direct"), help="Explicit frontend; direct requires TCP/443 to be available (nginx is never moved automatically)")
+    parser.add_argument("--tls-fallback", help="Direct frontend: pass other TLS SNI names to this host:port, including remote hosts")
     parser.add_argument("--email", help="Optional Let's Encrypt account email")
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-server")
     parser.add_argument("--enable-awg", action="store_true", help="Enable optional AmneziaWG worker (dedicated UDP port and firewall chains)")
@@ -315,7 +351,16 @@ def install(args):
         cfg = json.loads(existing.read_text())
         if cfg.get("public_url") != f"https://{args.domain}/lab/" or cfg.get("listen") != "127.0.0.1:8083" or cfg.get("data_dir") != "/var/lib/quic-lab":
             raise RuntimeError("Existing admin.json uses a different layout; migrate manually.")
-    frontend = resolve_frontend(state, cfg)
+    server_file = CONFIG / "server.json"
+    old_server = server_file.read_bytes() if server_file.exists() else None
+    previous_server = json.loads(old_server) if old_server is not None else None
+    frontend = getattr(args, "frontend", None) or resolve_frontend(state, cfg)
+    if getattr(args, "tls_fallback", None) and frontend != "direct":
+        raise RuntimeError("--tls-fallback requires --frontend direct")
+    # Do not silently override a customized legacy ExecStart with a new base unit.
+    for dropin in UNIT.with_name(UNIT.name + ".d").glob("*.conf"):
+        if re.search(r"(?m)^\s*ExecStart=", dropin.read_text()):
+            raise RuntimeError(f"Legacy ExecStart override in {dropin}; migrate its values to server.json and archive the override first.")
     if frontend == "nginx":
         if not shutil.which("nginx"):
             raise RuntimeError("Saved frontend is nginx, but nginx is missing; restore it before updating")
@@ -324,10 +369,20 @@ def install(args):
             if not ENABLED.is_symlink() or ENABLED.resolve() != SITE:
                 raise RuntimeError(f"Unmanaged nginx site: {ENABLED}")
     ports = resolve_ports(args, state, cfg, frontend)
+    if previous_server:
+        for option, field in (("echo_quic_port", "listen"), ("vpn_quic_port", "gateway_quic"), ("mtls_port", "gateway_https")):
+            if getattr(args, option, None) is None and previous_server.get(field):
+                ports[option] = port_number(previous_server[field].rsplit(":", 1)[1])
     old_state = state_file.read_bytes() if state_file.exists() else None
     env_file = CONFIG / "server.env"
-    if args.gateway_allow and env_file.exists():
-        raise RuntimeError("Policy already exists; edit /etc/quic-lab/server.env and restart the service instead.")
+    if args.gateway_allow and (env_file.exists() or server_file.exists()):
+        raise RuntimeError("Policy already exists; edit gateway_allow in /etc/quic-lab/server.json and restart the service instead.")
+    desired_server = server_config(ports, frontend, args.domain, args.gateway_allow or legacy_policy(env_file), previous_server, args)
+    # Validate before changing packages, configs, nginx or a running service.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as pending:
+        json.dump(desired_server, pending); pending.flush()
+        run(str(args.binary.resolve()), "-config", pending.name, "-check-config",
+            env={**os.environ, "CREDENTIALS_DIRECTORY": "/run/credentials/quic-lab.service"})
     if frontend == "nginx":
         active = run("nginx", "-T", capture_output=True, text=True).stdout
         # Exclude only our dedicated file; reject duplicate exact server names elsewhere.
@@ -345,6 +400,12 @@ def install(args):
     CONFIG.mkdir(mode=0o700, parents=True, exist_ok=True)
     CONFIG.chmod(0o700)
     OPT.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if old_config is not None:
+        backup = CONFIG / ("backup-" + time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3))
+        backup.mkdir(mode=0o700)
+        for source in (existing, server_file, state_file, env_file, UNIT, HOOK, SITE):
+            if source.is_file(): atomic(backup / (source.parent.name + "-" + source.name), source.read_bytes(), 0o600)
+        print(f"Previous configuration saved in {backup}", flush=True)
     if not existing.exists():
         cfg = admin_config(args.domain, ports)
         atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
@@ -353,12 +414,12 @@ def install(args):
         print("New administrator credentials (saved in /etc/quic-lab/admin-credentials.txt):\n" + credentials, flush=True)
     else:
         print("Existing admin configuration and password preserved.", flush=True)
-    if not env_file.exists():
-        atomic(env_file, f"GATEWAY_ALLOW={args.gateway_allow or '0.0.0.0/0'}\n", 0o600)
     if old_config is None:
         # Keep initial mode after a failed ACME attempt, even though admin.json
         # already exists when the user retries installation.
         atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend), indent=2) + "\n", 0o600)
+        # Preserve a restricted ACL if ACME fails and installation is retried.
+        atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
     if frontend == "nginx":
         Path(WEBROOT).mkdir(mode=0o755, parents=True, exist_ok=True)
     if not custom_cert:
@@ -392,6 +453,7 @@ set -eu
         atomic(OPT / "quic-lab-server.previous", old_binary, 0o755)
     atomic(binary, args.binary.read_bytes(), 0o755)
     atomic(UNIT, unit_config(cert, key, ports, frontend))
+    atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
     try:
         if old_config is not None:
             for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
@@ -418,6 +480,10 @@ set -eu
             raise RuntimeError("Server did not become healthy; inspect journalctl -u quic-lab")
     except BaseException:
         run("systemctl", "stop", "quic-lab")
+        if old_server is not None:
+            atomic(server_file, old_server, 0o600)
+        elif old_config is not None:
+            server_file.unlink(missing_ok=True)
         if old_config is not None:
             atomic(existing, old_config, 0o600)
         if old_state is not None:
@@ -444,7 +510,7 @@ set -eu
             command += ["--address", args.awg_address]
         run(*command)
     tcp_ports = ",".join(str(p) for p in sorted({80, 443, ports["mtls_port"]}))
-    print(f"Frontend: {frontend}\nReady: https://{args.domain}/lab/\nConfig: /etc/quic-lab/admin.json\n"
+    print(f"Frontend: {frontend}\nReady: https://{args.domain}/lab/\nConfig: /etc/quic-lab/server.json and admin.json\n"
           "Credentials: /etc/quic-lab/admin-credentials.txt (first installation)\n"
           f"Allow inbound TCP {tcp_ports} and UDP {ports['echo_quic_port']},{ports['vpn_quic_port']} in host/cloud firewalls.\n"
           "Firewall rules were not changed. Updates restart active sessions.")
