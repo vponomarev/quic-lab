@@ -46,7 +46,7 @@ func WebSocketHandler(log *slog.Logger, probes ...func(context.Context) error) h
 			return wsjson.Write(ctx, conn, f)
 		}
 		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 			var f protocol.Frame
 			err = wsjson.Read(ctx, conn, &f)
 			cancel()
@@ -59,7 +59,7 @@ func WebSocketHandler(log *slog.Logger, probes ...func(context.Context) error) h
 			if replies.handle(f, write) {
 				continue
 			}
-			ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel = context.WithTimeout(r.Context(), 10*time.Second)
 			err = wsjson.Write(ctx, conn, f)
 			cancel()
 			if err != nil {

@@ -25,6 +25,7 @@ internal class WebSocketSession(private val output: (JSONObject) -> Unit) {
     private var retryAt = 0L
     private var attempts = 0
     private var host = ""
+    private var endpoint = ""
     @Volatile private var enabled = false
     @Volatile private var closed = false
     @Volatile private var epoch = 0L
@@ -48,7 +49,7 @@ internal class WebSocketSession(private val output: (JSONObject) -> Unit) {
     private fun submit(action: () -> Unit) = synchronized(worker) { if (!closed) worker.execute(action) }
     private fun event(kind: String, detail: String) = output(JSONObject().put("event", kind).put("detail", detail))
 
-    fun enable(hostname: String) = submit { host = hostname; enabled = true; attempts = 0 }
+    fun enable(hostname: String, httpsEndpoint: String = "") = submit { host = hostname; endpoint = httpsEndpoint.ifBlank { "$hostname:443" }; enabled = true; attempts = 0 }
 
     fun validation(network: Network, kind: Int, valid: Boolean) = submit {
         if (valid) validatedSince.putIfAbsent(network, SystemClock.elapsedRealtime()) else validatedSince.remove(network)
@@ -106,7 +107,7 @@ internal class WebSocketSession(private val output: (JSONObject) -> Unit) {
                     }
                 }
             })
-            val resolved = resolveEndpoint("$host:443", wifi)
+            val resolved = resolveEndpoint(endpoint, wifi)
             candidate.start(resolved.address, host, 50, object : SocketBinder {
                 override fun bind(fd: Long) { ParcelFileDescriptor.fromFd(fd.toInt()).use { wifi.bindSocket(it.fileDescriptor) } }
             })
@@ -152,7 +153,7 @@ internal class WebSocketSession(private val output: (JSONObject) -> Unit) {
                 }
             })
             client = current
-            val resolved = resolveEndpoint("$host:443", selected)
+            val resolved = resolveEndpoint(endpoint, selected)
             current.start(resolved.address, host, 50, object : SocketBinder {
                 override fun bind(fd: Long) {
                     ParcelFileDescriptor.fromFd(fd.toInt()).use { selected.bindSocket(it.fileDescriptor) }

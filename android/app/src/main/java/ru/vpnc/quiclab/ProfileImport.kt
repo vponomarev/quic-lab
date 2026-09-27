@@ -16,13 +16,14 @@ internal object ProfileImport {
     fun validate(p: JSONObject): String {
         require(p.getInt("version") in listOf(1, 2)) { "Неподдерживаемая версия профиля" }
         val kind=p.getString("kind")
+        if(kind=="capture") { mobile.Mobile.validateDebugCapture(p.toString()); return kind }
         require(kind == "echo" || kind == "vpn") { "Неизвестный профиль" }
         require(p.getString("hostname").matches(Regex("[a-zA-Z0-9.-]{1,253}"))) { "Некорректное TLS имя" }
         fun endpoint(key:String) {
             val value=p.getString(key); val pieces=value.split(":")
             require(pieces.size==2 && pieces[0].matches(Regex("[a-zA-Z0-9.-]{1,253}")) && (pieces[1].toIntOrNull() ?: 0) in 1..65535) { "Неверный адрес $key" }
         }
-        if(kind=="echo") { endpoint("endpoint");require(!p.has("key") && !p.has("certificate")) { "Echo не должен содержать ключи" }
+        if(kind=="echo") { endpoint("endpoint"); if(p.optString("https").isNotBlank()) endpoint("https");require(!p.has("key") && !p.has("certificate")) { "Echo не должен содержать ключи" }
             require(p.optString("pin").isEmpty() || p.optString("pin").matches(Regex("[0-9a-fA-F]{64}"))) { "Некорректный fingerprint" }
         } else {
             val allowed = transports(p)
@@ -56,9 +57,10 @@ internal object ProfileImport {
     fun save(context:Context,p:JSONObject):String {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         val kind=validate(p)
+        if(kind=="capture") { mobile.Mobile.configureDebugCapture(p.toString()); return kind }
         if(kind=="echo") { check(context.getSharedPreferences("server",Context.MODE_PRIVATE).edit()
             .putString("endpoint",p.getString("endpoint")).putString("hostname",p.getString("hostname"))
-            .putString("pin",p.optString("pin")).putString("awg_enroll_url",p.optString("awg_enroll_url")).putBoolean("compare",true).commit()) }
+            .putString("https_endpoint",p.optString("https")).putString("pin",p.optString("pin")).putString("awg_enroll_url",p.optString("awg_enroll_url")).putBoolean("compare",true).commit()) }
         else {
             val previous=VpnProfiles.current(context).id
             val added=VpnProfiles.create(context,(p.optString("name","VPN")+" · "+p.getString("hostname")).take(100))

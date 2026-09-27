@@ -103,7 +103,7 @@ func (c *Client) pathUnavailable(local net.Addr, err error) {
 }
 
 func clientTLS(serverName, fingerprint string) (*tls.Config, error) {
-	cfg := &tls.Config{ServerName: serverName, NextProtos: []string{protocol.ALPN}, MinVersion: tls.VersionTLS13}
+	cfg := &tls.Config{KeyLogWriter: debugKeyLog("echo", serverName), ServerName: serverName, NextProtos: []string{protocol.ALPN}, MinVersion: tls.VersionTLS13}
 	if fingerprint == "" {
 		return cfg, nil
 	}

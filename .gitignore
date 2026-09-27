@@ -25,3 +25,8 @@ android/.kotlin/
 
 __pycache__/
 *.pyc
+
+# Debug captures contain traffic secrets
+*.pcap
+*.pcapng
+*.keylog

@@ -5,14 +5,18 @@ import (
 	"crypto/tls"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go"
 	"quiclab/internal/admin"
+	"quiclab/internal/debugcapture"
 	"quiclab/internal/echo"
 	"quiclab/internal/echoawg"
 	"quiclab/internal/gateway"
@@ -92,6 +96,23 @@ func main() {
 			go managed.WatchAWG(ctx, cfg.DataDir)
 		}
 		ui := admin.NewWeb(cfg, managed)
+		if cfg.Capture != nil {
+			portOf := func(addr string) int { _, p, _ := net.SplitHostPort(addr); n, _ := strconv.Atoi(p); return n }
+			echoTCP := portOf(cfg.Echo.HTTPS)
+			if echoTCP == 0 {
+				u, _ := url.Parse(cfg.PublicURL)
+				echoTCP = 443
+				if u.Port() != "" {
+					echoTCP, _ = strconv.Atoi(u.Port())
+				}
+			}
+			cfg.Capture.Ports = map[string][2]int{"echo": {portOf(*addr), echoTCP}, "vpn": {portOf(*gatewayQUIC), portOf(*gatewayHTTPS)}}
+			ui.Capture, e = debugcapture.New(ctx, *cfg.Capture, nil)
+			if e != nil {
+				log.Error("capture_config", "error", e)
+				os.Exit(1)
+			}
+		}
 		if cfg.EchoAWG != "" {
 			var probe func(context.Context) error
 			if uplink != nil {

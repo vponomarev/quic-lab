@@ -22,6 +22,7 @@ class MainActivity : Activity() {
     private val teal = Color.rgb(0, 128, 117)
     private val amber = Color.rgb(186, 105, 17)
     private lateinit var quic: QuicSession
+    private lateinit var captureStop: Button
     private lateinit var wss: WebSocketSession
     private lateinit var radios: RadioMonitor
     private var q = TransportStats()
@@ -191,6 +192,7 @@ class MainActivity : Activity() {
             if(running || LabVpnService.active) android.widget.Toast.makeText(this,"Сначала остановите опыт / VPN",android.widget.Toast.LENGTH_SHORT).show()
             else startActivityForResult(android.content.Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST)
         })
+        captureStop=button("Выключить экспорт TLS secrets") { mobile.Mobile.stopDebugCapture();banner.text="Учебный экспорт выключен" };captureStop.visibility=android.view.View.GONE;panel.addView(captureStop)
         panel.addView(button("VPN / Exit node") {
             if (running) { android.widget.Toast.makeText(this,"Сначала остановите echo-опыт",android.widget.Toast.LENGTH_SHORT).show() }
             else startActivity(android.content.Intent(this,VpnActivity::class.java))
@@ -312,6 +314,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode,resultCode,data)
         if(requestCode==51 && resultCode==RESULT_OK) { startForegroundService(android.content.Intent(this,LabVpnService::class.java)); return }
         if(requestCode==ProfileImport.REQUEST && resultCode==RESULT_OK) {
+            if(data?.getStringExtra("kind")=="capture") { Toast.makeText(this,"Отладка включена: запустите новое Echo/VPN-соединение",Toast.LENGTH_LONG).show();return }
             if(data?.getStringExtra("kind")=="vpn") startActivity(android.content.Intent(this,VpnActivity::class.java))
             else {val p=getSharedPreferences("server",MODE_PRIVATE);endpoint.setText(p.getString("endpoint",""));hostname.setText(p.getString("hostname",""));pin.setText(p.getString("pin",""));compare.isChecked=true}
         }
@@ -354,7 +357,7 @@ class MainActivity : Activity() {
             publicAwg=PublicAwgEchoSession(this,publicEnroll) { acceptAwg(it) }
             publicAwg?.move(kind)
         }
-        if (comparing) { w.state = "Ждём выбранную сеть"; wss.enable(hostname.text.toString().trim()) }
+        if (comparing) { w.state = "Ждём выбранную сеть"; wss.enable(hostname.text.toString().trim(), getSharedPreferences("server",MODE_PRIVATE).getString("https_endpoint", "").orEmpty()) }
         quic.startOrMigrate(kind, endpoint.text.toString().trim(), hostname.text.toString().trim(), pin.text.toString().trim(), 50)
     }
     private fun stopExperiment() {
@@ -512,6 +515,7 @@ class MainActivity : Activity() {
                     if(a.active && a.lastEcho!=0L && a.silence(time)<2500) a.rtt.toFloat() else null)
             }
             if (detailsView.isShown) detailsView.text = "QUIC: ${q.replies} ответов, ${q.migrations} миграций\nСеансы: ${q.sessions.joinToString()}\nHTTPS: ${w.replies} ответов\nСеансы: ${w.sessions.joinToString()}\n\n${raw.joinToString("\n")}"
+            val captureStatus=mobile.Mobile.debugCaptureStatus();captureStop.visibility=if(captureStatus.isBlank()) android.view.View.GONE else android.view.View.VISIBLE;if(captureStatus.isNotBlank()) banner.text=captureStatus
             handler.postDelayed(this, 250)
         }
     }

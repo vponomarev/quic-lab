@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"quiclab/internal/debugcapture"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	Capture          *debugcapture.Manager
 	PublicAWG        http.Handler
 	ListenerBindings map[string]string
 	uplinkState      uplinkCache
@@ -44,6 +46,7 @@ func NewWeb(c Config, s *Store) *Web {
 }
 func (w *Web) Handler() http.Handler {
 	m := http.NewServeMux()
+	w.captureRoutes(m)
 	m.HandleFunc("GET /{$}", w.home)
 	m.HandleFunc("GET /download/quic-lab.apk", w.downloadAPK)
 	m.HandleFunc("GET /login", w.loginPage)
@@ -182,6 +185,9 @@ func (w *Web) logout(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.mu.Unlock()
+	if w.Capture != nil {
+		w.Capture.StopOwner(previous.CSRF)
+	}
 	http.SetCookie(rw, &http.Cookie{Name: "quiclab_admin", Path: w.base, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	http.Redirect(rw, r, w.base, 303)
 }
@@ -366,7 +372,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html><html lang="
 .login-page{max-width:440px;margin:9vh auto}.login-page h1{font-size:28px}.login-page .card{padding:32px}.login-page input{width:100%}.login-page button{width:100%;margin-top:12px}.login-page label{font-size:14px}.login-page .muted{line-height:1.6}
 .page-tools{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:12px 0}.info-button{background:transparent;color:#008075;border:1px solid #b9d7d3;border-radius:50%;width:32px;height:32px;padding:0;font-size:20px}.page-tools #live-status{font-size:12px}.user-actions{flex-wrap:nowrap;min-width:0}.user-actions>div{display:inline-block}.secondary{background:#edf5f4;color:#087769}
 dialog{border:0;border-radius:20px;padding:0;width:min(540px,calc(100vw - 32px));max-height:85vh;box-shadow:0 24px 90px #14283a40;color:#14283a;background:white}dialog::backdrop{background:#14283a66;backdrop-filter:blur(3px)}.modal-header{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px 26px;border-bottom:1px solid #edf1f4}.modal-header h2{margin:0;font-size:21px}.modal-close{background:#edf5f4;color:#087769;font-size:23px;padding:3px 12px}.modal-body{padding:24px 26px;overflow-wrap:anywhere}.modal-body .settings-body{padding:0;background:none;max-width:none}.modal-body input:not([type=checkbox]):not([type=hidden]){width:100%;min-width:0}.modal-body .protocols input[type=checkbox]{width:18px}.modal-body .protocols{gap:18px}.modal-body label{margin-top:8px}.modal-body hr{border:0;border-top:1px solid #edf1f4;margin:22px 0}.modal-body .inline{display:block;margin:12px 0}.modal-body .export-grid{display:grid;gap:12px}.modal-body form button{font-size:14px;padding:10px 14px}.modal-body p{line-height:1.6}.modal-body .client-name{font-weight:600;margin:0 0 20px}.modal-body img{display:block;margin:auto}.modal-trigger{white-space:nowrap}@media(min-width:1600px){main{padding:0 40px}}
-</style><script src="{{.Base}}ui.js" defer></script><main><nav><a href="{{.Base}}"><strong>QUIC LAB</strong></a>{{if .Admin}}<a href="{{.Base}}users">Пользователи</a><form method="post" action="{{.Base}}logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти</button></form>{{else}}<a href="{{.Base}}login">Вход администратора</a>{{end}}</nav><h1>{{.Title}}</h1>{{if .Message}}<p class="alert">{{.Message}}</p>{{end}}
+</style><script src="{{.Base}}ui.js" defer></script><main><nav><a href="{{.Base}}"><strong>QUIC LAB</strong></a>{{if .Admin}}<a href="{{.Base}}users">Пользователи</a><a href="{{.Base}}capture">Wireshark</a><form method="post" action="{{.Base}}logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти</button></form>{{else}}<a href="{{.Base}}login">Вход администратора</a>{{end}}</nav><h1>{{.Title}}</h1>{{if .Message}}<p class="alert">{{.Message}}</p>{{end}}
 {{if .Login}}<div class="login-page"><section class="card"><h2>Добро пожаловать</h2><p class="muted">Войдите, чтобы управлять пользователями и подключениями QUIC Lab.</p><form method="post" action="{{.Base}}login"><label for="login-user">Логин</label><input id="login-user" name="username" autofocus autocomplete="username" required><label for="login-password">Пароль</label><input id="login-password" type="password" name="password" autocomplete="current-password" required><p><button>Войти</button></p></form></section></div>{{end}}
 {{if .Echo}}<p class="muted">Откройте QUIC Lab на телефоне и нажмите «Сканировать QR». Вход для echo не нужен.</p><section class="card qr"><img src="{{.QR}}" alt="QR настроек echo"><p><code>{{.Endpoint}}</code></p><small>TLS: {{.Hostname}}</small>{{if .APKSize}}<p><a class="download" href="{{.Base}}download/quic-lab.apk" download>Скачать QUIC Lab для Android · {{.APKSize}}</a></p><small>Android 11+ · ARM64 / x86-64. Установите APK, затем отсканируйте QR-код в приложении.</small><details class="download-qr"><summary>Показать QR для скачивания</summary><p>Сканируйте камерой телефона, чтобы скачать APK.</p><img src="{{.APKQR}}" alt="QR для скачивания APK QUIC Lab"></details>{{end}}</section>{{end}}
 {{if .Enrollment}}<p class="muted">{{if .AWGQR}}AmneziaWG: отсканируйте QR в совместимом клиенте.{{else}}В QUIC Lab нажмите «Сканировать QR». После импорта доступны разрешённые администратором протоколы.{{end}}</p><section class="card qr"><img src="{{.QR}}" alt="Одноразовый QR профиля VPN"><p>{{if .AWGQR}}QR содержит конфигурацию и закрытый ключ AWG.{{else}}Одно использование · действует 5 минут. QR выдаёт конфигурацию разрешённых протоколов и их ключи.{{end}}</p><small>Передавайте только владельцу устройства.</small></section>{{end}}

@@ -35,6 +35,12 @@ class ProfileScanActivity : Activity() {
         }catch(e:Exception){fail(e)}
     }
     private fun review(p:JSONObject){val kind=ProfileImport.validate(p)
+        if(kind=="capture") {
+            AlertDialog.Builder(this).setTitle("Учебный захват Wireshark")
+                .setMessage("${p.getString("capture_kind").uppercase()} · ${p.getString("hostname")}\nTLS secrets новых соединений будут отправляться на ${java.net.URI(p.getString("capture_url")).host} до окончания сессии (не более 10 минут). Это позволит преподавателю расшифровать учебный трафик. Адреса и VPN-профили не меняются.")
+                .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Включить"){_,_->try { ProfileImport.save(this,p);setResult(RESULT_OK,Intent().putExtra("kind","capture"));finish() }catch(e:Exception){fail(e)}}.show()
+            return
+        }
         val address=if(kind=="echo")p.getString("endpoint") else ProfileImport.transports(p).joinToString("\n") { protocol -> if(protocol == "awg") "AmneziaWG: ${AwgImport.metadata(p.getString("awg_config")).getString("endpoint")}" else "${protocol.uppercase()}: ${p.getString(protocol)}" }
         AlertDialog.Builder(this).setTitle(if(kind=="echo")"Настройки echo" else "VPN: ${p.optString("name")}")
             .setMessage("$address\nTLS: ${p.getString("hostname")}\n${if(kind=="vpn") "Добавить новый VPN-профиль?" else "Заменить настройки echo?"}")

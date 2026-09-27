@@ -112,7 +112,7 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	if e != nil {
 		return fmt.Errorf("client identity: %w", e)
 	}
-	g.tls = &tls.Config{ServerName: g.cfg.Hostname, Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
+	g.tls = &tls.Config{KeyLogWriter: debugKeyLog("vpn", g.cfg.Hostname), ServerName: g.cfg.Hostname, Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
 	if g.cfg.CA != "" {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM([]byte(g.cfg.CA)) {
