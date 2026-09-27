@@ -50,9 +50,9 @@ func (s *Store) ObserveAWG(status awgserver.Status) {
 			traffic.add(now, int(tx), int(rx))
 		}
 		s.awgPrevious[p.ID] = p
-		if !p.Activity.IsZero() && now.Sub(p.Activity) < 3*time.Minute {
+		if s.awgConfig != nil && !p.Activity.IsZero() && now.Sub(p.Activity) < s.awgConfig.OfflineAfter() {
 			source := p.Source
-			traffic.live["awg"] = liveConnection{"AmneziaWG · недавняя активность", p.Handshake, func() string { return source }}
+			traffic.live["awg"] = liveConnection{"AmneziaWG · канал подтверждён", p.Handshake, func() string { return source }}
 		}
 		if p.Handshake.After(u.LastConnected) {
 			u.LastConnected = p.Handshake

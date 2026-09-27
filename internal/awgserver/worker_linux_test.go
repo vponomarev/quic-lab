@@ -108,6 +108,37 @@ func TestLinuxWorkerLifecycle(t *testing.T) {
 	if !found {
 		t.Fatal("missing handshake/traffic/source statistics")
 	}
+
+	// An idle health handshake must receive a real response and preserve the
+	// established TCP stream. It must not depend on ICMP support in the client.
+	before := status.Peers[0].Handshake
+	time.Sleep(6 * time.Second)
+	for i := range status.Peers {
+		status.Peers[i].Activity = time.Now().Add(-time.Minute)
+	}
+	status.Updated = time.Now()
+	w.probeIdle(state, status)
+	confirmed := false
+	until := time.Now().Add(5 * time.Second)
+	for time.Now().Before(until) {
+		v, err := w.Snapshot(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range v.Peers {
+			if p.ID == "one" && p.Handshake.After(before) {
+				confirmed = true
+			}
+		}
+		if confirmed {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !confirmed {
+		t.Fatal("health handshake not confirmed by client")
+	}
+	exchange()
 	u := state.Users["one"]
 	u.Disabled = true
 	state.Users["one"] = u

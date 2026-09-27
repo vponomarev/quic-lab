@@ -2,6 +2,7 @@ package awgserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,13 +16,14 @@ import (
 )
 
 type Worker struct {
-	Device   *device.Device
-	Config   Config
-	Dir      string
-	peers    map[string]string
-	activity map[string]PeerStatus
-	identity string
-	started  time.Time
+	lastProbe map[string]time.Time
+	Device    *device.Device
+	Config    Config
+	Dir       string
+	peers     map[string]string
+	activity  map[string]PeerStatus
+	identity  string
+	started   time.Time
 }
 
 func (w *Worker) Apply(state State) error {
@@ -111,10 +113,7 @@ func (w *Worker) Snapshot(state State) (Status, error) {
 			return
 		}
 		previous := w.activity[peer.ID]
-		peer.Activity = previous.Activity
-		if peer.TX != previous.TX || peer.RX != previous.RX || peer.Handshake.After(previous.Handshake) {
-			peer.Activity = now
-		}
+		peer.Activity = confirmedActivity(previous, *peer, now)
 		w.activity[peer.ID] = *peer
 		out.Peers = append(out.Peers, *peer)
 	}
@@ -173,6 +172,7 @@ func (w *Worker) Tick() error {
 	if e != nil {
 		return e
 	}
+	w.probeIdle(state, status)
 	return WriteStatus(w.Dir, status)
 }
 func (w *Worker) Run(ctx context.Context) error {
@@ -186,6 +186,52 @@ func (w *Worker) Run(ctx context.Context) error {
 			if e := w.Tick(); e != nil {
 				return e
 			}
+		}
+	}
+}
+
+// TX is client-to-server (the device rx_bytes counter). Server sends are not
+// evidence of a reachable peer. Initial snapshots must not revive old traffic.
+func confirmedActivity(previous, current PeerStatus, now time.Time) time.Time {
+	seen := previous.Activity
+	if current.Handshake.After(seen) {
+		seen = current.Handshake
+	}
+	if previous.ID != "" && current.TX > previous.TX {
+		seen = now
+	}
+	return seen
+}
+func (w *Worker) probeIdle(state State, status Status) {
+	if w.lastProbe == nil {
+		w.lastProbe = map[string]time.Time{}
+	}
+	present := map[string]bool{}
+	for _, p := range status.Peers {
+		present[p.ID] = true
+		if p.Source == "" || status.Updated.Sub(p.Activity) < w.Config.HealthInterval() || status.Updated.Sub(w.lastProbe[p.ID]) < w.Config.HealthInterval() {
+			continue
+		}
+		u, ok := state.Users[p.ID]
+		if !ok || u.AWG == nil || !u.Enabled(status.Updated) {
+			continue
+		}
+		raw, e := base64.StdEncoding.DecodeString(u.AWG.Public)
+		if e != nil || len(raw) != 32 {
+			continue
+		}
+		var key device.NoisePublicKey
+		copy(key[:], raw)
+		if peer := w.Device.LookupPeer(key); peer != nil {
+			w.lastProbe[p.ID] = status.Updated
+			// Standard authenticated handshake, not an ICMP dependency. A failed send
+			// never refreshes Activity or disconnects another live transport.
+			_ = peer.SendHandshakeInitiation(false)
+		}
+	}
+	for id := range w.lastProbe {
+		if !present[id] {
+			delete(w.lastProbe, id)
 		}
 	}
 }

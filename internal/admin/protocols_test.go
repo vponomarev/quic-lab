@@ -137,6 +137,29 @@ func TestAWGStatsDeltasAndStaleness(t *testing.T) {
 	}
 }
 
+func TestAWGOfflineTimeoutPreservesIdentity(t *testing.T) {
+	s, _ := OpenStore(t.TempDir())
+	c := awgConfig()
+	c.OfflineAfterSeconds = 30
+	c.HealthCheckIntervalSeconds = 10
+	s.ConfigureAWG(c)
+	u, _ := s.CreateWithProtocols("idle", []string{"awg"})
+	now := time.Now()
+	p := awgserver.PeerStatus{ID: u.ID, Handshake: now.Add(-time.Minute), Activity: now.Add(-31 * time.Second), RX: 999}
+	s.ObserveAWG(awgserver.Status{Started: now, Updated: now, Peers: []awgserver.PeerStatus{p}})
+	if len(s.List()[0].Stats.Connections) != 0 {
+		t.Fatal("stale peer online")
+	}
+	if s.List()[0].Disabled {
+		t.Fatal("offline disabled identity")
+	}
+	p.Activity = now
+	s.ObserveAWG(awgserver.Status{Started: now, Updated: now, Peers: []awgserver.PeerStatus{p}})
+	if len(s.List()[0].Stats.Connections) != 1 {
+		t.Fatal("recovery not shown")
+	}
+}
+
 func TestProtocolWebExports(t *testing.T) {
 	c := config(t)
 	c.AWG = awgConfig()

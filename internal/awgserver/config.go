@@ -20,15 +20,20 @@ import (
 )
 
 type Config struct {
-	Endpoint   string   `json:"endpoint"`
-	Address    string   `json:"address"`
-	DNS        string   `json:"dns"`
-	AllowedIPs []string `json:"allowed_ips"`
-	Interface  string   `json:"interface"`
-	MTU        int      `json:"mtu"`
+	HealthCheckIntervalSeconds int      `json:"health_check_interval_seconds,omitempty"`
+	OfflineAfterSeconds        int      `json:"offline_after_seconds,omitempty"`
+	Endpoint                   string   `json:"endpoint"`
+	Address                    string   `json:"address"`
+	DNS                        string   `json:"dns"`
+	AllowedIPs                 []string `json:"allowed_ips"`
+	Interface                  string   `json:"interface"`
+	MTU                        int      `json:"mtu"`
 }
 
 func (c Config) Validate() error {
+	if c.HealthInterval() < 10*time.Second || c.HealthInterval() > 300*time.Second || c.OfflineAfter() < 2*c.HealthInterval() || c.OfflineAfter() > time.Hour {
+		return errors.New("AWG health interval must be 10..300 seconds; offline timeout >= 2 intervals and <= 3600 seconds")
+	}
 	h, p, e := net.SplitHostPort(c.Endpoint)
 	port, x := strconv.Atoi(p)
 	if e != nil || x != nil || h == "" || strings.ContainsAny(h, "\r\n\t ;#") || port < 1 || port > 65535 {
@@ -195,4 +200,17 @@ func WriteStatus(dir string, v Status) error {
 		return ce
 	}
 	return os.Rename(name, filepath.Join(dir, "awg-status.json"))
+}
+
+func (c Config) HealthInterval() time.Duration {
+	if c.HealthCheckIntervalSeconds == 0 {
+		return 25 * time.Second
+	}
+	return time.Duration(c.HealthCheckIntervalSeconds) * time.Second
+}
+func (c Config) OfflineAfter() time.Duration {
+	if c.OfflineAfterSeconds == 0 {
+		return 75 * time.Second
+	}
+	return time.Duration(c.OfflineAfterSeconds) * time.Second
 }
