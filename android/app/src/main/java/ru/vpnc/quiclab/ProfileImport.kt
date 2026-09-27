@@ -51,7 +51,7 @@ internal object ProfileImport {
             c.outputStream.use{it.write(JSONObject().put("token",u.fragment).toString().toByteArray())}
             require(c.responseCode==200) { if(c.responseCode==410) "QR истёк или уже использован. Получите новый QR." else "Сервер не выдал профиль (${c.responseCode})" }
             val out=java.io.ByteArrayOutputStream();c.inputStream.use { input -> val buf=ByteArray(4096);while(true){val n=input.read(buf);if(n<0)break;require(out.size()+n<=32768){"Профиль слишком большой"};out.write(buf,0,n)} }
-            return JSONObject(out.toString("UTF-8")).also{require(validate(it)=="vpn") { "Нужен VPN профиль" }}
+            return JSONObject(out.toString("UTF-8")).also{require(validate(it)==(if(u.path.endsWith("/capture/enroll")) "capture" else "vpn")) { "Неожиданный тип профиля" }}
         } finally { c.disconnect() }
     }
     fun save(context:Context,p:JSONObject):String {

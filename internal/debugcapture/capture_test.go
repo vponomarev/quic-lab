@@ -130,3 +130,32 @@ func TestUploadAuthorizationAndStreamExclusion(t *testing.T) {
 		t.Fatal("upload accepted after stop")
 	}
 }
+
+func TestEnrollmentIsOneTimeAndSessionBound(t *testing.T) {
+	s := &Session{Info: Info{State: "running", Until: time.Now().Add(time.Minute)}}
+	m := &Manager{sessions: map[string]*Session{"test": s}}
+	token, err := s.Enrollment()
+	if err != nil || len(token) != 48 {
+		t.Fatal("enrollment", err)
+	}
+	if m.Enroll("bad") != nil {
+		t.Fatal("accepted invalid token")
+	}
+	if m.Enroll(token) != s || m.Enroll(token) != nil {
+		t.Fatal("one-time enrollment failed")
+	}
+	old, _ := s.Enrollment()
+	current, _ := s.Enrollment()
+	if m.Enroll(old) != nil {
+		t.Fatal("replaced QR remains valid")
+	}
+	s.enrollmentUntil = time.Now().Add(-time.Second)
+	if m.Enroll(current) != nil {
+		t.Fatal("expired QR accepted")
+	}
+	current, _ = s.Enrollment()
+	s.State = "stopped"
+	if m.Enroll(current) != nil {
+		t.Fatal("stopped session accepted")
+	}
+}

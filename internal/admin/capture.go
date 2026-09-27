@@ -24,6 +24,7 @@ import (
 func (w *Web) captureRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /download/capture/{platform}", w.captureHelperDownload)
 	m.HandleFunc("POST /capture/keys", w.captureKeys)
+	m.HandleFunc("POST /capture/enroll", w.captureEnroll)
 	m.HandleFunc("GET /capture", w.capturePage)
 	m.HandleFunc("POST /capture/start", w.captureStart)
 	m.HandleFunc("POST /capture/stop", w.captureStop)
@@ -126,14 +127,13 @@ func (w *Web) captureQR(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Capture stopped", 410)
 		return
 	}
-	host := w.Config.Echo.Hostname
-	if s.Kind == "vpn" {
-		host = w.Config.VPN.Hostname
+	ticket, e := s.Enrollment()
+	if e != nil {
+		http.Error(rw, "Capture stopped", 410)
+		return
 	}
-	// Only an upload capability, never a VPN identity or capture read token.
-	p := map[string]any{"version": 1, "kind": "capture", "hostname": host, "capture_kind": s.Kind, "capture_url": w.Config.PublicURL + "capture/keys?id=" + s.ID, "capture_token": s.UploadToken(), "capture_until": s.Until.Unix()}
-	raw, _ := json.Marshal(p)
-	code, e := qrcode.New(string(raw), qrcode.Medium)
+	link := w.Config.PublicURL + "capture/enroll#" + ticket
+	code, e := qrcode.New(link, qrcode.Medium)
 	if e != nil {
 		http.Error(rw, "QR unavailable", 500)
 		return
@@ -145,7 +145,7 @@ func (w *Web) captureQR(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "QR unavailable", 500)
 		return
 	}
-	w.renderCapture(rw, ss, "QR включает учебный экспорт TLS secrets на телефоне на 10 минут. Адреса подключения и VPN-профили не меняются.", "", img)
+	w.renderCapture(rw, ss, "QR действует 2 минуты и используется один раз. Требуется Android 0.7.3-dev. После подтверждения экспорт TLS secrets действует до конца сессии. Адреса подключения и VPN-профили не меняются.", "", img)
 }
 func (w *Web) captureDownload(rw http.ResponseWriter, r *http.Request) {
 	_, s := w.ownedCapture(rw, r, false)
@@ -320,4 +320,30 @@ func capturePeer(r *http.Request) (string, error) {
 		return "", fmt.Errorf("invalid proxy peer")
 	}
 	return net.JoinHostPort(host, port), nil
+}
+
+func (w *Web) captureEnroll(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Cache-Control", "no-store")
+	if w.Capture == nil {
+		http.NotFound(rw, r)
+		return
+	}
+	var in struct {
+		Token string `json:"token"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 256)).Decode(&in) != nil {
+		http.Error(rw, "Invalid token", 400)
+		return
+	}
+	s := w.Capture.Enroll(in.Token)
+	if s == nil {
+		http.Error(rw, "QR expired or already used", 410)
+		return
+	}
+	host := w.Config.Echo.Hostname
+	if s.Kind == "vpn" {
+		host = w.Config.VPN.Hostname
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(map[string]any{"version": 1, "kind": "capture", "hostname": host, "capture_kind": s.Kind, "capture_url": w.Config.PublicURL + "capture/keys?id=" + s.ID, "capture_token": s.UploadToken(), "capture_until": s.Until.Unix()})
 }

@@ -26,8 +26,9 @@ class ProfileScanActivity : Activity() {
             }
             else if(raw.trimStart().startsWith("{")) review(JSONObject(raw))
             else {val uri=ProfileImport.enrollment(raw)
-                AlertDialog.Builder(this).setTitle("Получить VPN-профиль?")
-                    .setMessage("Сервер: ${uri.host}\nБудут получены настройки, клиентский сертификат и закрытый ключ.")
+                val debug = uri.path.endsWith("/capture/enroll")
+                AlertDialog.Builder(this).setTitle(if(debug) "Получить настройки отладки?" else "Получить VPN-профиль?")
+                    .setMessage(if(debug) "Сервер: ${uri.host}\nБудут получены настройки учебного захвата. Экспорт TLS secrets включается отдельным подтверждением." else "Сервер: ${uri.host}\nБудут получены настройки, клиентский сертификат и закрытый ключ.")
                     .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Получить"){_,_->
                         Thread{try{val p=ProfileImport.fetch(raw);runOnUiThread{if(!isFinishing)review(p)}}catch(e:Exception){runOnUiThread{fail(e)}}}.start()
                     }.show()

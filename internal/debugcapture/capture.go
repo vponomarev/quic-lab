@@ -45,17 +45,19 @@ type Info struct {
 type Session struct {
 	mu sync.Mutex
 	Info
-	ctx           context.Context
-	cancel        context.CancelFunc
-	blocks        [][]byte
-	times         []time.Time
-	keyLines      []byte
-	uploadToken   string
-	link          uint32
-	wake          chan struct{}
-	ticket, token string
-	ticketUntil   time.Time
-	connected     bool
+	ctx             context.Context
+	cancel          context.CancelFunc
+	blocks          [][]byte
+	times           []time.Time
+	keyLines        []byte
+	uploadToken     string
+	link            uint32
+	wake            chan struct{}
+	ticket, token   string
+	ticketUntil     time.Time
+	enrollment      string
+	enrollmentUntil time.Time
+	connected       bool
 }
 
 func (s *Session) Context() context.Context { return s.ctx }
@@ -478,4 +480,35 @@ func (s *Session) SecretBlockSince(n int) []byte {
 		n = len(p)
 	}
 	return secrets(p[n:])
+}
+
+// Enrollment only grants upload configuration; never capture read access.
+func (s *Session) Enrollment() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.State != "running" || time.Now().After(s.Until) {
+		return "", errors.New("capture stopped")
+	}
+	s.enrollment = random()[:48]
+	s.enrollmentUntil = time.Now().Add(2 * time.Minute)
+	return s.enrollment, nil
+}
+func (m *Manager) Enroll(token string) *Session {
+	if !regexp.MustCompile(`^[a-f0-9]{48}$`).MatchString(token) {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.sessions {
+		s.mu.Lock()
+		ok := s.enrollment == token && s.State == "running" && time.Now().Before(s.enrollmentUntil) && time.Now().Before(s.Until)
+		if ok {
+			s.enrollment = ""
+		}
+		s.mu.Unlock()
+		if ok {
+			return s
+		}
+	}
+	return nil
 }

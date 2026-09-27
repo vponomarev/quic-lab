@@ -25,7 +25,8 @@ class CaptureSmokeTest {
         org.junit.Assume.assumeTrue("Provision an ephemeral capture QR first",source.exists())
         val bitmap=BitmapFactory.decodeFile(source.path)
         val pixels=IntArray(bitmap.width*bitmap.height);bitmap.getPixels(pixels,0,bitmap.width,0,0,bitmap.width,bitmap.height)
-        val profile=JSONObject(QRCodeReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(bitmap.width,bitmap.height,pixels)))).text)
+        val raw=QRCodeReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(bitmap.width,bitmap.height,pixels)))).text
+        val profile=if(raw.startsWith("https://")) ProfileImport.fetch(raw) else JSONObject(raw)
         source.delete()
         assertEquals("capture",ProfileImport.save(context,profile))
         val prefs=context.getSharedPreferences("server",0)
