@@ -363,3 +363,44 @@ func (g *Gateway) Stop() {
 		stop()
 	}
 }
+
+// IsConnected reports transport liveness without treating a retained TUN as a
+// connected VPN. Android owns retry scheduling and network selection.
+func (g *Gateway) IsConnected() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.awg != nil {
+		return g.ctx != nil && g.ctx.Err() == nil
+	}
+	if g.q != nil {
+		g.q.op.Lock()
+		defer g.q.op.Unlock()
+		return g.q.conn != nil && g.q.conn.Context().Err() == nil
+	}
+	return g.mux != nil && !g.mux.IsClosed()
+}
+
+// Reconnect replaces only the outer transport. Keep the Android TUN and its
+// routing in place; old proxy streams end, new application flows can recover.
+func (g *Gateway) Reconnect(binder SocketBinder) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.cfg.Transport == "awg" {
+		return errors.New("AWG uses path migration")
+	}
+	if g.cancel != nil {
+		g.cancel()
+		g.cancel = nil
+	}
+	if g.q != nil {
+		g.q.Stop()
+		g.q = nil
+	}
+	if g.mux != nil {
+		g.mux.Close()
+		g.mux = nil
+	}
+	g.datagrams = nil
+	g.udpStream = false
+	return g.connect(binder)
+}

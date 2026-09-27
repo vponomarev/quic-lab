@@ -295,6 +295,7 @@ class LabVpnService : VpnService() {
                 when (kind) {
                     "connected" -> "Туннель подключён"
                     "disconnected" -> "Туннель разорван"
+                    "reconnecting" -> "Восстанавливаем VPN…"
                     "active_network" -> "Работает через $detail"
                     "operation_failed" -> "Ошибка: $detail"
                     else -> status

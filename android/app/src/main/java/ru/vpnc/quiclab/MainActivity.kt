@@ -476,9 +476,9 @@ class MainActivity : Activity() {
             if(vpn) {
                 val fresh=LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho<1500
                 val localRtt=if(fresh) "%.0f".format(LabVpnService.rtt) else "—"
-                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0) "%.0f".format(LabVpnService.transitRtt) else "—"
+                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0 && time-LabVpnService.lastTransitEcho<4000) "%.0f".format(LabVpnService.transitRtt) else "—"
                 val transitAge=if(LabVpnService.lastTransitEcho>0) (time-LabVpnService.lastTransitEcho)/1000 else 0
-                val transitAgeLabel=if(transitAge>=4 && LabVpnService.active) " · транзит $transitAge с назад" else ""
+                val transitAgeLabel=if(transitAge>=4 && LabVpnService.active) " · последний ответ транзита: $transitAge с назад" else ""
                 val rtt=if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит$transitAgeLabel" else "$localRtt мс"
                 val transport=LabVpnService.transport.uppercase()
                 vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}\n${LabVpnService.flowSummary}"

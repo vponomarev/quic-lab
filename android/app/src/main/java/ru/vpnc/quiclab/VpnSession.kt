@@ -14,7 +14,7 @@ import mobile.Mobile
 import mobile.SocketBinder
 import org.json.JSONObject
 
-/** Serializes connection lifecycle and Android network events; never auto-dials. */
+/** Serializes connection lifecycle and Android network events; recovers VPN transports without recreating the Android TUN. */
 internal class VpnSession(
     private val cm: ConnectivityManager,
     private val service: android.net.VpnService?,
@@ -34,6 +34,8 @@ internal class VpnSession(
     private val callbacks = mutableListOf<ConnectivityManager.NetworkCallback>()
     private var client: Gateway? = null
     private var alive = false
+    private var reconnectRequired = false
+    @Volatile private var lastReplyAt = 0L
     private var activeNetwork: Network? = null
     private var activeKind = WIFI
     private var failedNetwork: Network? = null
@@ -92,7 +94,7 @@ internal class VpnSession(
         automatic = enabled
         event(
             "auto_mode",
-            if (enabled) "Автомиграция включена; переподключение выключено"
+            if (enabled) "Автомиграция и восстановление VPN включены"
             else "Автомиграция выключена",
         )
         if (enabled && failedNetwork != null) recover("Автомиграция включена")
@@ -117,6 +119,7 @@ internal class VpnSession(
                                     if (e.optString("event") == "echo") {
                                         if (isAWG) awgPingSeen = true
                                         lastEchoAt = now()
+                                        lastReplyAt = lastEchoAt
                                         smoothedRTT =
                                             smoothedRTT * 0.875 +
                                                 e.optDouble("rtt_ms", 100.0) * 0.125
@@ -127,22 +130,13 @@ internal class VpnSession(
                                     if (e.optString("event") == "disconnected")
                                         submit {
                                             if (token == epoch) {
-                                                if (config.optString("transport") == "https") {
+                                                if (!isAWG && client?.isConnected() != true) {
+                                                    reconnectRequired = true
                                                     failedNetwork = activeNetwork
                                                     retryAt.clear()
-                                                    recover("HTTPS соединение закрыто")
-                                                } else {
-                                                    alive = false
-                                                    activeNetwork = null
-                                                    failedNetwork = null
+                                                    event("reconnecting", "Транспорт закрыт. Восстанавливаем VPN; старые TCP-потоки завершены.")
+                                                    recover("Соединение закрыто")
                                                 }
-                                                event(
-                                                    "session_closed",
-                                                    if (config.optString("transport") == "https")
-                                                        "HTTPS переподключается; старые TCP-потоки завершены."
-                                                    else
-                                                        "QUIC закрыт. Новый запуск — только по кнопке.",
-                                                )
                                             }
                                         }
                                     if (e.optString("event") == "path_unavailable")
@@ -170,6 +164,8 @@ internal class VpnSession(
                     if (attached != null) attached.invoke(current) else current.attach(tunFD.toLong())
                     nextExitCheckAt = 0L
                     alive = true
+                    reconnectRequired = false
+                    lastReplyAt = now()
                     intervalMS = if (isAWG) 1000 else interval
                     lastEchoAt = now()
                     lastSwitchAt = now()
@@ -185,12 +181,18 @@ internal class VpnSession(
 
     private fun migrate(kind: Int, network: Network, reason: String) {
         val current = client ?: return
-        if (network == activeNetwork && failedNetwork == null) {
+        if (network == activeNetwork && failedNetwork == null && !reconnectRequired) {
             event("active_network", label(kind))
             return
         }
         event("migration_started", "$reason → ${label(kind)}")
-        current.migrateTo(key(network), binder(network))
+        if (reconnectRequired) {
+            event("reconnecting", "Новое соединение → ${label(kind)}")
+            current.reconnect(binder(network))
+            reconnectRequired = false
+            lastReplyAt = now()
+            nextExitCheckAt = 0L
+        } else current.migrateTo(key(network), binder(network))
         preparedNetwork = null
         preparedAt = 0
         lastSwitchAt = now()
@@ -215,14 +217,14 @@ internal class VpnSession(
                         ?.let { kind to it }
                 }
                 .firstOrNull()
-                ?: if ((config.optString("transport") == "https" || isAWG) && failedNetwork != null)
+                ?: if ((reconnectRequired || config.optString("transport") == "https" || isAWG) && failedNetwork != null)
                     networks[activeKind]
                         ?.takeIf { (retryAt[it] ?: 0L) <= now() }
                         ?.let { activeKind to it }
                 else null
         if (candidate == null) {
             if (failedNetwork != previous)
-                event("waiting_network", "$reason. Ожидание доступного пути без нового соединения.")
+                event("waiting_network", "$reason. Ожидаем доступную сеть для восстановления VPN.")
             failedNetwork = previous
             return
         }
@@ -259,6 +261,12 @@ internal class VpnSession(
             nextExitCheckAt = time + 60000
         }
         if (!automatic) return
+        if (!isAWG && (client?.isConnected() != true || time - lastReplyAt > 15000)) {
+            reconnectRequired = true
+            failedNetwork = activeNetwork
+            recover("Нет рабочего транспортного соединения")
+            return
+        }
         if (
             activeNetwork in networks.values &&
                 lastEchoAt > lastAttemptAt &&
@@ -401,6 +409,7 @@ internal class VpnSession(
         epoch++
         awgPingSeen = false
         alive = false
+        reconnectRequired = false
         activeNetwork = null
         failedNetwork = null
         preparedNetwork = null
