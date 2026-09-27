@@ -109,7 +109,15 @@ func trusted(base string) bool {
 }
 func findWireshark(explicit string) (string, error) {
 	if explicit != "" {
-		return exec.LookPath(explicit)
+		resolved, err := exec.LookPath(explicit)
+		if err != nil {
+			return "", err
+		}
+		name := strings.ToLower(filepath.Base(resolved))
+		if name == "wiresharkportable64.exe" || name == "wiresharkportable.exe" {
+			return exec.LookPath(filepath.Join(filepath.Dir(resolved), "App", "Wireshark", "Wireshark.exe"))
+		}
+		return resolved, nil
 	}
 	if p, e := exec.LookPath("wireshark"); e == nil {
 		return p, nil
@@ -122,13 +130,24 @@ func findWireshark(explicit string) (string, error) {
 	}
 	return "", errors.New("install Wireshark first, or pass -wireshark with its executable path")
 }
+
+var directLaunch bool
+
 func run() error {
 	uri := flag.String("open", "", "quic-lab:// link (one-time launch ticket)")
+	connect := flag.String("connect", "", "manually supplied one-time link; no installation or saved trust required")
 	allow := flag.String("trust-server", "", "explicitly trust an HTTPS lab base URL")
 	shark := flag.String("wireshark", "", "Wireshark executable; default: auto-detect")
 	dest := flag.String("output-dir", "", "capture directory; default: ~/QUIC Lab Captures")
 	saveOnly := flag.Bool("save-only", false, "save capture without launching Wireshark")
 	flag.Parse()
+	directLaunch = *connect != ""
+	if directLaunch {
+		if *uri != "" || *allow != "" {
+			return errors.New("use -connect alone, without -open or -trust-server")
+		}
+		*uri = *connect
+	}
 	if *allow != "" {
 		return trust(*allow)
 	}
@@ -140,7 +159,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	if !trusted(base) {
+	if !directLaunch && !trusted(base) {
 		return fmt.Errorf("server is not trusted; run the installer with this lab URL: %s", base)
 	}
 	var executable string
@@ -253,7 +272,7 @@ func run() error {
 func main() {
 	if e := run(); e != nil {
 		fmt.Fprintln(os.Stderr, e)
-		if runtime.GOOS != "linux" {
+		if runtime.GOOS != "linux" && !directLaunch {
 			notify(e.Error())
 		}
 		os.Exit(1)

@@ -20,6 +20,10 @@ with tempfile.TemporaryDirectory() as temp:
             command+=['-o',str(binary),'./cmd/capture']
             subprocess.run(command,cwd=root,env={**os.environ,'GOOS':target,'GOARCH':arch,'CGO_ENABLED':'0'},check=True)
             binaries.append(binary)
+        if target=='windows':
+            cli=tmp/'quic-lab-capture-cli.exe'
+            subprocess.run(['go','build','-trimpath','-o',str(cli),'./cmd/capture'],cwd=root,env={**os.environ,'GOOS':'windows','GOARCH':'amd64','CGO_ENABLED':'0'},check=True)
+            binaries.append(cli)
         files=binaries+([root/'desktop/capture/install-windows.ps1'] if target=='windows' else [root/'desktop/capture/install-macos.sh',root/'desktop/capture/launcher.applescript'])
         files.append(root/'docs/wireshark-capture.md')
         archive=out/f'quic-lab-capture-{target}.zip'
