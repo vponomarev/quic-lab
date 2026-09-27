@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -23,6 +24,9 @@ func (w *Web) captureRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /capture/keys", w.captureKeys)
 	m.HandleFunc("POST /capture/enroll", w.captureEnroll)
 	m.HandleFunc("GET /capture", w.capturePage)
+	m.HandleFunc("GET /capture/state", w.captureState)
+	m.HandleFunc("GET /capture/settings", w.captureSettings)
+	m.HandleFunc("GET /capture-settings.js", w.captureSettingsScript)
 	m.HandleFunc("POST /capture/start", w.captureStart)
 	m.HandleFunc("POST /capture/stop", w.captureStop)
 	m.HandleFunc("POST /capture/launch", w.captureLaunch)
@@ -78,9 +82,17 @@ func (w *Web) captureStart(rw http.ResponseWriter, r *http.Request) {
 	}
 	user := ""
 	kind := r.Form.Get("kind")
-	_, e := w.Capture.Start(s.CSRF, kind, user)
+	created, e := w.Capture.Start(s.CSRF, kind, user)
 	if e != nil {
+		if wantsCaptureJSON(r) {
+			http.Error(rw, e.Error(), 409)
+			return
+		}
 		w.renderCapture(rw, s, e.Error(), "", "")
+		return
+	}
+	if wantsCaptureJSON(r) {
+		captureJSON(rw, map[string]any{"id": created.Snapshot().ID})
 		return
 	}
 	http.Redirect(rw, r, w.base+"capture", 303)
@@ -110,6 +122,10 @@ func (w *Web) captureStop(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Stop("stopped")
+	if wantsCaptureJSON(r) {
+		captureJSON(rw, map[string]bool{"ok": true})
+		return
+	}
 	http.Redirect(rw, r, w.base+"capture", 303)
 }
 func (w *Web) captureLaunch(rw http.ResponseWriter, r *http.Request) {
@@ -119,10 +135,18 @@ func (w *Web) captureLaunch(rw http.ResponseWriter, r *http.Request) {
 	}
 	ticket, e := s.Ticket()
 	if e != nil {
+		if wantsCaptureJSON(r) {
+			http.Error(rw, e.Error(), 409)
+			return
+		}
 		w.renderCapture(rw, ss, e.Error(), "", "")
 		return
 	}
 	u := url.URL{Scheme: "quic-lab", Host: "capture", RawQuery: url.Values{"server": {w.Config.PublicURL}, "id": {s.ID}}.Encode(), Fragment: ticket}
+	if wantsCaptureJSON(r) {
+		captureJSON(rw, map[string]any{"id": s.Snapshot().ID, "link": u.String()})
+		return
+	}
 	// Only a locally constructed, fixed-scheme URL is marked safe for html/template.
 	message := "Ссылка действует одну минуту. Откройте Wireshark, затем запустите новое Echo/VPN-соединение."
 	if s.Snapshot().User != "" {
@@ -301,3 +325,30 @@ func capturePeer(r *http.Request) (string, error) {
 func (w *Web) captureEnroll(rw http.ResponseWriter, r *http.Request) {
 	http.Error(rw, "Phone enrollment is no longer needed", http.StatusGone)
 }
+
+func wantsCaptureJSON(r *http.Request) bool { return r.Header.Get("Accept") == "application/json" }
+func captureJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(v)
+}
+func (w *Web) captureState(rw http.ResponseWriter, r *http.Request) {
+	owner, ok := w.authorized(rw, r, false)
+	if !ok {
+		return
+	}
+	if w.Capture == nil {
+		http.Error(rw, "Захват выключен", 503)
+		return
+	}
+	rows := w.Capture.List(owner.CSRF)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Until.After(rows[j].Until) })
+	result := []map[string]any{}
+	for _, v := range rows {
+		result = append(result, map[string]any{"id": v.ID, "user": v.User, "kind": v.Kind, "state": v.State, "bytes": v.Bytes, "until": v.Until})
+	}
+	captureJSON(rw, map[string]any{"sessions": result, "termination": w.Capture.Config.Termination})
+}
+
+//go:embed capture-users.js
+var captureUsersJS []byte

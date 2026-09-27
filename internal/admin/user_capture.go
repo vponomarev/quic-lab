@@ -40,6 +40,10 @@ func (w *Web) userCapture(rw http.ResponseWriter, r *http.Request) {
 		if s != nil {
 			s.Stop("stopped by teacher")
 		}
+		if wantsCaptureJSON(r) {
+			captureJSON(rw, map[string]bool{"ok": true})
+			return
+		}
 		http.Redirect(rw, r, w.base+"users", 303)
 		return
 	}
@@ -89,18 +93,6 @@ func (w *Web) userCaptureStates(rw http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(rw).Encode(rows)
 }
 func (w *Web) captureUserScript(rw http.ResponseWriter, r *http.Request) {
-	rw.Header().Set("Content-Type", "application/javascript")
-	rw.Write([]byte(`
-(function(){
- const panels=document.querySelectorAll('.user-capture');if(!panels.length)return;
- const base=panels[0].dataset.base;
- async function refresh(){try{
-  const r=await fetch(base+'users/captures',{credentials:'same-origin'});if(!r.ok)return;const states=await r.json();
-  panels.forEach(p=>{const s=states[p.dataset.user];p.querySelector('.capture-start').hidden=!!s;p.querySelector('.capture-active').hidden=!s;
-   if(s){p.querySelector('.capture-label').textContent='● Захват включён · '+Math.round(s.bytes/1024)+' KiB'+(s.owned?'':' · другой вход');
-    p.querySelectorAll('.capture-owned').forEach(f=>f.hidden=!s.owned);}
-  });
- }catch(e){} }
- refresh();setInterval(refresh,5000);
-})();`))
+	rw.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	rw.Write(captureUsersJS)
 }
