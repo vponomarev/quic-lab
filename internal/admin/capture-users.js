@@ -11,7 +11,7 @@
  <p id="capture-capability" class="muted"></p><p class="capture-status" role="status">Проверяем статус…</p><p role="alert"></p>
  <label id="capture-record-label">Ваши записи <select id="capture-record"></select></label>
  <div class="capture-controls"><button id="capture-start">Начать захват</button><button id="capture-link">Получить ссылку</button><button id="capture-stop" class="danger">Остановить</button><a id="capture-download">Скачать pcapng</a></div>
- <section id="capture-launch" hidden><strong>Запуск Wireshark на компьютере</strong><p>Ссылка одноразовая, действует 1 минуту. Передайте её capture-cli.</p><textarea id="capture-url" rows="3" readonly aria-label="Одноразовая ссылка"></textarea><div class="capture-controls"><button id="capture-copy-link" class="secondary">Копировать ссылку</button><a id="capture-settings" target="_blank" rel="noopener">Настройки путей ↗</a></div><textarea id="capture-command" rows="3" readonly aria-label="Команда запуска"></textarea><div class="capture-controls"><button id="capture-copy-command" class="secondary">Копировать команду</button></div><p class="muted" id="capture-shell"></p></section>
+ <section id="capture-launch" hidden><strong>Запуск Wireshark на компьютере</strong><p>Ссылка одноразовая, действует 1 минуту. Передайте её capture-cli.</p><textarea id="capture-url" rows="3" readonly aria-label="Одноразовая ссылка"></textarea><div class="capture-controls"><button id="capture-copy-link" class="secondary">Копировать ссылку</button><a id="capture-settings" target="_blank" rel="noopener">Настройки путей ↗</a></div><label>Где будете запускать? <select id="capture-command-shell"><option value="windows">Windows · PowerShell</option><option value="windows-cmd">Windows · CMD</option><option value="arm64">macOS · Apple Silicon</option><option value="amd64">macOS · Intel</option></select></label><textarea id="capture-command" rows="3" readonly aria-label="Команда запуска"></textarea><div class="capture-controls"><button id="capture-copy-command" class="secondary">Копировать команду</button></div><p class="muted" id="capture-shell"></p></section>
  <p class="muted">Утилита: <a id="capture-windows">Windows ZIP</a> · <a id="capture-mac">macOS ZIP</a>. Установка и QR на телефоне не нужны.</p><small>До 10 минут / 32 MiB. Закрытие этого окна не останавливает запись. Используйте «Остановить».</small></div>`;
  document.body.append(dialog);
  const el=id=>dialog.querySelector('#capture-'+id);
@@ -25,7 +25,13 @@
   if(!r.ok){const text=await r.text();throw Error(text.slice(0,240)||'Не удалось выполнить действие');}
   return r.json();
  };
- function command(){el('command').value=window.QuicCaptureSettings.command(base,link);el('shell').textContent='Вставьте команду в '+(window.QuicCaptureSettings.load(base).platform==='windows'?'PowerShell':'Terminal')+'. Пути подставлены из настроек захвата.';}
+ function command(){
+  const platform=window.QuicCaptureSettings.load(base).platform;el('command-shell').value=platform;
+  try{el('command').value=window.QuicCaptureSettings.command(base,link);el('copy-command').disabled=false;el('shell').textContent='Вставьте команду в '+(platform==='windows'?'PowerShell':platform==='windows-cmd'?'CMD (командная строка)':'Terminal')+'. Пути подставлены из настроек захвата.';}
+  catch(e){el('command').value='';el('copy-command').disabled=true;el('shell').textContent=e.message;}
+ }
+ el('command-shell').onchange=()=>{try{window.QuicCaptureSettings.setPlatform(base,el('command-shell').value);command();}catch(e){error.textContent=e.message;}};
+
  function clearLink(){link='';el('launch').hidden=true;el('url').value='';el('command').value='';}
  function render(){
   const records=sessions.filter(s=>user?s.user===user:!s.user&&s.kind===el('kind').value);
