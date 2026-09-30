@@ -48,7 +48,10 @@ type packet struct {
 }
 type traffic struct{ sent, received, copies, probes, rxCopies, rxControl uint64 }
 type pathState struct {
-	info PathInfo
+	ackedBytes, dataProbes uint64
+	dataProbeStamp         int64
+	dataProbeSent          time.Time
+	info                   PathInfo
 	*traffic
 	p                                                 Path
 	rtt, variance                                     time.Duration
@@ -56,15 +59,22 @@ type pathState struct {
 	failures                                          int
 }
 type PathStats struct {
-	RXCopies  uint64  `json:"rx_copies"`
-	RXControl uint64  `json:"rx_control"`
-	Name      string  `json:"name"`
-	RTTMS     float64 `json:"rtt_ms"`
-	Ready     bool    `json:"ready"`
-	Sent      uint64  `json:"sent"`
-	Received  uint64  `json:"received"`
-	Copies    uint64  `json:"copies"`
-	Probes    uint64  `json:"probes"`
+	ProfileID        string  `json:"profile_id"`
+	Network          string  `json:"network"`
+	Generation       uint64  `json:"generation"`
+	AckedBytes       uint64  `json:"acked_bytes"`
+	PendingBytes     uint64  `json:"pending_bytes"`
+	DataProbes       uint64  `json:"data_probes"`
+	DataProbePending bool    `json:"data_probe_pending"`
+	RXCopies         uint64  `json:"rx_copies"`
+	RXControl        uint64  `json:"rx_control"`
+	Name             string  `json:"name"`
+	RTTMS            float64 `json:"rtt_ms"`
+	Ready            bool    `json:"ready"`
+	Sent             uint64  `json:"sent"`
+	Received         uint64  `json:"received"`
+	Copies           uint64  `json:"copies"`
+	Probes           uint64  `json:"probes"`
 }
 type Stats struct {
 	Paths       []PathStats `json:"paths"`
@@ -531,7 +541,15 @@ func (s *Session) receive(name string, ps *pathState) {
 				ps.rtt = (7*ps.rtt + elapsed) / 8
 			}
 			ps.lastReply = now
+			if kind == pong && len(b) == header+Chunk && stamp == ps.dataProbeStamp {
+				ps.dataProbes++
+				ps.dataProbeStamp = 0
+				ps.dataProbeSent = time.Time{}
+			}
 			if p := s.pending[id]; kind == ack && p != nil {
+				if p.Kind == Data || p.Kind == Datagram {
+					ps.ackedBytes += uint64(len(p.Payload))
+				}
 				if name != p.primary {
 					s.rescued++
 				}
@@ -542,7 +560,7 @@ func (s *Session) receive(name string, ps *pathState) {
 		}
 		s.mu.Unlock()
 		if kind == ping {
-			reply := frame(pong, 0, 0, 0, stamp, false, nil)
+			reply := frame(pong, 0, 0, 0, stamp, false, b[header:])
 			s.mu.Lock()
 			s.sendOn(name, ps, reply, true)
 			s.mu.Unlock()
@@ -593,6 +611,14 @@ func (s *Session) Stats() Stats {
 		}
 		vpath := PathStats{Name: n, Sent: total.sent, Received: total.received, Copies: total.copies, Probes: total.probes, RXCopies: total.rxCopies, RXControl: total.rxControl}
 		if p := s.paths[n]; p != nil {
+			vpath.ProfileID, vpath.Network, vpath.Generation = p.info.ProfileID, p.info.Network, p.info.Generation
+			vpath.AckedBytes, vpath.DataProbes = p.ackedBytes, p.dataProbes
+			vpath.DataProbePending = !p.dataProbeSent.IsZero()
+			for _, packet := range s.pending {
+				if packet.primary == n && (packet.Kind == Data || packet.Kind == Datagram) {
+					vpath.PendingBytes += uint64(len(packet.Payload))
+				}
+			}
 			vpath.RTTMS = float64(p.rtt) / 1e6
 			vpath.Ready = now.Sub(p.lastReply) < 2*time.Second
 		}
@@ -612,4 +638,27 @@ func maxTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// ProbeData checks a whole working-size record without opening an exit flow.
+// The caller owns probe cadence and network/budget permissions. One outstanding
+// probe per generation is allowed; sending more probes cannot reset its age.
+func (s *Session) ProbeData(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.paths[name]
+	if p == nil {
+		return net.ErrClosed
+	}
+	if !p.dataProbeSent.IsZero() {
+		return nil
+	}
+	now := time.Now()
+	stamp := now.UnixNano()
+	if err := s.sendOn(name, p, frame(ping, 0, 0, 0, stamp, false, make([]byte, Chunk)), true); err != nil {
+		return err
+	}
+	p.dataProbeStamp = stamp
+	p.dataProbeSent = now
+	return nil
 }

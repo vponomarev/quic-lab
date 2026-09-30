@@ -52,3 +52,11 @@ UDP не превращается в надёжный поток: огранич
 Первый вариант теста на внутренний адрес сервера не подходил: выход через удалённый транзит не имел маршрута к этому адресу. Тест заменён HTTPS-запросами на существующий публичный порт; временный внутренний echo остановлен и удалён. Настройки профиля и Wi-Fi восстановлены.
 
 Тест: BondDeviceTest, отдельное debug-приложение :probe (сборка с -PwithProbe). Параметр probe_host задаёт разрешённый тестовый HTTPS-хост; путь /bond-connectivity-test должен возвращать ограниченный ответ с Content-Length и поддерживать HTTP/1.1 keep-alive. Настройки и список приложений тест сохраняет и восстанавливает.
+
+## Phase-one path policy (B3)
+
+The portable pathpolicy package separates cumulative acknowledged payload bytes from tiny liveness replies. A pending payload or full-size probe stalls after max(3*RTT,300ms), capped at 800ms. An idle path without pending data/probe does not fail. Sized probes echo one 1050-byte payload, are bounded to one outstanding probe per path generation, and use the existing transport/LTE budget checks. They do not verify the final Internet exit.
+
+Policy decisions are scoped by exit and carry path generation. All allowed automatic profile/network candidates precede reserve; disabled profiles are untouched. Optional reserve probes run every 60s with 20% jitter and must carry no user traffic. Failed dials expire after 10s. Retry delay is 1/2/4/8/16/30s with 20% jitter; 30s of sustained acknowledged progress resets it. Return to a preferred candidate requires 8s and three successful data observations. Three stall/reconnect/progress recoveries within ten minutes recommend carousel without enabling it automatically.
+
+B3 provides decisions and bond health telemetry; B4 executes profile/network decisions, schedules sized probes, and integrates Android. The current legacy bond controller is not replaced by this policy yet. Network permission input must include the shared LTE budget/consent gate from C1/C2. Optional reserve probes are separate ephemeral checks, not pool members. Probe completion alone never clears outstanding user-payload stall. Linux fault tests do not certify the 1s/10s Android acceptance targets.

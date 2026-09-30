@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** B1 выполнен с переходным ограничением конечного LTE-бюджета до C1/C2; B2 выполнен; B3–B4 не начаты.
+**Status:** B1 выполнен с переходным ограничением конечного LTE-бюджета до C1/C2; B2 выполнен; B3 выполнен; B4 не начат.
 
 ## Global Constraints
 
@@ -113,7 +113,7 @@ go test ./internal/bondhttps ./internal/bondquic ./internal/gateway ./mobile ./c
 
 **Interfaces:** type Observation struct { PathID string; At time.Time; PendingBytes, AckedBytes uint64; ProbeOK, DataProbeOK bool }; type Decision struct { PathID, ProfileID, Action, Reason string }; type Policy struct; func New(c vpnmodel.Config) *Policy; func (p *Policy) Observe(o Observation); func (p *Policy) Next(now time.Time) []Decision. Action: dial/close/promote/probe/recommend_carousel. Ввод доступности сетей отдельным SetNetwork(name string, allowed, available bool).
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestNoFalseFailureWhenIdle; TestSmallProbeCannotMaskStall; TestVolumeBlackhole; TestReserveAndDisabled; TestReturnHysteresis. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestNoFalseFailureWhenIdle; TestSmallProbeCannotMaskStall; TestVolumeBlackhole; TestReserveAndDisabled; TestReturnHysteresis. Минимальные обязательные проверки:
 
 ```text
 assert idleWithoutPending.doesNotFail
@@ -125,17 +125,17 @@ assert reserveWithoutProbe.dialCountBeforeAutoFailure == 0
 assert flappingPreferred.doesNotImmediatelyReplaceWorkingPath
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Начальные проектные параметры: data stall=max(3*smoothedRTT,300ms), cap 800ms для подготовленного пути; применим только к ожидающим данным/контролируемой размерной пробе, не к пустому каналу. Healthy return: минимум 8s и 3 успешные пробы. Backoff 1/2/4/8/16/30s с jitter ±20%, сброс после 30s полезного прогресса. Редкая проверка резерва каждые 60s ±20% только при включённой галочке. Малый ping не отменяет data-stall; bounded размерная проба до размера рабочей записи. После 3 восстановлений новым соединением за 10min рекомендовать карусель. Это параметры плана, не SLA для произвольной сети; подтвердить fault-тестами, менять без ослабления 1s/10s приёмки.
+- [x] **Step 3 — реализация:** Начальные проектные параметры: data stall=max(3*smoothedRTT,300ms), cap 800ms для подготовленного пути; применим только к ожидающим данным/контролируемой размерной пробе, не к пустому каналу. Healthy return: минимум 8s и 3 успешные пробы. Backoff 1/2/4/8/16/30s с jitter ±20%, сброс после 30s полезного прогресса. Редкая проверка резерва каждые 60s ±20% только при включённой галочке. Малый ping не отменяет data-stall; bounded размерная проба до размера рабочей записи. После 3 восстановлений новым соединением за 10min рекомендовать карусель. Это параметры плана, не SLA для произвольной сети; подтвердить fault-тестами, менять без ослабления 1s/10s приёмки.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/pathpolicy ./internal/bond -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: select VPN profiles using actual data progress"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: select VPN profiles using actual data progress"`. Не включать соседние незавершённые задачи.
 
 ### Task B4: Пул соединений и интеграция с Android
 

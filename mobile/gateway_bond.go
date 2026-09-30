@@ -11,6 +11,7 @@ import (
 	"quiclab/internal/bond"
 	"quiclab/internal/bondquic"
 	"quiclab/internal/gateway"
+	"quiclab/internal/pathpolicy"
 	"time"
 )
 
@@ -159,6 +160,8 @@ func (g *Gateway) DropBondPath(name string) {
 	}
 }
 func (g *Gateway) bondStats(ctx context.Context, m *bond.Mux, offset uint64, session int64) {
+	health := make(map[string]*pathpolicy.Health)
+	generations := make(map[string]uint64)
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
@@ -185,7 +188,26 @@ func (g *Gateway) bondStats(ctx context.Context, m *bond.Mux, offset uint64, ses
 				return
 			}
 			v := m.Session.Stats()
-			g.emit("bond_stats", map[string]any{"cell_sent": v.CellSent + offset, "cell_blocked": v.CellBlocked, "paths": v.Paths, "pending": v.Pending, "oldest_ms": v.OldestMS, "rescued": v.Rescued, "duplicates": v.Duplicates, "expired": v.Expired})
+			stalled := make([]string, 0)
+			for _, p := range v.Paths {
+				if p.Generation == 0 {
+					delete(health, p.Name)
+					delete(generations, p.Name)
+					continue
+				}
+				h := health[p.Name]
+				if h == nil || generations[p.Name] != p.Generation {
+					h = &pathpolicy.Health{}
+					health[p.Name] = h
+					generations[p.Name] = p.Generation
+				}
+				now := time.Now()
+				h.Observe(pathpolicy.Observation{PathID: p.Name, Generation: p.Generation, At: now, PendingBytes: p.PendingBytes, AckedBytes: p.AckedBytes, DataProbePending: p.DataProbePending, RTT: time.Duration(p.RTTMS * float64(time.Millisecond))})
+				if h.Stalled(now) {
+					stalled = append(stalled, p.Name)
+				}
+			}
+			g.emit("bond_stats", map[string]any{"data_stalled_paths": stalled, "cell_sent": v.CellSent + offset, "cell_blocked": v.CellBlocked, "paths": v.Paths, "pending": v.Pending, "oldest_ms": v.OldestMS, "rescued": v.Rescued, "duplicates": v.Duplicates, "expired": v.Expired})
 			for _, p := range v.Paths {
 				if p.Ready {
 					g.emit("echo", map[string]any{"rtt_ms": p.RTTMS, "connection_id": fmt.Sprintf("bond-%d", session), "detail": "availability path health"})

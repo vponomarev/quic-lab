@@ -15,7 +15,7 @@ Verification: Linux `go test ./internal/vpnmodel ./mobile -count=1 -timeout=120s
 - Existing ordinary QUIC/HTTPS remain standalone; only max_availability maps to demux. No automatic grouping by hostname.
 - Installed task-start helper requires numeric headings but plans use A1 etc.; use equivalent exact task extraction with BASE and private ledger.
 
-Next: B3, progress-based path health and profile selection. Remaining 15 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
+Next: C1, shared LTE accounting epoch and ledger. Remaining 14 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
 
 Private ledger: .superpowers/sdd/2026-09-30-phase1-01-model-lifecycle/progress.md.
 
@@ -56,3 +56,10 @@ Added the bounded HTTPS WebSocket bond adapter and /tunnel/bond with quic-lab-bo
 Linux integration tests preserve one real TCP socket and the same UDP mapping across QUIC-to-HTTPS and HTTPS-to-QUIC replacement. A client without its certificate cannot join with a borrowed token. Framing, oversize rejection, cancellation and bounded nonblocking queue tests pass. The blocked writer is injected deterministically at the socket boundary; this is not a kernel-level stalled-link or physical Wi-Fi/LTE acceptance test.
 
 Verification: go test ./internal/bondhttps ./internal/bondquic ./internal/gateway ./mobile ./cmd/demux ./cmd/server -count=1 -timeout=120s passed; targeted race tests and package vet passed. Android AAR/APK/lint succeeded (artifacts/b2-build.log). No APK installation or production deployment. Initial cross-transport tests failed for missing APIs, and HTTPS-first failed on the former QUIC-only guard before implementation; additional negative coverage was first run green.
+## B3 — complete (policy and telemetry; execution in B4)
+
+Added portable per-exit profile/network decisions, generation-safe dial feedback, all-auto-networks-before-reserve ordering, disabled-profile exclusion, optional rare reserve probes, retry backoff and return hysteresis. Pending user data and outstanding sized probes have independent stall timers; tiny ping success cannot reset either. Three recovered stalled connections within ten minutes recommend carousel without enabling it automatically. Idle traffic does not reset retry backoff.
+
+Bond reports per-generation acknowledged payload, pending bytes, profile/network identity and sized-probe state. Full-record probes are bounded to one outstanding probe per path and echo a working-size payload. Mobile bond diagnostics expose stalled paths. B4 will execute policy commands and schedule probes after shared budget and authorization gates; this is not yet Android automatic profile selection. Probe health concerns the transport path, not final Internet egress.
+
+Verification: Linux go test ./internal/pathpolicy ./internal/bond ./mobile -count=1 -timeout=120s passed; final policy/bond suite and race rerun after the backoff fix passed; vet passed. Android AAR/APK/lint passed (artifacts/b3-build.log). Tests include volume-stall observations, tiny-reply/large-record fault injection, hysteresis, reserve opt-in, independent exits, generation/dial timeout and backoff reset. Regression caught idle time resetting backoff before the fix. No Android runtime/network acceptance claimed; the connected phone was detected but APK was not installed.
