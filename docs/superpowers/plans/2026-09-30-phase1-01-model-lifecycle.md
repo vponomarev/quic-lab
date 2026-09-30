@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** План предложен для проверки; реализация не начата.
+**Status:** A1 и A2 выполнены; A3 в работе. Результаты проверок: docs/phase1-progress.md.
 
 ## Global Constraints
 
