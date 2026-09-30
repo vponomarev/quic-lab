@@ -172,7 +172,7 @@ internal class MultipleVpnController(
             exits.start(p.id)
         } else {
             paused.add(id)
-            router.setProfileEnabled(id, false)
+            router.blockExit(id)
             exits.stop(id)
             available.remove(id)
             starting.remove(id)

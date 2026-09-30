@@ -87,6 +87,12 @@ class MultipleLiveTest {
             shell("run-as $pkg rm files/$id.json")
         }
         try {
+            args.getString("profile_file")?.let { name ->
+                require(name.matches(Regex("[a-zA-Z0-9_.-]+")))
+                val fixture = File(c.getExternalFilesDir(null), name)
+                ProfileImport.save(c, JSONObject(fixture.readText()))
+                created.add(VpnProfiles.current(c).id)
+            }
             val candidates = listOf(VpnProfiles.current(c)) + VpnProfiles.list(c)
             val source =
                 candidates.firstOrNull { p ->
@@ -106,6 +112,7 @@ class MultipleLiveTest {
                 check(
                     prefs
                         .edit()
+                        .putBoolean("max_availability", false)
                         .putString("transport", transport)
                         .putString("endpoint", prefs.getString("${transport}_endpoint", ""))
                         .putInt("mode", mode)
@@ -215,6 +222,7 @@ class MultipleLiveTest {
                 check(
                     prefs
                         .edit()
+                        .putBoolean("max_availability", false)
                         .putString("transport", transport)
                         .putString("endpoint", prefs.getString("${transport}_endpoint", ""))
                         .commit()
@@ -241,6 +249,7 @@ class MultipleLiveTest {
                 VpnProfiles.identityFile(c, it).delete()
             }
             restore(meta, saved)
+            VpnProfiles.configuration(c)
             shell("am force-stop $selected")
             shell("am force-stop $direct")
         }

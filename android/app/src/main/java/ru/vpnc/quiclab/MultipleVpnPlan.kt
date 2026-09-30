@@ -20,7 +20,11 @@ internal data class MultipleVpnPlan(
 ) {
     companion object {
         fun load(c: Context): MultipleVpnPlan {
+            val config = VpnProfiles.configuration(c).getJSONObject("model")
+            val exits = config.getJSONArray("exits")
+            val exitIds = (0 until exits.length()).map { exits.getJSONObject(it).getString("id") }.toSet()
             val ps = VpnProfiles.list(c).filter { it.id in VpnProfiles.enabled(c) }
+            require(ps.all { it.id in exitIds }) { "Маршрут ссылается на неизвестный VPN-выход" }
             require(ps.isNotEmpty()) { "Выберите профили multiple" }
             val rules = JSONArray()
             val profiles =

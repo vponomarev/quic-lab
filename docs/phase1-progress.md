@@ -26,3 +26,11 @@ Added synchronized Go lifecycle states and Android session-owning VpnExitControl
 Verified: Linux go test -race ./internal/vpnmodel -count=1 and go vet ./internal/vpnmodel passed. Android assembleDebug, assembleDebugAndroidTest, lintDebug passed. Device VpnExitLifecycleTest + VpnConfigurationTest: OK (11 tests). Lifecycle cases cover independent restart, stale callbacks, incompatibility, startup failure, and close failure. These tests use controlled session resources; real multi-tunnel traffic/route blocking is the A3 live gate, not claimed here.
 
 Test history: initial Go run failed on missing Runtime/Event APIs. Android's first three lifecycle checks were first executed after implementation (workflow deviation); the added close-failure test was observed RED (only one of two sessions closed), then fixed and observed GREEN. Do not describe all Android lifecycle tests as observed red-to-green.
+
+## A3 — implementation ready, device gate pending
+
+Implemented explicit BlockExit, preserving rule ownership while canceling this exit's flows; duplicate SetGateway for the same session is now idempotent. Android routes validate stable exit IDs and pause through BlockExit. Existing routing policy needs no algorithm change: priority, unknown UID and unmatched-direct cases already have regression coverage. Multiple+bond remains disallowed until B4.
+
+Observed behavioral RED: duplicate attachment canceled the existing handler; stub BlockExit did not cancel paused flows. Final Linux checks passed: go test ./internal/routing ./mobile -count=1 -timeout=120s; targeted routing/multiple tests with -race; go vet ./internal/routing ./mobile. AAR/APK/lint and instrumentation plus both probe APK builds passed.
+
+MultipleLiveTest now accepts an optional synthetic profile_file and restores the configuration snapshot after test cleanup. Dedicated Linux server/responders were prepared on isolated ports without changing running services. Phone disconnected before installation (adb devices empty), so MultipleLiveTest has NOT run. A3 remains incomplete; task verification/finish checkboxes remain unchecked.

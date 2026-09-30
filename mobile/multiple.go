@@ -104,6 +104,10 @@ func (m *MultiRouter) SetGateway(id string, g *Gateway) error {
 		return errors.New("unknown profile")
 	}
 	old := m.profiles[id]
+	if old != nil && old.h.g == g {
+		m.mu.Unlock()
+		return nil
+	}
 	m.profiles[id] = newMultiProfile(g)
 	m.mu.Unlock()
 	if old != nil {
@@ -115,13 +119,28 @@ func (m *MultiRouter) SetGateway(id string, g *Gateway) error {
 // SetProfileEnabled immediately blocks new flows and cancels existing ones.
 // Waiting for workers happens outside the Android main thread.
 func (m *MultiRouter) SetProfileEnabled(id string, enabled bool) {
-	if id == "direct" {
-		return
-	}
+	_ = m.setExitEnabled(id, enabled)
+}
+
+// BlockExit retains routing rules and synchronously cancels only this exit's flows.
+func (m *MultiRouter) BlockExit(id string) error { return m.setExitEnabled(id, false) }
+
+func (m *MultiRouter) setExitEnabled(id string, enabled bool) error {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return
+		return errors.New("router closed")
+	}
+	found := false
+	for _, r := range m.policy.Rules {
+		if r.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found || id == "direct" {
+		m.mu.Unlock()
+		return errors.New("unknown exit")
 	}
 	m.disabled[id] = !enabled
 	var old *multiProfile
@@ -136,6 +155,7 @@ func (m *MultiRouter) SetProfileEnabled(id string, enabled bool) {
 	if old != nil {
 		go old.stop()
 	}
+	return nil
 }
 
 // RemoveGateway stops flows, but retains the rule to prevent fallback leaks.

@@ -287,3 +287,72 @@ func TestMultipleTUNUDPRoutes(t *testing.T) {
 		t.Fatal("multiple stop hung")
 	}
 }
+
+func TestTransportChangePreservesGateway(t *testing.T) {
+	m, err := NewMultiRouter(`[{"id":"internet","mode":"all"}]`, "internet", nil, &multipleBinder{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	g := NewGateway(nil)
+	if err = m.SetGateway("internet", g); err != nil {
+		t.Fatal(err)
+	}
+	before := m.selectFlow(6, "10.0.0.1", 1234, "192.0.2.1", 80)
+	if err = m.SetGateway("internet", g); err != nil {
+		t.Fatal(err)
+	}
+	after := m.selectFlow(6, "10.0.0.1", 1234, "192.0.2.1", 80)
+	if before != after || before.ctx.Err() != nil {
+		t.Fatal("same session attachment canceled existing flow owner")
+	}
+}
+func TestExitPausePreservesRules(t *testing.T) {
+	owner := &multipleOwner{}
+	owner.uid.Store(42)
+	m, err := NewMultiRouter(`[{"id":"home","mode":"subnets","subnets":["192.168.50.0/24"]},{"id":"internet","mode":"apps","uids":[42]}]`, "internet", owner, &multipleBinder{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	home, other := NewGateway(nil), NewGateway(nil)
+	if err = m.SetGateway("home", home); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.SetGateway("internet", other); err != nil {
+		t.Fatal(err)
+	}
+	h := m.selectFlow(6, "10.0.0.1", 1234, "192.168.50.2", 80)
+	if err = m.BlockExit("home"); err != nil {
+		t.Fatal(err)
+	}
+	if h.ctx.Err() == nil {
+		t.Fatal("paused flows not canceled")
+	}
+	if got := m.selectFlow(6, "10.0.0.1", 1234, "192.168.50.2", 80); got != nil {
+		t.Fatal("paused home leaked to another exit")
+	}
+	owner.uid.Store(43)
+	if got := m.selectFlow(6, "10.0.0.1", 1234, "192.168.50.2", 80); got != nil {
+		t.Fatal("paused home leaked direct")
+	}
+	owner.uid.Store(42)
+	if got := m.selectFlow(6, "10.0.0.1", 1234, "192.0.2.1", 80); got == nil || got.g != other {
+		t.Fatal("other exit affected")
+	}
+	if m.SetGateway("home", home) == nil {
+		t.Fatal("paused exit accepted late attach")
+	}
+	for _, id := range []string{"direct", "missing"} {
+		if m.BlockExit(id) == nil {
+			t.Fatal("invalid exit accepted", id)
+		}
+	}
+	m.SetProfileEnabled("home", true)
+	if err = m.SetGateway("home", home); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.selectFlow(6, "10.0.0.1", 1234, "192.168.50.2", 80); got == nil || got.g != home {
+		t.Fatal("resume changed routing")
+	}
+}
