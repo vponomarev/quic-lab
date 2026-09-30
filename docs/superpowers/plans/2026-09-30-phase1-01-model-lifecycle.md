@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** A1 и A2 выполнены; A3 в работе. Результаты проверок: docs/phase1-progress.md.
+**Status:** A1–A3 выполнены. Результаты проверок: docs/phase1-progress.md.
 
 ## Global Constraints
 
@@ -127,13 +127,13 @@ assert transportReplacementKeepsFlowDestination
 
 - [x] **Step 3 — реализация:** Сохранить существующее определение UID и правила общего UID. Привязать tunHandler к выходу и общей сессии, а не физическому соединению. Снять текущий blanket-запрет multiple+bond только после B4; пока оставить явную ошибку. Правила фиксированы на запуске, применение новой конфигурации выхода — отдельная операция D4.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 Linux: go test ./internal/routing ./mobile -count=1 -timeout=120s; Android: MultipleLiveTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: route flows by stable VPN exit"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: route flows by stable VPN exit"`. Не включать соседние незавершённые задачи.
 
 ## Проверка плана
 
