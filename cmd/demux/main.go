@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"github.com/quic-go/quic-go"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"quiclab/internal/bond"
@@ -19,6 +21,7 @@ import (
 )
 
 type config struct {
+	HTTPSListen                string `json:"https_listen,omitempty"`
 	BondDisconnectGraceSeconds int    `json:"bond_disconnect_grace_seconds,omitempty"`
 	Listen                     string `json:"listen"`
 	Cert                       string `json:"cert"`
@@ -74,6 +77,25 @@ func run() error {
 	srv.BondOptions = bond.Options{DisconnectGrace: time.Duration(cfg.BondDisconnectGraceSeconds) * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	srv.BondContext = ctx
+	if cfg.HTTPSListen != "" {
+		listener, err := net.Listen("tcp", cfg.HTTPSListen)
+		if err != nil {
+			return err
+		}
+		httpsTLS := tc.Clone()
+		httpsTLS.NextProtos = []string{"http/1.1"}
+		hs := &http.Server{Handler: http.HandlerFunc(srv.ServeBondHTTPS), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+		defer hs.Close()
+		stopHTTP := context.AfterFunc(ctx, func() { hs.Close() })
+		defer stopHTTP()
+		go func() {
+			if err := hs.Serve(tls.NewListener(listener, httpsTLS)); err != nil && err != http.ErrServerClosed {
+				log.Error("demux_https", "error", err)
+				stop()
+			}
+		}()
+	}
 	ln, e := quic.ListenAddr(cfg.Listen, tc, &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 1, MaxIncomingUniStreams: -1, MaxIdleTimeout: 10 * time.Second})
 	if e != nil {
 		return e

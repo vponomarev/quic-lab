@@ -15,7 +15,7 @@ Verification: Linux `go test ./internal/vpnmodel ./mobile -count=1 -timeout=120s
 - Existing ordinary QUIC/HTTPS remain standalone; only max_availability maps to demux. No automatic grouping by hostname.
 - Installed task-start helper requires numeric headings but plans use A1 etc.; use equivalent exact task extraction with BASE and private ledger.
 
-Next: B2, HTTPS WebSocket adapter for the shared session. Remaining 16 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
+Next: B3, progress-based path health and profile selection. Remaining 15 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
 
 Private ledger: .superpowers/sdd/2026-09-30-phase1-01-model-lifecycle/progress.md.
 
@@ -48,3 +48,11 @@ Flow-ID exhaustion enters draining. New TCP/UDP flows can rotate to a new sessio
 Transitional limitation: automatic draining rotation with a finite legacy LTE budget explicitly returns an error, leaving old flows alive. This prevents budget reset/double allowance. C1/C2 must share accounting across current and retired sessions before lifting this guard; the C2 plan now includes the regression/removal gate. Therefore the complete MVP budget contract is not claimed at B1.
 
 Verification: full Linux suite `go test ./internal/bond ./internal/gateway ./mobile ./cmd/server ./cmd/demux -count=1 -timeout=120s` passed; targeted bond/retention/mobile integration tests with race passed; vet passed. Final AAR/APK and lint build passed (artifacts/b1-final-build.log). Tests exercise 119/120-second boundaries using an adjusted disconnect timestamp, not a two-minute wall-clock soak; real pending payload delivery after a scaled outage and real TCP preservation across session rotation passed. Existing slow-reader regression still passes. No Android device test was required by B1; B4/E5 remain responsible for device/network acceptance.
+
+## B2 — complete
+
+Added the bounded HTTPS WebSocket bond adapter and /tunnel/bond with quic-lab-bond-v1 negotiation, 4096-byte JSON handshake and binary records up to 1080 bytes. Both transports use the same mTLS-authenticated registry. Server root context keeps the session alive independently of its initial HTTPS request. Welcome precedes path attachment to prevent binary traffic racing the handshake. Server and optional demux HTTPS listener are wired; QUIC ALPN was already versioned in B1.
+
+Linux integration tests preserve one real TCP socket and the same UDP mapping across QUIC-to-HTTPS and HTTPS-to-QUIC replacement. A client without its certificate cannot join with a borrowed token. Framing, oversize rejection, cancellation and bounded nonblocking queue tests pass. The blocked writer is injected deterministically at the socket boundary; this is not a kernel-level stalled-link or physical Wi-Fi/LTE acceptance test.
+
+Verification: go test ./internal/bondhttps ./internal/bondquic ./internal/gateway ./mobile ./cmd/demux ./cmd/server -count=1 -timeout=120s passed; targeted race tests and package vet passed. Android AAR/APK/lint succeeded (artifacts/b2-build.log). No APK installation or production deployment. Initial cross-transport tests failed for missing APIs, and HTTPS-first failed on the former QUIC-only guard before implementation; additional negative coverage was first run green.

@@ -172,6 +172,7 @@ func main() {
 			log.Error("gateway_policy", "error", e)
 			os.Exit(1)
 		}
+		gw.BondContext = ctx
 		gw.BondOptions = bond.Options{DisconnectGrace: time.Duration(opts.BondDisconnectGraceSeconds) * time.Second}
 		if uplink != nil {
 			gw.DialContext = uplink.DialContext
@@ -222,10 +223,11 @@ func main() {
 			tc.NextProtos = []string{"http/1.1"}
 			mux := http.NewServeMux()
 			mux.HandleFunc("/tunnel", gw.WebSocket)
+			mux.HandleFunc("/tunnel/bond", gw.ServeBondHTTPS)
 			var handler http.Handler = mux
 			if *publicHTTPS == *gatewayHTTPS {
 				tc = publicTLS(tc)
-				handler = publicHandler(publicAdmin, adminBase, log, http.HandlerFunc(gw.WebSocket), echoProbe)
+				handler = publicHandler(publicAdmin, adminBase, log, mux, echoProbe)
 			}
 			hs := &http.Server{Addr: *gatewayHTTPS, Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 			defer hs.Close()

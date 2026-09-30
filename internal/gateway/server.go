@@ -28,6 +28,7 @@ import (
 )
 
 type Server struct {
+	BondContext      context.Context
 	BondOptions      bond.Options
 	bonds            bondRegistry
 	Capture          func(tls.ConnectionState, string, string, net.Conn) net.Conn

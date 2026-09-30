@@ -90,8 +90,8 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	if e := json.Unmarshal([]byte(configJSON), &g.cfg); e != nil {
 		return e
 	}
-	if g.cfg.MaxAvailability && g.cfg.Transport != "quic" {
-		return errors.New("maximum availability requires QUIC")
+	if g.cfg.MaxAvailability && g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
+		return errors.New("maximum availability requires QUIC or HTTPS")
 	}
 	if g.cfg.Transport == "awg" {
 		c, e := awg.Parse(g.cfg.AWGConfig)

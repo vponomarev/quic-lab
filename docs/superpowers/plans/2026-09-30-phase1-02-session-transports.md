@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** B1 выполнен с переходным ограничением конечного LTE-бюджета до C1/C2; B2–B4 не начаты.
+**Status:** B1 выполнен с переходным ограничением конечного LTE-бюджета до C1/C2; B2 выполнен; B3–B4 не начаты.
 
 ## Global Constraints
 
@@ -82,7 +82,7 @@ go test ./internal/bond ./internal/gateway ./mobile ./cmd/server ./cmd/demux -co
 
 **Interfaces:** func bondhttps.NewPath(c *websocket.Conn, cleanup func()) bond.Path; func (s *gateway.Server) ServeBondHTTPS(w http.ResponseWriter, r *http.Request); общий внутренний joinBond(ctx context.Context, identity tls.ConnectionState, hello BondHello, path bond.Path) error используется обоими входами. mobile dialBondPath(ctx context.Context, profileJSON string, binder SocketBinder) (bond.Path,error) — internal API.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestHTTPSPathFramingAndCancel; TestQUICHTTPSShareOneExitSocket; TestBlockedHTTPSDoesNotBlockQUIC. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestHTTPSPathFramingAndCancel; TestQUICHTTPSShareOneExitSocket; TestBlockedHTTPSDoesNotBlockQUIC. Минимальные обязательные проверки:
 
 ```text
 assert oneBinaryWebSocketMessage == oneBondRecord
@@ -93,17 +93,17 @@ assert invalidClientCertificate.cannotJoin
 assert sharedRegistryPreservesUDPMapping
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Переиспользовать coder/websocket, TLS/mTLS и общий реестр. Endpoint /tunnel/bond, subprotocol quic-lab-bond-v1, первоначальный JSON join с максимумом 4096 байт, затем бинарные записи до bond.Chunk+существующий header. Очередь 32 сообщения на путь; write deadline/cancel не должен блокировать другие пути. HTTPS сохраняет HoL внутри пути и не обещает датаграммную семантику сети. QUIC ALPN для изменённого handshake версионировать, старую несовместимую схему не принимать как новую. cmd/demux поддерживает опциональный HTTPS-listener; не добавлять публичный порт на реальный сервер в рамках задачи.
+- [x] **Step 3 — реализация:** Переиспользовать coder/websocket, TLS/mTLS и общий реестр. Endpoint /tunnel/bond, subprotocol quic-lab-bond-v1, первоначальный JSON join с максимумом 4096 байт, затем бинарные записи до bond.Chunk+существующий header. Очередь 32 сообщения на путь; write deadline/cancel не должен блокировать другие пути. HTTPS сохраняет HoL внутри пути и не обещает датаграммную семантику сети. QUIC ALPN для изменённого handshake версионировать, старую несовместимую схему не принимать как новую. cmd/demux поддерживает опциональный HTTPS-listener; не добавлять публичный порт на реальный сервер в рамках задачи.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/bondhttps ./internal/bondquic ./internal/gateway ./mobile ./cmd/demux -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: carry bond sessions over HTTPS WebSocket"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: carry bond sessions over HTTPS WebSocket"`. Не включать соседние незавершённые задачи.
 
 ### Task B3: Наблюдение прогресса и выбор профиля
 

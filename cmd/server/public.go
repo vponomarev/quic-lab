@@ -46,14 +46,16 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 	mux.Handle("/echo", echo.WebSocketHandler(log, probes...))
 	mux.Handle("/vpn-demo/", http.StripPrefix("/vpn-demo", gateway.Demo(log)))
 	if tunnel != nil {
-		mux.Handle("/tunnel", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorizedTunnel := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Authorization comes only from the real TLS connection, never headers.
 			if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
 				http.Error(w, "client certificate required", http.StatusForbidden)
 				return
 			}
 			tunnel.ServeHTTP(w, r)
-		}))
+		})
+		mux.Handle("/tunnel", authorizedTunnel)
+		mux.Handle("/tunnel/bond", authorizedTunnel)
 	}
 	return mux
 }

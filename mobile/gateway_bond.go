@@ -59,7 +59,7 @@ func (g *Gateway) startBond(binder SocketBinder) error {
 	}
 	g.datagrams = gateway.NewPacketMux(g.bond)
 	g.session++
-	g.emit("connected", map[string]any{"session": g.session, "transport": "quic", "detail": "Maximum availability: independent QUIC paths"})
+	g.emit("connected", map[string]any{"session": g.session, "transport": g.cfg.Transport, "detail": "Independent paths sharing one bond session"})
 	go g.bondStats(g.ctx, g.bond, g.bondCellUsed, g.session)
 	if newContext && g.cfg.TransitEndpoint != "" {
 		go g.transitHeartbeat(g.ctx, nil, g.cfg.TransitEndpoint)
@@ -67,6 +67,10 @@ func (g *Gateway) startBond(binder SocketBinder) error {
 	return nil
 }
 func (g *Gateway) addBondPath(name string, binder SocketBinder, create bool) error {
+	if g.cfg.Transport == "https" {
+		g.bondPathGeneration++
+		return g.addBondHTTPS(g.ctx, g.cfg.Endpoint, bond.PathInfo{ID: name, ProfileID: "legacy", Network: name, Generation: g.bondPathGeneration}, binder, create)
+	}
 	host, _, _ := net.SplitHostPort(g.cfg.Endpoint)
 	tr, e := openTransport(net.ParseIP(host), binder, nil)
 	if e != nil {
