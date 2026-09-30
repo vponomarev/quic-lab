@@ -16,22 +16,30 @@ class PublicEchoTest {
     fun enrollmentRejectsImsAndVpnNetworks() {
         val cm = InstrumentationRegistry.getInstrumentation().targetContext
             .getSystemService(android.net.ConnectivityManager::class.java)
-        val caps = cm.allNetworks.mapNotNull { cm.getNetworkCapabilities(it) }
-        val ims = caps.firstOrNull {
+        val ims = cm.allNetworks.mapNotNull { cm.getNetworkCapabilities(it) }.firstOrNull {
             it.hasTransport(VpnSession.CELLULAR) &&
                 it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_IMS) &&
                 !it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
         }
         assumeTrue("Requires a phone exposing a separate IMS network", ims != null)
         assertFalse(isPublicEchoNetwork(ims, VpnSession.CELLULAR))
-        val internet = caps.first {
-            it.hasTransport(VpnSession.CELLULAR) &&
-                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        val ready = java.util.concurrent.LinkedBlockingQueue<android.net.NetworkCapabilities>()
+        val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(n: android.net.Network, caps: android.net.NetworkCapabilities) {
+                if (caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) ready.offer(caps)
+            }
         }
-        assertTrue(isPublicEchoNetwork(internet, VpnSession.CELLULAR))
-        assertFalse(isPublicEchoNetwork(internet, VpnSession.WIFI))
-        assertFalse(isPublicEchoNetwork(null, VpnSession.CELLULAR))
+        cm.requestNetwork(android.net.NetworkRequest.Builder()
+            .addTransportType(VpnSession.CELLULAR)
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback)
+        try {
+            val internet = ready.poll(20, java.util.concurrent.TimeUnit.SECONDS)
+            assertNotNull("Explicitly requested cellular Internet bearer", internet)
+            assertTrue(isPublicEchoNetwork(internet, VpnSession.CELLULAR))
+            assertFalse(isPublicEchoNetwork(internet, VpnSession.WIFI))
+            assertFalse(isPublicEchoNetwork(null, VpnSession.CELLULAR))
+        } finally { cm.unregisterNetworkCallback(callback) }
     }
 
     @Test

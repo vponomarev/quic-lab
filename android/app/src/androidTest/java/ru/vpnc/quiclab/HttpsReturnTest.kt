@@ -41,7 +41,17 @@ class HttpsReturnTest {
             }
             error("No HTTPS echo on $label; current=$active sessions=$ids")
         }
+        val cm = inst.targetContext.getSystemService(ConnectivityManager::class.java)
+        val holdCell = object : ConnectivityManager.NetworkCallback() {}
+        var holdingCell = false
         try {
+            // The observer does not request a cellular bearer until an Echo experiment starts.
+            // This HTTPS-only test owns its explicit network request.
+            cm.requestNetwork(android.net.NetworkRequest.Builder()
+                .addTransportType(QuicSession.CELLULAR)
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), holdCell)
+            holdingCell = true
             val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
             while (networks.size < 2 && System.nanoTime() < until) Thread.sleep(100)
             assertEquals("Wi-Fi and cellular are required", 2, networks.size)
@@ -53,6 +63,6 @@ class HttpsReturnTest {
             wifi(true)
             waitEchoOn("Wi-Fi")
             assertEquals("Three real HTTPS server sessions", 3, ids.size)
-        } finally { wifi(true); ws.close(); watcher.close() }
+        } finally { wifi(true); ws.close(); watcher.close(); if (holdingCell) cm.unregisterNetworkCallback(holdCell) }
     }
 }

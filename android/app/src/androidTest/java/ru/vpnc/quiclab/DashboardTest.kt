@@ -41,7 +41,7 @@ class DashboardTest {
             var ready = false
             val until = SystemClock.elapsedRealtime() + 15000
             while (!ready && SystemClock.elapsedRealtime() < until) {
-                inst.runOnMainSync { ready = texts(activity.window.decorView).count { it.text == "Сеансов   1" } >= 2 }
+                inst.runOnMainSync { ready = texts(activity.window.decorView).count { it.text.toString().startsWith("Сеансов: 1") } >= 2 }
                 Thread.sleep(200)
             }
             assertTrue("Both transports must receive a server-generated identity", ready)
@@ -52,7 +52,7 @@ class DashboardTest {
                 val switchUntil = SystemClock.elapsedRealtime() + 15000
                 var switched = false
                 while (!switched && SystemClock.elapsedRealtime() < switchUntil) {
-                    inst.runOnMainSync { switched = texts(activity.window.decorView).any { it.text == "Сеансов   2" } }
+                    inst.runOnMainSync { switched = texts(activity.window.decorView).any { it.text.toString().startsWith("Сеансов: 2") } }
                     Thread.sleep(200)
                 }
                 assertTrue("WSS reconnect must be visible after a path change", switched)
