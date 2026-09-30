@@ -30,3 +30,6 @@ __pycache__/
 *.pcap
 *.pcapng
 *.keylog
+
+# Isolated local development
+/.worktrees/
