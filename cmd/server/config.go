@@ -14,20 +14,22 @@ import (
 )
 
 type serverConfig struct {
-	Listen        string `json:"listen"`
-	Cert          string `json:"cert"`
-	Key           string `json:"key"`
-	EphemeralCert bool   `json:"ephemeral_cert"`
-	TLSFallback   string `json:"tls_fallback"`
-	TLSHost       string `json:"tls_host"`
-	HTTPSListen   string `json:"https_listen"`
-	WebListen     string `json:"web_listen"`
-	GatewayQUIC   string `json:"gateway_quic"`
-	GatewayHTTPS  string `json:"gateway_https"`
-	ClientCA      string `json:"client_ca"`
-	GatewayAllow  string `json:"gateway_allow"`
-	DemoListen    string `json:"demo_listen"`
-	AdminConfig   string `json:"admin_config"`
+	Listen               string `json:"listen"`
+	Cert                 string `json:"cert"`
+	Key                  string `json:"key"`
+	EphemeralCert        bool   `json:"ephemeral_cert"`
+	TLSFallback          string `json:"tls_fallback"`
+	TLSHost              string `json:"tls_host"`
+	HTTPSListen          string `json:"https_listen"`
+	PublicTLSMin         string `json:"public_tls_min,omitempty"`
+	PublicTLSDiagnostics bool   `json:"public_tls_diagnostics,omitempty"`
+	WebListen            string `json:"web_listen"`
+	GatewayQUIC          string `json:"gateway_quic"`
+	GatewayHTTPS         string `json:"gateway_https"`
+	ClientCA             string `json:"client_ca"`
+	GatewayAllow         string `json:"gateway_allow"`
+	DemoListen           string `json:"demo_listen"`
+	AdminConfig          string `json:"admin_config"`
 }
 
 func parseServerConfig(args []string) (serverConfig, error) {
@@ -42,6 +44,8 @@ func parseServerConfig(args []string) (serverConfig, error) {
 	fs.StringVar(&c.TLSFallback, "tls-fallback", "", "TLS passthrough backend host:port for other SNI names")
 	fs.StringVar(&c.TLSHost, "tls-host", "", "SNI hostname terminated locally")
 	fs.StringVar(&c.HTTPSListen, "https-listen", "", "public HTTPS listen address")
+	fs.StringVar(&c.PublicTLSMin, "public-tls-min", "", "public HTTPS minimum TLS version: 1.0, 1.2, 1.3 (default 1.3)")
+	fs.BoolVar(&c.PublicTLSDiagnostics, "public-tls-diagnostics", false, "log public TLS offers, negotiated parameters and HTTP metadata")
 	fs.StringVar(&c.WebListen, "web-listen", "", "HTTP echo backend listen address")
 	fs.StringVar(&c.GatewayQUIC, "gateway-quic", "", "VPN QUIC listen address")
 	fs.StringVar(&c.GatewayHTTPS, "gateway-https", "", "VPN HTTPS/mTLS listen address")
@@ -116,6 +120,12 @@ func validateAddress(value string, backend bool) error {
 }
 
 func (c serverConfig) validate() error {
+	if _, err := publicTLSMinimum(c.PublicTLSMin); err != nil {
+		return err
+	}
+	if c.PublicTLSMin != "" && c.PublicTLSMin != "1.3" && (c.HTTPSListen == "" || c.HTTPSListen == c.GatewayHTTPS) {
+		return errors.New("public_tls_min below 1.3 requires a separate public HTTPS listener (not the mTLS VPN listener)")
+	}
 	for name, addr := range map[string]string{"listen": c.Listen, "https_listen": c.HTTPSListen, "web_listen": c.WebListen, "gateway_quic": c.GatewayQUIC, "gateway_https": c.GatewayHTTPS, "demo_listen": c.DemoListen} {
 		if addr != "" {
 			if err := validateAddress(addr, false); err != nil {

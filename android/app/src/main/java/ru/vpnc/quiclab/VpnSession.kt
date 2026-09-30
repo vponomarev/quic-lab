@@ -27,11 +27,64 @@ internal class VpnSession(
     private val attached: ((Gateway) -> Unit)? = null,
     private val detached: ((Gateway) -> Unit)? = null,
 ) {
+    private val isBond = config.optBoolean("max_availability")
+    private val bondNetworks = mutableMapOf<Int, Network>()
+    private val bondRetry = mutableMapOf<Int, Long>()
+    private fun refreshBondPaths() {
+        if (!alive || !isBond) return
+        service?.setUnderlyingNetworks(networks.values.toTypedArray())
+        for ((kind, network) in networks) {
+            val name = if (kind == WIFI) "wifi" else "cell"
+            if (kind == CELLULAR && client?.bondCellAllowed() == false) {
+                client?.dropBondPath(name); bondNetworks.remove(kind); continue
+            }
+            if ((bondRetry[kind] ?: 0L) > now()) continue
+            bondRetry[kind] = now() + 5000
+            try {
+                if (bondNetworks[kind] != null && bondNetworks[kind] != network) client?.dropBondPath(name)
+                client?.ensureBondPath(name, binder(network))
+                if (bondNetworks[kind] != network) event("bond_path", "${label(kind)}: канал подключён")
+                bondNetworks[kind] = network
+            } catch (e: Exception) { event("bond_path_unavailable", "${label(kind)}: ${e.message}") }
+        }
+    }
     private val isAWG = config.optString("transport") == "awg"
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val networks = mutableMapOf<Int, Network>()
     private val validated = mutableSetOf<Network>()
     private val callbacks = mutableListOf<ConnectivityManager.NetworkCallback>()
+    private val unmetered = mutableSetOf<Network>()
+    private var cellRequest: ConnectivityManager.NetworkCallback? = null
+    private var manualCellUntil = 0L
+    private var pendingCellStart: (() -> Unit)? = null
+    private val reserveListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> submit { refreshReserve() } }
+    private fun reserveAllowed(kind: Int, network: Network? = networks[kind]): Boolean =
+        service?.let { VpnReserveSettings.allowed(it, kind, network in unmetered) } ?: true
+
+    private fun refreshReserve() {
+        if (closed) return
+        networks.forEach { (kind, network) ->
+            if (!isBond && network != activeNetwork && !reserveAllowed(kind, network)) {
+                client?.invalidatePath(key(network))
+                readySince.remove(network)
+                if (preparedNetwork == network) preparedNetwork = null
+            }
+        }
+        // A failed primary may acquire mobile data for recovery, even when prewarming is disabled.
+        val needCell = if (isBond) alive && client?.bondCellAllowed() != false else (alive && (activeKind == CELLULAR || failedNetwork != null ||
+            (automatic && reserveAllowed(CELLULAR)))) || now() < manualCellUntil
+        if (needCell && cellRequest == null) {
+            val callback = object : ConnectivityManager.NetworkCallback() {}
+            try {
+                cm.requestNetwork(NetworkRequest.Builder().addTransportType(CELLULAR)
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), callback)
+                cellRequest = callback
+            } catch (e: Exception) { event("network_request_failed", e.toString()) }
+        } else if (!needCell) {
+            cellRequest?.let { try { cm.unregisterNetworkCallback(it) } catch (_: IllegalArgumentException) {} }
+            cellRequest = null
+        }
+    }
     private var client: Gateway? = null
     private var alive = false
     private var reconnectRequired = false
@@ -51,6 +104,22 @@ internal class VpnSession(
     private var lastSwitchAt = 0L
     private var lastAttemptAt = 0L
     private var intervalMS = 50L
+    private var rttMode = -1L
+    private val rttReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) { submit { refreshRTT(); refreshReserve() } }
+    }
+    private val rttListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> submit { refreshRTT() } }
+    private fun refreshRTT() {
+        val context = service ?: return // Echo retains its independent cadence.
+        val mode = VpnRttSettings.interval(context)
+        if (mode == rttMode) return
+        rttMode = mode
+        intervalMS = if (mode == 0L) 5000 else mode
+        client?.setRTT(mode > 0, intervalMS)
+        // Allow the first scheduled health reply before evaluating a stall.
+        lastEchoAt = now(); lastReplyAt = now()
+        output(JSONObject().put("event", "rtt_policy").put("enabled", mode > 0).put("interval_ms", intervalMS))
+    }
     @Volatile private var awgPingSeen = false
     @Volatile private var lastEchoAt = 0L
     @Volatile private var smoothedRTT = 100.0
@@ -65,6 +134,13 @@ internal class VpnSession(
 
     init {
         require(service != null || (tunFD == -1 && attached != null)) { "Probe sessions must not attach a TUN" }
+        service?.let {
+            androidx.core.content.ContextCompat.registerReceiver(it, rttReceiver,
+                android.content.IntentFilter().apply { addAction(android.content.Intent.ACTION_SCREEN_ON); addAction(android.content.Intent.ACTION_SCREEN_OFF) },
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+            VpnRttSettings.preferences(it).registerOnSharedPreferenceChangeListener(rttListener)
+            VpnReserveSettings.preferences(it).registerOnSharedPreferenceChangeListener(reserveListener)
+        }
         watch(WIFI)
         watch(CELLULAR)
         worker.scheduleWithFixedDelay(
@@ -92,6 +168,7 @@ internal class VpnSession(
 
     fun setAutomatic(enabled: Boolean) = submit {
         automatic = enabled
+        refreshReserve()
         event(
             "auto_mode",
             if (enabled) "Автомиграция и восстановление VPN включены"
@@ -100,10 +177,23 @@ internal class VpnSession(
         if (enabled && failedNetwork != null) recover("Автомиграция включена")
     }
 
-    fun startOrMigrate(kind: Int, endpoint: String, name: String, pin: String, interval: Long) =
+    fun startOrMigrate(kind: Int, endpoint: String, name: String, pin: String, interval: Long): Unit =
         submit {
             try {
-                val network = networks[kind] ?: error("Сеть ${label(kind)} пока недоступна")
+                if (kind == CELLULAR) { manualCellUntil = now() + 15000; refreshReserve() }
+                val network = networks[kind] ?: run {
+                    if (kind == CELLULAR) {
+                        pendingCellStart = { startOrMigrate(kind, endpoint, name, pin, interval) }
+                        event("waiting_network", "Ожидаем мобильную сеть для ручного переключения")
+                        return@submit
+                    }
+                    error("Сеть ${label(kind)} пока недоступна")
+                }
+                if (alive && isBond) {
+                    refreshBondPaths()
+                    event("bond_policy", "Два пути управляются автоматически; приоритет у Wi-Fi")
+                    return@submit
+                }
                 if (alive) {
                     migrate(kind, network, "Нажатие кнопки")
                 } else {
@@ -116,11 +206,11 @@ internal class VpnSession(
                                 override fun onEvent(eventJSON: String) {
                                     if (closed || token != epoch) return
                                     val e = JSONObject(eventJSON)
-                                    if (e.optString("event") == "echo") {
+                                    if (e.optString("event") in listOf("echo", "health")) {
                                         if (isAWG) awgPingSeen = true
                                         lastEchoAt = now()
                                         lastReplyAt = lastEchoAt
-                                        smoothedRTT =
+                                        if (e.has("rtt_ms")) smoothedRTT =
                                             smoothedRTT * 0.875 +
                                                 e.optDouble("rtt_ms", 100.0) * 0.125
                                     }
@@ -155,23 +245,28 @@ internal class VpnSession(
                             }
                         )
                     client = current
+                    rttMode = -1L
+                    refreshRTT()
                     selected(network, kind)
                     val resolved = resolveEndpoint(endpoint, network)
                     config
                         .put("endpoint", resolved.address)
                         .put("hostname", name.ifBlank { resolved.hostname })
+                    config.put("initial_path", if (kind == WIFI) "wifi" else "cell")
                     current.start(config.toString(), binder(network))
+                    if (isBond) bondNetworks[kind] = network
                     if (attached != null) attached.invoke(current) else current.attach(tunFD.toLong())
                     nextExitCheckAt = 0L
                     alive = true
                     reconnectRequired = false
                     lastReplyAt = now()
-                    intervalMS = if (isAWG) 1000 else interval
+                    if (service == null) intervalMS = if (isAWG) 1000 else interval
                     lastEchoAt = now()
                     lastSwitchAt = now()
                     smoothedRTT = 100.0
                     activeKind = kind
                     activeNetwork = network
+                    refreshReserve()
                     event("active_network", label(kind))
                 }
             } catch (e: Exception) {
@@ -202,12 +297,17 @@ internal class VpnSession(
         activeNetwork = network
         failedNetwork = null
         selected(network, kind)
+        manualCellUntil = 0L
+        refreshReserve()
         event("active_network", label(kind))
     }
 
     private fun recover(reason: String) {
+        if (isBond) return
         if (!automatic || !alive || now() - lastAttemptAt < 750) return
         lastAttemptAt = now()
+        failedNetwork = activeNetwork
+        refreshReserve()
         val previous = activeNetwork
         val candidate =
             listOf(WIFI, CELLULAR)
@@ -254,14 +354,31 @@ internal class VpnSession(
     }
 
     private fun tick() {
+        if (pendingCellStart != null && now() >= manualCellUntil) {
+            pendingCellStart = null
+            event("operation_failed", "Мобильная сеть недоступна")
+        }
+        refreshReserve()
         if (!alive) return
         val time = now()
         if (config.optBoolean("probe_exit_ip") && time >= nextExitCheckAt && time - lastEchoAt < 2000) {
             client?.checkExitIP()
             nextExitCheckAt = time + 60000
         }
+        if (isBond) {
+            if (client?.isConnected() != true && time-lastAttemptAt>5000) {
+                lastAttemptAt=time
+                val network=networks[WIFI] ?: networks[CELLULAR]?.takeIf { client?.bondCellAllowed()!=false }
+                if (network != null) try {
+                    event("reconnecting", "Общая сессия завершена; старые потоки закрыты")
+                    client?.restartBond(if(network==networks[WIFI]) "wifi" else "cell",binder(network)); bondNetworks.clear(); bondRetry.clear()
+                } catch(e:Exception) { event("operation_failed", e.message ?: "Reconnect failed") }
+            }
+            refreshBondPaths()
+            return
+        }
         if (!automatic) return
-        if (!isAWG && (client?.isConnected() != true || time - lastReplyAt > 15000)) {
+        if (!isAWG && (client?.isConnected() != true || time - lastReplyAt > maxOf(15000, intervalMS * 4))) {
             reconnectRequired = true
             failedNetwork = activeNetwork
             recover("Нет рабочего транспортного соединения")
@@ -288,7 +405,7 @@ internal class VpnSession(
             // A second socket to the same AWG peer would move its return endpoint.
             // Prefer a validated Wi-Fi only after dwell; no standby AWG traffic.
             val wifi = networks[WIFI]
-            if (wifi != null && wifi in validated && wifi != activeNetwork) {
+            if (wifi != null && wifi in validated && wifi != activeNetwork && reserveAllowed(WIFI, wifi)) {
                 readySince.putIfAbsent(wifi, time)
                 if ((retryAt[wifi] ?: 0L) <= time && policy.canPreferWifi(time - (readySince[wifi] ?: time), time - lastSwitchAt))
                     try { migrate(WIFI, wifi, "Wi-Fi устойчиво доступен") }
@@ -299,7 +416,7 @@ internal class VpnSession(
         if (!alive || time < nextProbeAt) return
         val reserve =
             networks.entries.firstOrNull {
-                it.value != activeNetwork && (retryAt[it.value] ?: 0L) <= time
+                it.value != activeNetwork && reserveAllowed(it.key, it.value) && (retryAt[it.value] ?: 0L) <= time
             } ?: return
         nextProbeAt = time + 1500
         try {
@@ -338,12 +455,19 @@ internal class VpnSession(
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) = submit {
                     networks[kind] = network
+                    if (kind == CELLULAR) {
+                        val pending = pendingCellStart
+                        pendingCellStart = null
+                        pending?.invoke()
+                    }
                     availability(network, kind, true)
                     event("network_available", "${label(kind)} $network")
                 }
 
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
                     submit {
+                        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) unmetered.add(network) else unmetered.remove(network)
+                        refreshReserve()
                         val ready = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                         validation(network, kind, ready)
                         val newlyReady =
@@ -371,13 +495,18 @@ internal class VpnSession(
                     if (networks[kind] == network) networks.remove(kind)
                     availability(network, kind, false)
                     validated.remove(network)
+                    unmetered.remove(network)
                     readySince.remove(network)
                     retryAt.remove(network)
                     failures.remove(network)
                     if (preparedNetwork == network) preparedNetwork = null
                     client?.invalidatePath(key(network))
                     event("network_lost", "${label(kind)} $network")
-                    if (activeNetwork == network) {
+                    if (isBond) {
+                        client?.dropBondPath(if(kind==WIFI) "wifi" else "cell")
+                        bondNetworks.remove(kind); bondRetry.remove(kind)
+                    }
+                    if (activeNetwork == network && !isBond) {
                         retryAt.clear()
                         failedNetwork = network
                         recover("Текущая сеть потеряна")
@@ -387,7 +516,7 @@ internal class VpnSession(
                 override fun onUnavailable() = submit { event("network_unavailable", label(kind)) }
             }
         try {
-            cm.requestNetwork(
+            cm.registerNetworkCallback(
                 NetworkRequest.Builder()
                     .addTransportType(kind)
                     .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -407,6 +536,7 @@ internal class VpnSession(
 
     private fun stopInternal() {
         epoch++
+        bondNetworks.clear(); bondRetry.clear()
         awgPingSeen = false
         alive = false
         reconnectRequired = false
@@ -421,12 +551,21 @@ internal class VpnSession(
         client?.let { detached?.invoke(it) }
         client?.stop()
         client = null
+        manualCellUntil = 0L
+        pendingCellStart = null
+        cellRequest?.let { try { cm.unregisterNetworkCallback(it) } catch (_: IllegalArgumentException) {} }
+        cellRequest = null
     }
 
     fun close() {
         synchronized(worker) {
             if (closed) return
             closed = true
+            service?.let {
+                it.unregisterReceiver(rttReceiver)
+                VpnRttSettings.preferences(it).unregisterOnSharedPreferenceChangeListener(rttListener)
+                VpnReserveSettings.preferences(it).unregisterOnSharedPreferenceChangeListener(reserveListener)
+            }
             callbacks.forEach { callback ->
                 try { cm.unregisterNetworkCallback(callback) } catch (_: IllegalArgumentException) { }
             }

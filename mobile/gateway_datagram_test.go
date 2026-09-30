@@ -17,6 +17,7 @@ import (
 	"time"
 )
 
+func TestGatewayUDPBond(t *testing.T)      { testGatewayUDP(t, "bond") }
 func TestGatewayUDPDatagrams(t *testing.T) { testGatewayUDP(t, "quic") }
 func TestGatewayUDPWebSocket(t *testing.T) { testGatewayUDP(t, "https") }
 func testGatewayUDP(t *testing.T, mode string) {
@@ -28,7 +29,7 @@ func testGatewayUDP(t *testing.T, mode string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var address string
-	if mode == "quic" {
+	if mode == "quic" || mode == "bond" {
 		ln, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 128})
 		if e != nil {
 			t.Fatal(e)
@@ -69,11 +70,20 @@ func testGatewayUDP(t *testing.T, mode string) {
 		}
 	}()
 	g := NewGateway(nil)
-	cfg, _ := json.Marshal(gatewayConfig{Transport: mode, Endpoint: address, Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
+	transport := mode
+	if mode == "bond" {
+		transport = "quic"
+	}
+	cfg, _ := json.Marshal(gatewayConfig{MaxAvailability: mode == "bond", Transport: transport, Endpoint: address, Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
 	if e = g.Start(string(cfg), nil); e != nil {
 		t.Fatal(e)
 	}
 	defer g.Stop()
+	if mode == "bond" {
+		if e = g.EnsureBondPath("cell", nil); e != nil {
+			t.Fatal(e)
+		}
+	}
 	d := g.datagramBackend()
 	if d == nil {
 		t.Fatal("datagrams not negotiated")
@@ -119,6 +129,23 @@ func testGatewayUDP(t *testing.T, mode string) {
 		n, e := flow.Read(buf)
 		if e != nil || string(buf[:n]) != "after-migration" {
 			t.Fatal("UDP flow lost on migration", e)
+		}
+	}
+	if mode == "bond" {
+		g.DropBondPath("wifi")
+		flow.Write([]byte("after-wifi-loss"))
+		n, e := flow.Read(buf)
+		if e != nil || string(buf[:n]) != "after-wifi-loss" {
+			t.Fatal("bond flow lost", e)
+		}
+		if e = g.EnsureBondPath("wifi", nil); e != nil {
+			t.Fatal(e)
+		}
+		g.DropBondPath("cell")
+		flow.Write([]byte("after-cell-loss"))
+		n, e = flow.Read(buf)
+		if e != nil || string(buf[:n]) != "after-cell-loss" {
+			t.Fatal("bond flow lost", e)
 		}
 	}
 	// Destination policy also applies to datagrams.

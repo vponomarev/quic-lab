@@ -39,7 +39,8 @@ type DatagramMux struct {
 	Drops atomic.Int64
 }
 
-func NewDatagramMux(c *quic.Conn) *DatagramMux { return newDatagramMux(c) }
+func NewDatagramMux(c *quic.Conn) *DatagramMux      { return newDatagramMux(c) }
+func NewPacketMux(c datagramTransport) *DatagramMux { return newDatagramMux(c) }
 func newDatagramMux(c datagramTransport) *DatagramMux {
 	m := &DatagramMux{conn: c, flows: make(map[uint64]*DatagramFlow), send: make(chan queuedDatagram, 32)}
 	go m.receive()
@@ -337,7 +338,7 @@ func (m *DatagramMux) DialUDP(ctx context.Context, c *quic.Conn, address string)
 }
 
 func (s *Server) serveUDP(ctx context.Context, st Stream, req Request, id string, m *DatagramMux, count func(int, int)) {
-	q, ok := st.(QStream)
+	idValue, ok := datagramFlowID(st)
 	if !ok || m == nil {
 		WriteJSON(st, Reply{Error: "QUIC DATAGRAM unavailable"})
 		return
@@ -359,7 +360,7 @@ func (s *Server) serveUDP(ctx context.Context, st Stream, req Request, id string
 	}
 	out = captureConnection(ctx, "udp4", req.Address, out)
 	defer out.Close()
-	f, e := m.Register(uint64(q.StreamID()))
+	f, e := m.Register(idValue)
 	if e != nil {
 		WriteJSON(st, Reply{Error: e.Error()})
 		return
@@ -422,3 +423,43 @@ func (s *Server) serveUDP(ctx context.Context, st Stream, req Request, id string
 }
 
 var _ net.Conn = (*DatagramFlow)(nil)
+
+func datagramFlowID(st Stream) (uint64, bool) {
+	if q, ok := st.(QStream); ok {
+		return uint64(q.StreamID()), true
+	}
+	if q, ok := st.(interface{ FlowID() uint64 }); ok {
+		return q.FlowID(), true
+	}
+	return 0, false
+}
+func (m *DatagramMux) DialPacketUDP(ctx context.Context, st Stream, address string) (net.Conn, error) {
+	id, ok := datagramFlowID(st)
+	if !ok {
+		st.Close()
+		return nil, errors.New("missing flow ID")
+	}
+	f, e := m.Register(id)
+	if e != nil {
+		st.Close()
+		return nil, e
+	}
+	f.control = st
+	stop := context.AfterFunc(ctx, func() { st.Close() })
+	defer stop()
+	st.SetDeadline(time.Now().Add(10 * time.Second))
+	if e = WriteJSON(st, Request{Network: "udp-datagram-v1", Address: address}); e == nil {
+		var reply Reply
+		e = ReadJSON(st, &reply)
+		if e == nil && reply.Error != "" {
+			e = errors.New(reply.Error)
+		}
+	}
+	if e != nil {
+		f.Close()
+		return nil, e
+	}
+	st.SetDeadline(time.Time{})
+	go func() { var b [1]byte; st.Read(b[:]); f.Close() }()
+	return f, nil
+}

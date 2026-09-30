@@ -6,6 +6,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"quiclab/internal/gateway"
@@ -25,13 +26,19 @@ func TestVPNReconnectAfterServerRestartPreservesTUN(t *testing.T) {
 	srv, _ := gateway.New("127.0.0.0/8", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	addr := "127.0.0.1:0"
 	start := func() (*quic.Listener, context.CancelFunc) {
-		l, e := quic.ListenAddr(addr, tc, &quic.Config{EnableDatagrams: true})
+		pc, e := net.ListenPacket("udp4", addr)
+		if e != nil {
+			t.Fatal(e)
+		}
+		tr := &quic.Transport{Conn: pc}
+		l, e := tr.Listen(tc, &quic.Config{EnableDatagrams: true})
 		if e != nil {
 			t.Fatal(e)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		go srv.ServeQUIC(ctx, l)
-		return l, cancel
+		// A process restart closes the UDP socket, not only the QUIC listener.
+		return l, func() { cancel(); l.Close(); tr.Close(); pc.Close() }
 	}
 	l, cancel := start()
 	addr = l.Addr().String()

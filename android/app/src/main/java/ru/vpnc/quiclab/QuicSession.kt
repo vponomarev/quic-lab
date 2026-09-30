@@ -26,6 +26,22 @@ internal class QuicSession(
     private val networks = mutableMapOf<Int, Network>()
     private val validated = mutableSetOf<Network>()
     private val callbacks = mutableListOf<ConnectivityManager.NetworkCallback>()
+    private val echoRequests = mutableListOf<ConnectivityManager.NetworkCallback>()
+    private fun holdEchoNetworks() {
+        if (echoRequests.isNotEmpty()) return
+        for (kind in listOf(WIFI, CELLULAR)) {
+            val callback = object : ConnectivityManager.NetworkCallback() {}
+            try {
+                cm.requestNetwork(NetworkRequest.Builder().addTransportType(kind)
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), callback)
+                echoRequests.add(callback)
+            } catch (e: Exception) { event("network_request_failed", e.toString()) }
+        }
+    }
+    private fun releaseEchoNetworks() {
+        echoRequests.forEach { try { cm.unregisterNetworkCallback(it) } catch (_: IllegalArgumentException) {} }
+        echoRequests.clear()
+    }
     private var client: Client? = null
     private var alive = false
     private var activeNetwork: Network? = null
@@ -80,6 +96,7 @@ internal class QuicSession(
             } else {
                 // A button press explicitly starts a new experiment after a disconnect.
                 stopInternal()
+                holdEchoNetworks()
                 val token = epoch
                 val current = Mobile.newClient(object : EventSink {
                     override fun onEvent(eventJSON: String) {
@@ -94,6 +111,7 @@ internal class QuicSession(
                         if (e.optString("event") == "disconnected") submit {
                             if (token == epoch) {
                                 alive = false
+                                releaseEchoNetworks()
                                 activeNetwork = null
                                 failedNetwork = null
                                 event("session_closed", "Соединение закрыто. Новый запуск — только по кнопке.")
@@ -121,7 +139,7 @@ internal class QuicSession(
                 activeNetwork = network
                 event("active_network", label(kind))
             }
-        } catch (e: Exception) { event("operation_failed", e.message ?: e.toString()) }
+        } catch (e: Exception) { if (!alive) releaseEchoNetworks(); event("operation_failed", e.message ?: e.toString()) }
     }
 
     private fun migrate(kind: Int, network: Network, reason: String) {
@@ -248,7 +266,7 @@ internal class QuicSession(
             override fun onUnavailable() = submit { event("network_unavailable", label(kind)) }
         }
         try {
-            cm.requestNetwork(NetworkRequest.Builder().addTransportType(kind)
+            cm.registerNetworkCallback(NetworkRequest.Builder().addTransportType(kind)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), callback)
             callbacks.add(callback)
         } catch (e: Exception) { event("network_request_failed", e.message ?: e.toString()) }
@@ -269,6 +287,7 @@ internal class QuicSession(
         nextProbeAt = 0
         client?.stop()
         client = null
+        releaseEchoNetworks()
     }
 
     fun close() {

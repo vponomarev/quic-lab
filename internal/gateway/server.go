@@ -27,6 +27,7 @@ import (
 )
 
 type Server struct {
+	bonds            bondRegistry
 	Capture          func(tls.ConnectionState, string, string, net.Conn) net.Conn
 	DialContext      func(context.Context, string, string) (net.Conn, error)
 	Probe            func(context.Context) error
@@ -79,7 +80,7 @@ func TLS(cert tls.Certificate, caFile string) (*tls.Config, error) {
 	if !pool.AppendCertsFromPEM(b) {
 		return nil, errors.New("invalid client CA")
 	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13, NextProtos: []string{ALPN}}, nil
+	return &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13, NextProtos: []string{ALPN, BondALPN}}, nil
 }
 func identity() string { var b [16]byte; rand.Read(b[:]); return hex.EncodeToString(b[:]) }
 func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
@@ -102,6 +103,10 @@ func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
 					return
 				}
 				defer release()
+			}
+			if c.ConnectionState().TLS.NegotiatedProtocol == BondALPN {
+				s.serveBond(ctx, c)
+				return
 			}
 			count, done := s.track(c.ConnectionState().TLS, "QUIC", func() string { return c.RemoteAddr().String() })
 			defer done()

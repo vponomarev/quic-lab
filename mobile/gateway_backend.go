@@ -57,6 +57,9 @@ func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.
 func (g *Gateway) datagramBackend() flowDialer {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.bond != nil {
+		return bondUDP{g}
+	}
 	if g.direct != nil {
 		return g.direct
 	}
@@ -75,8 +78,6 @@ func (g *Gateway) datagramBackend() flowDialer {
 // RTT is an ICMP round trip to the endpoint through AWG.
 // Probes also drive roaming when PersistentKeepalive is zero.
 func (g *Gateway) awgHeartbeat(ctx context.Context, d flowDialer, endpoint string) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	var seq uint16
 	for {
 		if ctx.Err() != nil {
@@ -95,10 +96,8 @@ func (g *Gateway) awgHeartbeat(ctx context.Context, d flowDialer, endpoint strin
 		} else {
 			g.emit("probe_unavailable", map[string]any{"detail": "Endpoint ICMP: no reply through AWG"})
 		}
-		select {
-		case <-ctx.Done():
+		if !g.probes.waitSince(ctx, time.Second, started) {
 			return
-		case <-ticker.C:
 		}
 	}
 }
@@ -140,10 +139,14 @@ func awgPingProbe(ctx context.Context, d flowDialer, target string, seq uint16) 
 // This is end-to-end RTT to the upstream Endpoint. It never feeds the local
 // heartbeat, migration decisions, jitter window or the local-RTT graph.
 func (g *Gateway) transitHeartbeat(ctx context.Context, awgDialer flowDialer, endpoint string) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	var seq uint16
 	for {
+		if !g.probes.enabledNow() {
+			if !g.probes.wait(ctx, time.Second) {
+				return
+			}
+			continue
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -173,10 +176,8 @@ func (g *Gateway) transitHeartbeat(ctx context.Context, awgDialer flowDialer, en
 		} else {
 			g.emit("transit_probe_failed", map[string]any{})
 		}
-		select {
-		case <-ctx.Done():
+		if !g.probes.waitSince(ctx, time.Second, started) {
 			return
-		case <-ticker.C:
 		}
 	}
 }

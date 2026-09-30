@@ -105,6 +105,9 @@ class LabVpnService : VpnService() {
             val cfg =
                 VpnIdentity.load(this)
                     .put("transport", prefs.getString("transport", "quic"))
+                    .put("max_availability", prefs.getBoolean("max_availability", false))
+                    .put("bond_copy_budget", prefs.getLong("bond_copy_kib",256).coerceIn(0,65536)*1024/2)
+                    .put("bond_cell_budget", prefs.getLong("bond_cell_mib",0).coerceIn(0,1048576)*1024*1024/2)
                     .put("transit_endpoint", prefs.getString("transit_endpoint", ""))
                     .put("probe_exit_ip", mode != 3)
                     .put("ca", prefs.getString("ca", ""))
@@ -225,11 +228,21 @@ class LabVpnService : VpnService() {
         @Volatile var rxRate = 0.0
         @Volatile var lastTransition = 0L
         @Volatile var flowSummary = ""
+        @Volatile var rttEnabled = true
+        @Volatile var rttInterval = 1000L
+        @Volatile var lastHealth = 0L
+        @Volatile var bondSnapshot: JSONObject? = null
+        fun rttFresh(now: Long) = rttEnabled && lastEcho > 0 && now-lastEcho < maxOf(3500L,rttInterval*3)
+        fun healthFresh(now: Long) = lastHealth > 0 && now-lastHealth < maxOf(15000L,rttInterval*4)
+        fun rttLabel(now: Long) = if(!rttEnabled) "выключен" else if(rttFresh(now)) "%.0f мс".format(rtt) else "—"
+
         private var trafficAt = 0L
         private var stats = TransportStats()
         private val events = ArrayDeque<String>()
         @Synchronized private fun resetMetrics(value:String) {
             flowSummary=""
+            bondSnapshot=null
+            lastHealth=0; rttEnabled=true; rttInterval=1000
             transitEnabled=false; transitRtt=0.0; lastTransitEcho=0
             exitIP=""; exitCheckedAt=0; exitState="Не проверен"
             transport=value; startedAt=android.os.SystemClock.elapsedRealtime()
@@ -237,10 +250,10 @@ class LabVpnService : VpnService() {
             lastTransition=0; trafficAt=startedAt; stats=TransportStats(); events.clear()
         }
         @Synchronized internal fun notificationSnapshot(now: Long): VpnNotificationContent {
-            val fresh = lastEcho > 0 && now - lastEcho < 3500
+            val fresh = healthFresh(now)
             val rateFresh = trafficAt > 0 && now - trafficAt < 3500
             val rate = vpnTrafficRate(if(rateFresh) txRate else 0.0, if(rateFresh) rxRate else 0.0)
-            val latency = if(fresh) "RTT %.0f мс".format(rtt) else "RTT —"
+            val latency = "RTT ${rttLabel(now)}"
             val state = if(lastEcho > 0 && !fresh) "Нет свежих ответов · $status" else status
             return VpnNotificationContent(
                 "${vpnNetworkLabel(network)} · ${transport.uppercase()}",
@@ -250,6 +263,7 @@ class LabVpnService : VpnService() {
         }
 
         @Synchronized fun quality(now:Long):String {
+            if(!rttEnabled) return "RTT и jitter выключены · служебная проверка связи: 5 с"
             val jitter=stats.maxJitter(now)?.let{"%.1f мс".format(it)} ?: "—"
             val gap=if(lastEcho==0L) "—" else "%.0f мс".format(maxOf(stats.maxGap,if(active)(now-lastEcho).toDouble() else 0.0))
             return "Jitter max · 15 с: $jitter   ·   Пауза макс.: $gap\nСеансов: ${stats.sessions.size}"
@@ -260,6 +274,9 @@ class LabVpnService : VpnService() {
             Diagnostics.event("vpn", e)
             val kind = e.optString("event")
             when(kind) {
+                "bond_stats" -> { bondSnapshot=JSONObject(e.toString()); network="Wi-Fi + LTE"; return }
+                "rtt_policy" -> { rttEnabled=e.optBoolean("enabled"); rttInterval=e.optLong("interval_ms",1000); lastEcho=0; lastTransitEcho=0; stats=TransportStats(); return }
+                "health" -> { lastHealth=android.os.SystemClock.elapsedRealtime(); connection=e.optString("connection_id",connection); status="Туннель работает"; return }
                 "transit_echo" -> { transitEnabled=true; transitRtt=e.optDouble("rtt_ms"); lastTransitEcho=android.os.SystemClock.elapsedRealtime(); return }
                 "transit_probe_failed" -> { return }
                 "exit_ip_checking" -> { exitState="Проверяем…"; return }
@@ -284,6 +301,7 @@ class LabVpnService : VpnService() {
             if (kind == "echo") {
                 if (transport == "awg") status = "AmneziaWG · ICMP endpoint отвечает"
                 lastEcho=now
+                lastHealth=now
                 rtt = e.optDouble("rtt_ms")
                 connection = e.optString("connection_id", connection)
                 return

@@ -38,6 +38,11 @@ class MainActivity : Activity() {
     private lateinit var banner: TextView
     private lateinit var networksView: TextView
     private lateinit var reserveView: TextView
+    private lateinit var bondGraph: LatencyChart
+    private lateinit var bondText: TextView
+    private var bondSampleAt=0L
+    private var bondRescued=0L
+    private var bondExpired=0L
     private lateinit var timelineView: TextView
     private lateinit var detailsView: TextView
     private lateinit var chart: LatencyChart
@@ -198,6 +203,13 @@ class MainActivity : Activity() {
             else startActivity(android.content.Intent(this,VpnActivity::class.java))
         })
         space(panel,10)
+        val bondBox=card(panel)
+        bondBox.addView(text("Доставка по двум путям",16f,ink,true))
+        bondText=text("Диагностика максимальной доступности появится при запуске режима.",12f,muted)
+        bondBox.addView(bondText)
+        bondGraph=LatencyChart(this).apply { unitLabel="записей"; plotLabel="очередь / спасено TX / истекло UDP" }
+        bondBox.addView(bondGraph,LinearLayout.LayoutParams(-1,dp(130)))
+        bondBox.addView(text("Зелёный: ожидают ACK · оранжевый: спасено исходящих записей за интервал · фиолетовый: истекло UDP. Это записи нашего протокола, не IP-пакеты на проводе.",11f,muted))
         val radioBox = card(panel)
         radioBox.addView(text("Сети и радиоканал", 16f, ink, true))
         val wifiDetails = text("Wi-Fi: ожидаем сведения", 12f, muted)
@@ -474,23 +486,40 @@ class MainActivity : Activity() {
             aCard.box.visibility=if(!vpn && "awg" in displayedTransports) View.VISIBLE else View.GONE
             graphTitle.text=if(vpn) "VPN · RTT до локального шлюза" else "Echo · задержка ответа"
             if(vpn) {
-                val fresh=LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho<1500
+                val fresh=LabVpnService.active && LabVpnService.rttFresh(time)
                 val localRtt=if(fresh) "%.0f".format(LabVpnService.rtt) else "—"
-                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0 && time-LabVpnService.lastTransitEcho<4000) "%.0f".format(LabVpnService.transitRtt) else "—"
+                val transitRtt=if(LabVpnService.active && LabVpnService.lastTransitEcho>0 && time-LabVpnService.lastTransitEcho<maxOf(4000L,LabVpnService.rttInterval*3)) "%.0f".format(LabVpnService.transitRtt) else "—"
                 val transitAge=if(LabVpnService.lastTransitEcho>0) (time-LabVpnService.lastTransitEcho)/1000 else 0
                 val transitAgeLabel=if(transitAge>=4 && LabVpnService.active) " · последний ответ транзита: $transitAge с назад" else ""
-                val rtt=if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит$transitAgeLabel" else "$localRtt мс"
+                val rtt=if(!LabVpnService.rttEnabled) "выключен" else if(LabVpnService.transitEnabled) "$localRtt / $transitRtt мс · VPN / транзит$transitAgeLabel" else "$localRtt мс"
                 val transport=LabVpnService.transport.uppercase()
                 vpnMetrics.text="$transport · ${LabVpnService.network}\nRTT: $rtt\n${LabVpnService.quality(time)}\n${LabVpnService.flowSummary}"
                 vpnExit.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
                 exitRefresh.visibility=if(LabVpnService.exitEnabled) View.VISIBLE else View.GONE
                 exitRefresh.isEnabled=LabVpnService.active
                 val age=if(LabVpnService.exitCheckedAt>0) " · ${(time-LabVpnService.exitCheckedAt)/1000} с назад" else ""
-                val exitStatus=if(LabVpnService.active && LabVpnService.lastEcho>0 && time-LabVpnService.lastEcho>2500) "Нет свежих ответов туннеля" else LabVpnService.exitState
+                val exitStatus=if(LabVpnService.active && LabVpnService.lastHealth>0 && !LabVpnService.healthFresh(time)) "Нет свежих ответов туннеля" else LabVpnService.exitState
                 vpnExit.text="Exit IPv4: ${LabVpnService.exitIP.ifBlank { "—" }}\n$exitStatus$age"
                 vpnTraffic.text="TX ↑ ${size(LabVpnService.txRate)}/с    RX ↓ ${size(LabVpnService.rxRate)}/с\nВсего: ↑ ${size(LabVpnService.txBytes.toDouble())}    ↓ ${size(LabVpnService.rxBytes.toDouble())}"
-                banner.text=if(LabVpnService.active && !fresh) "VPN · ждём ответы" else LabVpnService.status
-                reserveView.text=if(transport=="AWG") "ICMP endpoint через AWG · 1 запрос/с · ${LabVpnService.network}" else "Keep-alive: 10 запросов/с · $transport · ${LabVpnService.network}"
+                banner.text=if(LabVpnService.active && !LabVpnService.healthFresh(time)) "VPN · ждём ответы" else LabVpnService.status
+                reserveView.text=if(LabVpnService.rttEnabled) "RTT: каждые ${LabVpnService.rttInterval/1000} с · $transport · ${LabVpnService.network}" else "RTT выключен · контроль связи: 5 с · $transport"
+                LabVpnService.bondSnapshot?.let { snap ->
+                    val paths=snap.optJSONArray("paths")
+                    val rows=mutableListOf<String>()
+                    for(i in 0 until (paths?.length() ?: 0)) {
+                        val path=paths!!.getJSONObject(i)
+                        val name=if(path.optString("name")=="wifi") "Wi-Fi" else "LTE"
+                        rows.add("$name: ${if(path.optBoolean("ready")) "отвечает" else "нет свежих ответов"} · RTT ${"%.0f".format(path.optDouble("rtt_ms"))} мс · ↑ ${size(path.optDouble("sent"))} / ↓ ${size(path.optDouble("received"))} · копии ↑ ${size(path.optDouble("copies"))} / ↓ ${size(path.optDouble("rx_copies"))} · служебный ↑ ${size(path.optDouble("probes"))} / ↓ ${size(path.optDouble("rx_control"))}")
+                    }
+                    bondText.text=rows.joinToString("\n")+"\nОжидают ACK: ${snap.optInt("pending")} · самый старый: ${snap.optLong("oldest_ms")} мс\nДубли: ${snap.optLong("duplicates")} · LTE TX за сессию: ${size(snap.optDouble("cell_sent"))}"+if(snap.optBoolean("cell_blocked")) " · ЛИМИТ LTE" else ""
+                    reserveView.text="Максимальная доступность · Wi-Fi + LTE · повышенный расход мобильного трафика"
+                    if(time-bondSampleAt>=1000) {
+                        val rescued=snap.optLong("rescued");val expired=snap.optLong("expired")
+                        bondGraph.sample(snap.optInt("pending").toFloat(),(rescued-bondRescued).coerceAtLeast(0).toFloat(),(expired-bondExpired).coerceAtLeast(0).toFloat())
+                        if(rescued>bondRescued) bondGraph.mark(time)
+                        bondRescued=rescued;bondExpired=expired;bondSampleAt=time
+                    }
+                }
                 if(LabVpnService.multipleMode) {
                     vpnMetrics.text=MultipleVpnState.summary()
                     vpnTraffic.text="Статистика показана отдельно для каждого профиля"

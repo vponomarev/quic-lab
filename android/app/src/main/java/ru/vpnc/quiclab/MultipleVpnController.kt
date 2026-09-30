@@ -102,6 +102,7 @@ internal class MultipleVpnController(
     }
 
     private fun start(p: MultipleProfile) {
+        require(!VpnProfiles.preferences(service,p.id).getBoolean("max_availability",false)) { "Максимальная доступность пока работает только с одним профилем" }
         val token = ++generation
         generations[p.id] = token
         available[p.id] = mutableSetOf()
@@ -208,6 +209,9 @@ internal object MultipleVpnState {
         var network: String = "—",
         var rtt: Double = 0.0,
         var echo: Long = 0,
+        var rttEnabled: Boolean = true,
+        var rttInterval: Long = 1000,
+        var health: Long = 0,
         var tx: Long = 0,
         var rx: Long = 0,
         var at: Long = 0,
@@ -234,10 +238,13 @@ internal object MultipleVpnState {
         val s = states[id] ?: return
         val now = SystemClock.elapsedRealtime()
         when (e.optString("event")) {
+            "rtt_policy" -> { s.rttEnabled=e.optBoolean("enabled"); s.rttInterval=e.optLong("interval_ms",1000); s.echo=0 }
+            "health" -> { s.health=now; s.status="Работает" }
             "active_network" -> s.network = e.optString("detail")
             "echo" -> {
                 s.rtt = e.optDouble("rtt_ms")
                 s.echo = now
+                s.health = now
                 s.status = "Работает"
             }
             "connected" -> {
@@ -275,10 +282,10 @@ internal object MultipleVpnState {
     fun notification(now: Long): VpnNotificationContent {
         val channels = states.values.map { "${vpnNetworkLabel(it.network)} · ${it.transport}" }.distinct().joinToString(" / ")
         val text = states.values.joinToString("\n\n") {
-            val fresh = it.echo > 0 && now - it.echo < 3500
+            val fresh = it.rttEnabled && it.echo > 0 && now - it.echo < maxOf(3500L,it.rttInterval*3)
             val rateFresh = it.at > 0 && now - it.at < 3500
-            val latency = if(fresh) "RTT %.0f мс".format(it.rtt) else "RTT —"
-            val status = if(it.echo > 0 && !fresh) "Нет свежих ответов" else it.status
+            val latency = if(!it.rttEnabled) "RTT выключен" else if(fresh) "RTT %.0f мс".format(it.rtt) else "RTT —"
+            val status = if(it.health > 0 && now-it.health > maxOf(15000L,it.rttInterval*4)) "Нет свежих ответов" else it.status
             "${it.name} · ${vpnNetworkLabel(it.network)} · ${it.transport}\n$status · $latency\n" +
                 vpnTrafficRate(if(rateFresh) it.txRate else 0.0, if(rateFresh) it.rxRate else 0.0)
         }
@@ -289,9 +296,9 @@ internal object MultipleVpnState {
     fun summary(): String {
         val now = SystemClock.elapsedRealtime()
         return states.values.joinToString("\n\n") {
-            val fresh = it.echo > 0 && now - it.echo < 3500
+            val fresh = it.rttEnabled && it.echo > 0 && now - it.echo < maxOf(3500L,it.rttInterval*3)
             val rateFresh = it.at > 0 && now - it.at < 3500
-            "${it.name} · ${it.transport}\n${if(it.echo>0&&!fresh) "Нет свежих ответов" else it.status} · RTT ${if(fresh) "%.0f мс".format(it.rtt) else "—"}\n↑ %.1f KiB/с · ↓ %.1f KiB/с"
+            "${it.name} · ${it.transport}\n${if(it.health>0 && now-it.health>maxOf(15000L,it.rttInterval*4)) "Нет свежих ответов" else it.status} · RTT ${if(!it.rttEnabled) "выключен" else if(fresh) "%.0f мс".format(it.rtt) else "—"}\n↑ %.1f KiB/с · ↓ %.1f KiB/с"
                 .format(
                     if (rateFresh) it.txRate / 1024 else 0.0,
                     if (rateFresh) it.rxRate / 1024 else 0.0,

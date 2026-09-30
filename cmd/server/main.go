@@ -179,7 +179,7 @@ func main() {
 		var mtls *tls.Config
 		if managed != nil {
 			mtls = managed.TLS(cert)
-			mtls.NextProtos = []string{gateway.ALPN}
+			mtls.NextProtos = []string{gateway.ALPN, gateway.BondALPN}
 			gw.RegisterProtocol = managed.RegisterProtocol
 			gw.Track = managed.Track
 			if captureManager != nil {
@@ -238,6 +238,7 @@ func main() {
 	if *publicHTTPS != "" && *publicHTTPS != *gatewayHTTPS {
 		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil, echoProbe), TLSConfig: &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*publicHTTPS), false), MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 		defer ps.Close()
+		configurePublicTLS(ps, opts, log)
 		go func() {
 			if e := servePublicTLS(ctx, ps, true, *tlsHost, *fallback); e != nil && e != http.ErrServerClosed {
 				log.Error("public_https", "error", e)

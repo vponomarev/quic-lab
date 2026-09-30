@@ -43,6 +43,7 @@ type preparedPath struct {
 }
 
 type Client struct {
+	probes     *probePolicy
 	gatewayTLS *tls.Config
 
 	prepared   *preparedPath
@@ -63,6 +64,11 @@ type Client struct {
 func NewClient(sink EventSink) *Client { return &Client{sink: sink, newTransport: openTransport} }
 
 func (c *Client) emit(kind string, fields map[string]any) {
+	var show bool
+	kind, show = c.probes.event(kind, fields)
+	if !show {
+		return
+	}
 	if c.sink == nil {
 		return
 	}
@@ -200,16 +206,12 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 	go func() {
 		defer c.wg.Done()
 		enc := json.NewEncoder(stream)
-		ticker := time.NewTicker(time.Duration(intervalMS) * time.Millisecond)
-		defer ticker.Stop()
 		var seq uint64
-		for {
+		for c.probes.wait(ctx, time.Duration(intervalMS)*time.Millisecond) {
 			select {
-			case <-ctx.Done():
-				return
 			case <-conn.Context().Done():
 				return
-			case <-ticker.C:
+			default:
 				seq++
 				stream.SetWriteDeadline(time.Now().Add(90 * time.Second))
 				if err := enc.Encode(protocol.Frame{Seq: seq, SentNS: time.Since(start).Nanoseconds()}); err != nil {

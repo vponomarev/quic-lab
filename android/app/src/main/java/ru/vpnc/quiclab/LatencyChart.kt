@@ -9,6 +9,8 @@ import android.view.View
 import android.os.SystemClock
 
 internal class LatencyChart(context: Context) : View(context) {
+    var unitLabel = "мс"
+    var plotLabel = "RTT"
     private data class Sample(val time: Long, val first: Float?, val second: Float?, val third: Float?)
     private val points = ArrayDeque<Sample>()
     private val markers = ArrayDeque<Long>()
@@ -39,8 +41,8 @@ internal class LatencyChart(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.textSize = 11 * density
         paint.color = Color.rgb(95, 112, 128)
-        canvas.drawText("${scale.toInt()} мс", 0f, 13 * density, paint)
-        canvas.drawText("30 секунд · RTT", 0f, height - 2 * density, paint)
+        canvas.drawText("${scale.toInt()} $unitLabel", 0f, 13 * density, paint)
+        canvas.drawText("30 секунд · $plotLabel", 0f, height - 2 * density, paint)
         paint.color = Color.rgb(224, 231, 237)
         paint.strokeWidth = density
         for (i in 0..2) {

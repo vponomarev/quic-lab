@@ -369,7 +369,7 @@ class VpnActivity : Activity() {
         endpoint = field(panel, "Сервер · домен:порт", "endpoint")
         hostname = field(panel, "Имя сервера в сертификате TLS", "hostname")
         hostname.isEnabled = selectedTransport() != "awg"
-        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель раз в секунду. Доступные протоколы задаются при выдаче профиля.")
+        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель; частота задаётся в диагностике. Доступные протоколы задаются при выдаче профиля.")
         transport.onItemSelectedListener =
             object : android.widget.AdapterView.OnItemSelectedListener {
                 private var initial = true
@@ -481,6 +481,58 @@ class VpnActivity : Activity() {
             "Смена транспорта или маршрутов: остановите VPN, измените настройки и запустите снова. Текущие соединения завершатся.",
         )
         val diagnostics = section("ДИАГНОСТИКА")
+        label(diagnostics, "RTT для всех VPN-профилей. Изменения применяются сразу. Echo использует собственные измерения.")
+        val rttPrefs = VpnRttSettings.preferences(this)
+        for ((key, title, default) in listOf(Triple("screen_on", "Экран включён · RTT", 1000L), Triple("screen_off", "Экран выключен · RTT", 0L))) {
+            val spinner = choice(diagnostics, title, VpnRttSettings.labels,
+                VpnRttSettings.values.indexOf(rttPrefs.getLong(key, default)).coerceAtLeast(0))
+            spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+                override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    rttPrefs.edit().putLong(key, VpnRttSettings.values[position]).apply()
+                }
+            }
+        }
+        label(diagnostics, "Настройка управляет RTT шлюза и транзита. При выключенных измерениях остаётся служебная проверка связи раз в 5 секунд; она не отображается на графике. Keep-alive и переключение сетей сохраняются.")
+        val maximum = section("МАКСИМАЛЬНАЯ ДОСТУПНОСТЬ · ЭКСПЕРИМЕНТАЛЬНО")
+        maximum.addView(android.widget.Switch(this).apply {
+            text="Два активных пути: Wi-Fi + LTE"
+            isChecked=prefs.getBoolean("max_availability",false)
+            setOnCheckedChangeListener { _, value -> prefs.edit().putBoolean("max_availability",value).apply() }
+        })
+        label(maximum,"Повышенный расход LTE и аккумулятора ради быстрого переключения, в том числе при выключенном экране. Требует обновлённого QUIC Lab сервера и транспорта QUIC. Применяется после перезапуска VPN. Переключатели резерва ниже в этом режиме не действуют.")
+        fun budget(title:String,key:String,default:Long,limit:Long) {
+            label(maximum,title)
+            maximum.addView(EditText(this).apply {
+                inputType=android.text.InputType.TYPE_CLASS_NUMBER
+                setText(prefs.getLong(key,default).toString())
+                addTextChangedListener(object: android.text.TextWatcher {
+                    override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+                    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { s?.toString()?.toLongOrNull()?.let { if(it in 0..limit) prefs.edit().putLong(key,it).apply() } }
+                    override fun afterTextChanged(s:android.text.Editable?) {}
+                })
+            })
+        }
+        budget("Бюджет упреждающих копий, KiB/мин · 0 — только обычные повторы", "bond_copy_kib",256,65536)
+        budget("Лимит LTE за сессию, MiB · 0 без ограничения", "bond_cell_mib",0,1048576)
+        label(maximum,"Лимит делится поровну между направлениями. Считаются записи туннеля, не биллинг оператора: внешний QUIC/IP и повторные передачи добавляют расход. После исчерпания бюджета копий обычное восстановление продолжается; после лимита LTE остаётся только Wi-Fi. Сторонние VPN и multiple пока не поддерживают этот режим.")
+        val reserve = section("РЕЗЕРВНАЯ СЕТЬ VPN")
+        label(reserve, "Общие настройки для всех профилей, применяются сразу. Проверки расходуют трафик резервной сети и аккумулятор. RTT текущего VPN настраивается отдельно.")
+        val reservePrefs = VpnReserveSettings.preferences(this)
+        for ((key, title, default) in listOf(
+            Triple("wifi_on", "LTE → Wi-Fi · экран включён", true),
+            Triple("wifi_off", "LTE → Wi-Fi · экран выключен", true),
+            Triple("cell_on", "Wi-Fi → LTE · экран включён", false),
+            Triple("cell_off", "Wi-Fi → LTE · экран выключен", false),
+            Triple("metered_wifi", "Разрешить проверки лимитного Wi-Fi", false))) {
+            reserve.addView(android.widget.Switch(this).apply {
+                text = title
+                isChecked = reservePrefs.getBoolean(key, default)
+                setOnCheckedChangeListener { _, checked -> reservePrefs.edit().putBoolean(key, checked).apply() }
+            })
+        }
+        label(reserve, "Выключенная проверка LTE не удерживает мобильную сеть для резерва. При потере основной сети VPN всё равно может перейти на LTE и расходовать мобильный трафик. Echo — отдельный активный эксперимент с проверками обеих сетей.")
+        label(reserve, "QUIC/HTTPS проверяют VPN-сервер через резерв. Для AWG используется проверка интернета Android: второй AWG-туннель с тем же ключом нарушил бы текущий канал. Доступность AWG-сервера подтверждается после переключения. Captive portal не считается готовым Wi-Fi.")
         label(diagnostics, "IPv4: QUIC, HTTPS и AmneziaWG поддерживают TCP и UDP. IPv6 заблокирован для захваченного VPN трафика.")
         logs = label(diagnostics, "")
         logs.textSize = 12f
@@ -489,7 +541,7 @@ class VpnActivity : Activity() {
                 override fun run() {
                     state.text =
                         if (LabVpnService.active)
-                            if(LabVpnService.multipleMode) MultipleVpnState.summary() else "${LabVpnService.status} · RTT ${"%.0f".format(LabVpnService.rtt)} мс"
+                            if(LabVpnService.multipleMode) MultipleVpnState.summary() else "${LabVpnService.status} · RTT ${LabVpnService.rttLabel(android.os.SystemClock.elapsedRealtime())}"
                         else LabVpnService.status
                     logs.text = LabVpnService.log()
                     handler.postDelayed(this, 500)

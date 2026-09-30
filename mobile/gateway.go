@@ -17,11 +17,16 @@ import (
 	"github.com/coder/websocket"
 	"github.com/xtaci/smux"
 	"quiclab/internal/awg"
+	"quiclab/internal/bond"
 	"quiclab/internal/gateway"
 	"quiclab/internal/protocol"
 )
 
 type gatewayConfig struct {
+	BondCopyBudget   uint64 `json:"bond_copy_budget"`
+	BondCellBudget   uint64 `json:"bond_cell_budget"`
+	MaxAvailability  bool   `json:"max_availability"`
+	InitialPath      string `json:"initial_path"`
 	AWGProbeEndpoint string `json:"awg_probe_endpoint"`
 	TransitUDP       bool   `json:"transit_udp"`
 	TransitEndpoint  string `json:"transit_endpoint"`
@@ -37,25 +42,35 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
-	direct       flowDialer // Set only before publishing a direct-only router backend.
-	udpStream    bool
-	datagrams    *gateway.DatagramMux
-	awg          *awg.Engine
-	exitChecking bool
-	mu           sync.Mutex
-	q            *Client
-	mux          *smux.Session
-	cfg          gatewayConfig
-	tls          *tls.Config
-	sink         EventSink
-	ctx          context.Context
-	cancel       context.CancelFunc
-	tunStop      func()
-	session      int64
+	bondCellUsed    uint64
+	bondCellBlocked bool
+	bond            *bond.Mux
+	bondToken       string
+	probes          probePolicy
+	direct          flowDialer // Set only before publishing a direct-only router backend.
+	udpStream       bool
+	datagrams       *gateway.DatagramMux
+	awg             *awg.Engine
+	exitChecking    bool
+	mu              sync.Mutex
+	q               *Client
+	mux             *smux.Session
+	cfg             gatewayConfig
+	tls             *tls.Config
+	sink            EventSink
+	ctx             context.Context
+	cancel          context.CancelFunc
+	tunStop         func()
+	session         int64
 }
 
 func NewGateway(sink EventSink) *Gateway { return &Gateway{sink: sink} }
 func (g *Gateway) emit(kind string, v map[string]any) {
+	var show bool
+	kind, show = g.probes.event(kind, v)
+	if !show {
+		return
+	}
 	if g.sink == nil {
 		return
 	}
@@ -71,6 +86,9 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	}
 	if e := json.Unmarshal([]byte(configJSON), &g.cfg); e != nil {
 		return e
+	}
+	if g.cfg.MaxAvailability && g.cfg.Transport != "quic" {
+		return errors.New("maximum availability requires QUIC")
 	}
 	if g.cfg.Transport == "awg" {
 		c, e := awg.Parse(g.cfg.AWGConfig)
@@ -120,6 +138,9 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 		}
 		g.tls.RootCAs = pool
 	}
+	if g.cfg.MaxAvailability {
+		return g.startBond(binder)
+	}
 	if e = g.connect(binder); e != nil {
 		return e
 	}
@@ -129,6 +150,7 @@ func (g *Gateway) connect(binder SocketBinder) error {
 	g.ctx, g.cancel = context.WithCancel(context.Background())
 	if g.cfg.Transport == "quic" {
 		g.q = NewClient(g.sink)
+		g.q.probes = &g.probes
 		g.q.gatewayTLS = g.tls.Clone()
 		g.q.gatewayTLS.NextProtos = []string{gateway.ALPN}
 		if e := g.q.Start(g.cfg.Endpoint, g.cfg.Hostname, "", 100, binder); e != nil {
@@ -204,15 +226,8 @@ func (g *Gateway) heartbeat(ctx context.Context, m *smux.Session, s gateway.Stre
 	defer s.Close()
 	start := time.Now()
 	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
 		var seq uint64
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
+		for g.probes.wait(ctx, 100*time.Millisecond) {
 			seq++
 			s.SetDeadline(time.Now().Add(15 * time.Second))
 			if json.NewEncoder(s).Encode(protocol.Frame{Seq: seq, SentNS: time.Since(start).Nanoseconds()}) != nil {
@@ -236,8 +251,11 @@ func (g *Gateway) heartbeat(ctx context.Context, m *smux.Session, s gateway.Stre
 }
 func (g *Gateway) open(ctx context.Context) (gateway.Stream, error) {
 	g.mu.Lock()
-	q, m := g.q, g.mux
+	q, m, bonded := g.q, g.mux, g.bond
 	g.mu.Unlock()
+	if bonded != nil {
+		return bonded.OpenStream(ctx)
+	}
 	if q != nil {
 		q.op.Lock()
 		c := q.conn
@@ -337,6 +355,10 @@ func (g *Gateway) LocalAddress() string {
 }
 func (g *Gateway) Stop() {
 	g.mu.Lock()
+	if g.bond != nil {
+		g.bond.Close()
+		g.bond = nil
+	}
 	stop := g.tunStop
 	g.tunStop = nil
 	if g.cancel != nil {
@@ -369,6 +391,9 @@ func (g *Gateway) Stop() {
 func (g *Gateway) IsConnected() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.bond != nil {
+		return g.bond.Context().Err() == nil
+	}
 	if g.awg != nil {
 		return g.ctx != nil && g.ctx.Err() == nil
 	}
@@ -385,6 +410,9 @@ func (g *Gateway) IsConnected() bool {
 func (g *Gateway) Reconnect(binder SocketBinder) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.cfg.MaxAvailability {
+		return errors.New("maximum availability requires RestartBond with path name")
+	}
 	if g.cfg.Transport == "awg" {
 		return errors.New("AWG uses path migration")
 	}
