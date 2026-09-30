@@ -15,6 +15,14 @@ Verification: Linux `go test ./internal/vpnmodel ./mobile -count=1 -timeout=120s
 - Existing ordinary QUIC/HTTPS remain standalone; only max_availability maps to demux. No automatic grouping by hostname.
 - Installed task-start helper requires numeric headings but plans use A1 etc.; use equivalent exact task extraction with BASE and private ledger.
 
-Next: A2, isolate exit lifecycle and reject stale callbacks. Remaining 19 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
+Next: A3, bind routing to stable exits and verify live multiple-VPN behavior. Remaining 18 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
 
 Private ledger: .superpowers/sdd/2026-09-30-phase1-01-model-lifecycle/progress.md.
+
+## A2 — complete
+
+Added synchronized Go lifecycle states and Android session-owning VpnExitController. Restart invalidates the prior generation and closes only that exit. Incompatible exits reject subsequent events. Single and multiple service paths use controller ownership; single-session callbacks capture their original controller so a new whole-service run cannot accept old callbacks with coincident generation numbers. Main-looper service commands remain serialized. Stop-all invalidates callbacks and attempts every close even if one fails; service cleanup still releases TUN. First explicit Stop shows a one-time notice, stored locally.
+
+Verified: Linux go test -race ./internal/vpnmodel -count=1 and go vet ./internal/vpnmodel passed. Android assembleDebug, assembleDebugAndroidTest, lintDebug passed. Device VpnExitLifecycleTest + VpnConfigurationTest: OK (11 tests). Lifecycle cases cover independent restart, stale callbacks, incompatibility, startup failure, and close failure. These tests use controlled session resources; real multi-tunnel traffic/route blocking is the A3 live gate, not claimed here.
+
+Test history: initial Go run failed on missing Runtime/Event APIs. Android's first three lifecycle checks were first executed after implementation (workflow deviation); the added close-failure test was observed RED (only one of two sessions closed), then fixed and observed GREEN. Do not describe all Android lifecycle tests as observed red-to-green.

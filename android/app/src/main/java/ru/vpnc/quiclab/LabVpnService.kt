@@ -11,6 +11,7 @@ import org.json.JSONObject
 
 class LabVpnService : VpnService() {
     private var session: VpnSession? = null
+    private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
     private var tun: ParcelFileDescriptor? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -28,6 +29,11 @@ class LabVpnService : VpnService() {
         if (intent?.action == "stop") {
             Diagnostics.event("vpn", JSONObject().put("event", "stop_requested"))
             shutdown()
+            val local = getSharedPreferences("vpn_lifecycle", MODE_PRIVATE)
+            if (!local.getBoolean("stop_notice_shown", false)) {
+                android.widget.Toast.makeText(this, "VPN остановлен. Блокировка снята: приложения могут подключаться напрямую.", android.widget.Toast.LENGTH_LONG).show()
+                local.edit().putBoolean("stop_notice_shown", true).apply()
+            }
             stopSelf()
             return START_NOT_STICKY
         }
@@ -115,17 +121,20 @@ class LabVpnService : VpnService() {
             val endpoint = prefs.getString("endpoint", "")!!
             val hostname = prefs.getString("hostname", "")!!
             val cm = getSystemService(ConnectivityManager::class.java)
-            session =
+            val exitId = VpnProfiles.current(this).id
+            VpnProfiles.configuration(this)
+            lateinit var controller: VpnExitController<VpnSession>
+            controller = VpnExitController(setOf(exitId)) { id, token ->
                 VpnSession(
                     cm,
                     this,
                     cfg,
                     tun!!.fd,
-                    selected = { n, _ -> setUnderlyingNetworks(arrayOf(n)) },
+                    selected = { n, _ -> handler.post { controller.withCurrent(id, token) { setUnderlyingNetworks(arrayOf(n)) } } },
                     availability = { _, kind, up ->
                         if (up)
                             handler.post {
-                                if (active && !starting) {
+                                if (active && !starting && controller.current(id, token)) {
                                     starting = true
                                     session?.startOrMigrate(kind, endpoint, hostname, "", 100)
                                 }
@@ -133,10 +142,19 @@ class LabVpnService : VpnService() {
                     },
                     output = { event ->
                         val type = event.optString("event")
-                        if (type == "operation_failed") handler.post { starting = false }
-                        record(event)
+                        handler.post {
+                            controller.withCurrent(id, token) {
+                                if (type == "operation_failed") starting = false
+                                controller.event(id, token, type)
+                                record(event)
+                            }
+                        }
                     },
                 )
+            }
+            exits = controller
+            controller.start(exitId)
+            session = controller.session(exitId)
             active = true
             status = "Подключаем ${cfg.optString("transport").uppercase()}…"
         } catch (e: Exception) {
@@ -186,11 +204,12 @@ class LabVpnService : VpnService() {
         active = false
         exitState = "VPN остановлен"
         handler.removeCallbacksAndMessages(null)
-        multiple?.close()
+        runCatching { multiple?.close() }.onFailure { Diagnostics.event("vpn", JSONObject().put("event", "close_failed").put("error", it.toString())) }
         multiple = null
-        session?.close()
+        runCatching { exits?.stopAll() }.onFailure { Diagnostics.event("vpn", JSONObject().put("event", "close_failed").put("error", it.toString())) }
+        exits = null
         session = null
-        tun?.close()
+        runCatching { tun?.close() }
         tun = null
         starting = false
         txRate=0.0; rxRate=0.0

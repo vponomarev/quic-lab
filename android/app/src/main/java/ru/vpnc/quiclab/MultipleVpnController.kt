@@ -17,14 +17,16 @@ internal class MultipleVpnController(
 ) {
     private val cm = service.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
-    private val sessions = mutableMapOf<String, VpnSession>()
+    private val exits = VpnExitController(plan.profiles.map { it.id }.toSet()) { id, token ->
+        createSession(plan.profiles.first { it.id == id }, token)
+    }
     private val networks = mutableMapOf<String, Network>()
     private val starting = mutableSetOf<String>()
     private val paused = mutableSetOf<String>()
     @Volatile private var closed = false
-    private val generations = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private val available = mutableMapOf<String, MutableSet<Int>>()
-    private var generation = 0L
+
     private val router =
         Mobile.newMultiRouter(
             plan.rules,
@@ -67,7 +69,7 @@ internal class MultipleVpnController(
         MultipleVpnState.reset(plan.profiles)
         try {
             router.attach(fd.toLong())
-            plan.profiles.forEach { start(it) }
+            plan.profiles.forEach { exits.start(it.id) }
         } catch (e: Exception) {
             close()
             throw e
@@ -85,7 +87,7 @@ internal class MultipleVpnController(
                                 else kinds.firstOrNull()
                             if (kind != null) {
                                 starting.add(p.id)
-                                sessions[p.id]?.startOrMigrate(
+                                exits.session(p.id)?.startOrMigrate(
                                     kind,
                                     p.endpoint,
                                     p.hostname,
@@ -101,10 +103,10 @@ internal class MultipleVpnController(
         )
     }
 
-    private fun start(p: MultipleProfile) {
+    private fun createSession(p: MultipleProfile, token: Long): VpnSession {
         require(!VpnProfiles.preferences(service,p.id).getBoolean("max_availability",false)) { "Максимальная доступность пока работает только с одним профилем" }
-        val token = ++generation
-        generations[p.id] = token
+
+
         available[p.id] = mutableSetOf()
         val session =
             VpnSession(
@@ -114,7 +116,7 @@ internal class MultipleVpnController(
                 -1,
                 selected = { n, _ ->
                     handler.post {
-                        if (!closed && generations[p.id] == token) {
+                        if (!closed && exits.current(p.id, token)) {
                             networks[p.id] = n
                             service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
                         }
@@ -122,11 +124,11 @@ internal class MultipleVpnController(
                 },
                 availability = { _, kind, up ->
                     handler.post {
-                        if (!closed && generations[p.id] == token) {
+                        if (!closed && exits.current(p.id, token)) {
                             val kinds = available.getOrPut(p.id) { mutableSetOf() }
                             if (up) kinds.add(kind) else kinds.remove(kind)
                             if (up && p.id !in paused && starting.add(p.id))
-                                sessions[p.id]?.startOrMigrate(
+                                exits.session(p.id)?.startOrMigrate(
                                     kind,
                                     p.endpoint,
                                     p.hostname,
@@ -138,7 +140,8 @@ internal class MultipleVpnController(
                 },
                 output = { event ->
                     handler.post {
-                        if (!closed && generations[p.id] == token) {
+                        if (!closed && exits.current(p.id, token)) {
+                            exits.event(p.id, token, event.optString("event"))
                             MultipleVpnState.record(p.id, event)
                             Diagnostics.event(
                                 "multiple",
@@ -153,12 +156,11 @@ internal class MultipleVpnController(
                     }
                 },
                 attached = { g ->
-                    check(!closed && generations[p.id] == token) { "Profile stopped" }
-                    router.setGateway(p.id, g)
+                    check(exits.withCurrent(p.id, token) { router.setGateway(p.id, g) }) { "Profile stopped" }
                 },
                 detached = { g -> router.detachGateway(p.id, g) },
             )
-        sessions[p.id] = session
+        return session
     }
 
     fun toggle(id: String) {
@@ -167,14 +169,14 @@ internal class MultipleVpnController(
         if (paused.remove(id)) {
             router.setProfileEnabled(id, true)
             starting.remove(id)
-            start(p)
+            exits.start(p.id)
         } else {
             paused.add(id)
             router.setProfileEnabled(id, false)
-            generations[id] = ++generation
+            exits.stop(id)
             available.remove(id)
             starting.remove(id)
-            sessions.remove(id)?.close()
+
             networks.remove(id)
             service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
             MultipleVpnState.record(id, JSONObject().put("event", "stopped"))
@@ -184,7 +186,7 @@ internal class MultipleVpnController(
     fun move(kind: Int) {
         plan.profiles
             .filter { it.id !in paused }
-            .forEach { sessions[it.id]?.startOrMigrate(kind, it.endpoint, it.hostname, "", 100) }
+            .forEach { exits.session(it.id)?.startOrMigrate(kind, it.endpoint, it.hostname, "", 100) }
     }
 
     fun close() {
@@ -194,10 +196,10 @@ internal class MultipleVpnController(
             MultipleVpnState.record(it.id, JSONObject().put("event", "stopped"))
         }
         handler.removeCallbacksAndMessages(null)
-        sessions.values.forEach { it.close() }
-        sessions.clear()
+        try { exits.stopAll() } finally {
         // Cancellation can wait for active flows; never block Android's service/main thread.
         Thread({ router.close() }, "multiple-close").start()
+        }
     }
 }
 

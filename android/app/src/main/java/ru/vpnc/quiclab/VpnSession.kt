@@ -26,7 +26,7 @@ internal class VpnSession(
     private val output: (JSONObject) -> Unit,
     private val attached: ((Gateway) -> Unit)? = null,
     private val detached: ((Gateway) -> Unit)? = null,
-) {
+) : AutoCloseable {
     private val isBond = config.optBoolean("max_availability")
     private val bondNetworks = mutableMapOf<Int, Network>()
     private val bondRetry = mutableMapOf<Int, Long>()
@@ -557,7 +557,7 @@ internal class VpnSession(
         cellRequest = null
     }
 
-    fun close() {
+    override fun close() {
         synchronized(worker) {
             if (closed) return
             closed = true

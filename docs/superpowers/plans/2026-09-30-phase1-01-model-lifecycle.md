@@ -83,7 +83,7 @@ go test ./internal/vpnmodel -count=1; Android: VpnConfigurationTest
 
 **Interfaces:** type State string: stopped, connecting, active, recovering, blocked, incompatible; type Event struct { ExitID string; Generation uint64; Kind string }; type Runtime struct; func NewRuntime(c Config) *Runtime; func (r *Runtime) Start(id string) uint64; func (r *Runtime) Apply(e Event) bool; func (r *Runtime) Stop(id string); func (r *Runtime) State(id string) State. Kotlin VpnExitController.start(exitId: String), stop(exitId: String), stopAll().
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestLifecycleRejectsOldGeneration; VpnExitLifecycleTest.independentRestart. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestLifecycleRejectsOldGeneration; VpnExitLifecycleTest.independentRestart. Минимальные обязательные проверки:
 
 ```text
 assert Apply(eventFromPreviousGeneration) == false
@@ -92,17 +92,17 @@ assert incompatibility('internet').state == 'incompatible'
 assert stopAll().activeSessions == 0
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Сериализовать команды службы; привязать callbacks к поколению выхода. Адаптер существующего VpnSession реализует один runtime выхода. Разделить остановку отдельного выхода и всей службы. Никаких BOOT_COMPLETED или включения Always-on. При ручном Stop всего VPN закрыть TUN/транспорты и убрать блокировки; уведомление первого Stop хранится как локальная настройка.
+- [x] **Step 3 — реализация:** Сериализовать команды службы; привязать callbacks к поколению выхода. Адаптер существующего VpnSession реализует один runtime выхода. Разделить остановку отдельного выхода и всей службы. Никаких BOOT_COMPLETED или включения Always-on. При ручном Stop всего VPN закрыть TUN/транспорты и убрать блокировки; уведомление первого Stop хранится как локальная настройка.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/vpnmodel -count=1; Android: VpnExitLifecycleTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: isolate VPN exit lifecycles"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: isolate VPN exit lifecycles"`. Не включать соседние незавершённые задачи.
 
 ### Task A3: Привязка маршрутизатора к выходам
 
