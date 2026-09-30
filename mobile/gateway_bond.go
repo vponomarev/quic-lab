@@ -15,7 +15,10 @@ import (
 )
 
 func (g *Gateway) startBond(binder SocketBinder) error {
-	g.ctx, g.cancel = context.WithCancel(context.Background())
+	newContext := g.ctx == nil || g.ctx.Err() != nil
+	if newContext {
+		g.ctx, g.cancel = context.WithCancel(context.Background())
+	}
 	g.bond = bond.NewMux(g.ctx, true)
 	remaining := g.cfg.BondCellBudget
 	if remaining > 0 {
@@ -34,8 +37,10 @@ func (g *Gateway) startBond(binder SocketBinder) error {
 	if _, e := rand.Read(secret[:]); e != nil {
 		g.bond.Close()
 		g.bond = nil
-		g.cancel()
-		g.cancel = nil
+		if newContext {
+			g.cancel()
+			g.cancel = nil
+		}
 		return e
 	}
 	g.bondToken = hex.EncodeToString(secret[:])
@@ -46,15 +51,17 @@ func (g *Gateway) startBond(binder SocketBinder) error {
 	if e := g.addBondPath(name, binder, true); e != nil {
 		g.bond.Close()
 		g.bond = nil
-		g.cancel()
-		g.cancel = nil
+		if newContext {
+			g.cancel()
+			g.cancel = nil
+		}
 		return e
 	}
 	g.datagrams = gateway.NewPacketMux(g.bond)
 	g.session++
 	g.emit("connected", map[string]any{"session": g.session, "transport": "quic", "detail": "Maximum availability: independent QUIC paths"})
 	go g.bondStats(g.ctx, g.bond, g.bondCellUsed, g.session)
-	if g.cfg.TransitEndpoint != "" {
+	if newContext && g.cfg.TransitEndpoint != "" {
 		go g.transitHeartbeat(g.ctx, nil, g.cfg.TransitEndpoint)
 	}
 	return nil
@@ -87,7 +94,9 @@ func (g *Gateway) addBondPath(name string, binder SocketBinder, create bool) err
 	}
 	defer st.Close()
 	st.SetDeadline(time.Now().Add(3 * time.Second))
-	if e = gateway.WriteJSON(st, gateway.BondHello{Token: g.bondToken, Path: name, Create: create, CopyBudget: g.cfg.BondCopyBudget, CellBudget: g.remainingBondBudget(), CellDisabled: g.bondCellBlocked}); e != nil {
+	g.bondPathGeneration++
+	info := bond.PathInfo{ID: name, ProfileID: "legacy", Network: name, Generation: g.bondPathGeneration}
+	if e = gateway.WriteJSON(st, gateway.BondHello{PathID: info.ID, ProfileID: info.ProfileID, Network: info.Network, Generation: info.Generation, Token: g.bondToken, Path: name, Create: create, CopyBudget: g.cfg.BondCopyBudget, CellBudget: g.remainingBondBudget(), CellDisabled: g.bondCellBlocked}); e != nil {
 		return fail(e)
 	}
 	var reply gateway.BondWelcome
@@ -101,14 +110,25 @@ func (g *Gateway) addBondPath(name string, binder SocketBinder, create bool) err
 		}
 		return fail(errors.New(reply.Error))
 	}
+	if create {
+		secret, err := hex.DecodeString(reply.Token)
+		if err != nil || len(secret) != 32 {
+			return fail(errors.New("invalid session token"))
+		}
+		g.bondToken = reply.Token
+	}
 	if !c.ConnectionState().SupportsDatagrams.Remote {
 		return fail(errors.New("bond requires QUIC DATAGRAM"))
 	}
 	path := bondquic.NewQUICPath(c, cleanup)
-	if e = g.bond.Session.AddPath(name, path); e != nil {
+	if e = g.bond.Session.AddNamedPath(info, path); e != nil {
 		path.Close()
 		return e
 	}
+	if g.bondBinders == nil {
+		g.bondBinders = map[string]SocketBinder{}
+	}
+	g.bondBinders[name] = binder
 	return nil
 }
 
@@ -142,9 +162,21 @@ func (g *Gateway) bondStats(ctx context.Context, m *bond.Mux, offset uint64, ses
 		case <-ctx.Done():
 			return
 		case <-m.Context().Done():
+			g.mu.Lock()
+			current := g.bond == m
+			g.mu.Unlock()
+			if !current {
+				return
+			}
 			g.emit("disconnected", map[string]any{"detail": "Both paths failed; availability session expired"})
 			return
 		case <-t.C:
+			g.mu.Lock()
+			current := g.bond == m
+			g.mu.Unlock()
+			if !current {
+				return
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -173,6 +205,23 @@ func (d bondUDP) DialContext(ctx context.Context, network, address string) (net.
 		return nil, net.ErrClosed
 	}
 	st, e := m.OpenStream(ctx)
+	if e == bond.ErrDraining {
+		d.g.mu.Lock()
+		if d.g.bond == m {
+			e = d.g.rotateBondLocked(m)
+		} else {
+			e = nil
+		}
+		m, packets = d.g.bond, d.g.datagrams
+		d.g.mu.Unlock()
+		if e != nil {
+			return nil, e
+		}
+		if m == nil || packets == nil {
+			return nil, net.ErrClosed
+		}
+		st, e = m.OpenStream(ctx)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -213,4 +262,43 @@ func (g *Gateway) remainingBondBudget() uint64 {
 		return g.cfg.BondCellBudget - g.bondCellUsed
 	}
 	return 0
+}
+
+// Called under g.mu. The root context/TUN survives; retired sessions keep their
+// existing sockets until their bounded drain timeout or whole-Gateway Stop.
+func (g *Gateway) rotateBondLocked(old *bond.Mux) error {
+	// C1 must share the LTE ledger across current and draining sessions first.
+	if g.cfg.BondCellBudget > 0 {
+		return errors.New("bond rotation with finite LTE budget requires shared ledger")
+	}
+	live := g.bondDraining[:0]
+	for _, m := range g.bondDraining {
+		if m.Context().Err() == nil {
+			live = append(live, m)
+		}
+	}
+	g.bondDraining = live
+	if len(live) >= 3 {
+		return errors.New("bond draining session limit")
+	}
+	name := "wifi"
+	if !old.Session.HasPath(name) {
+		name = "cell"
+	}
+	binder, ok := g.bondBinders[name]
+	if !ok || !old.Session.HasPath(name) {
+		return errors.New("no path for replacement session")
+	}
+	token, packets := g.bondToken, g.datagrams
+	previousPath := g.cfg.InitialPath
+	g.cfg.InitialPath = name
+	if err := g.startBond(binder); err != nil {
+		g.bond = old
+		g.bondToken = token
+		g.datagrams = packets
+		g.cfg.InitialPath = previousPath
+		return err
+	}
+	g.bondDraining = append(g.bondDraining, old)
+	return nil
 }

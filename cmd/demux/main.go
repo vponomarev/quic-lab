@@ -12,17 +12,19 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"quiclab/internal/bond"
 	"quiclab/internal/gateway"
 	"syscall"
 	"time"
 )
 
 type config struct {
-	Listen   string `json:"listen"`
-	Cert     string `json:"cert"`
-	Key      string `json:"key"`
-	ClientCA string `json:"client_ca"`
-	Allow    string `json:"allow"`
+	BondDisconnectGraceSeconds int    `json:"bond_disconnect_grace_seconds,omitempty"`
+	Listen                     string `json:"listen"`
+	Cert                       string `json:"cert"`
+	Key                        string `json:"key"`
+	ClientCA                   string `json:"client_ca"`
+	Allow                      string `json:"allow"`
 }
 
 func run() error {
@@ -46,6 +48,9 @@ func run() error {
 	if cfg.Listen == "" || cfg.Cert == "" || cfg.Key == "" || cfg.ClientCA == "" || cfg.Allow == "" {
 		return errors.New("listen, cert, key, client_ca and allow are required")
 	}
+	if cfg.BondDisconnectGraceSeconds < 0 || cfg.BondDisconnectGraceSeconds > 3600 {
+		return errors.New("bond_disconnect_grace_seconds must be 0..3600")
+	}
 	cert, e := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
 	if e != nil {
 		return e
@@ -66,6 +71,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
+	srv.BondOptions = bond.Options{DisconnectGrace: time.Duration(cfg.BondDisconnectGraceSeconds) * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ln, e := quic.ListenAddr(cfg.Listen, tc, &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 1, MaxIncomingUniStreams: -1, MaxIdleTimeout: 10 * time.Second})

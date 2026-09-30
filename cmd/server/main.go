@@ -16,6 +16,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"quiclab/internal/admin"
+	"quiclab/internal/bond"
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/echo"
 	"quiclab/internal/echoawg"
@@ -171,6 +172,7 @@ func main() {
 			log.Error("gateway_policy", "error", e)
 			os.Exit(1)
 		}
+		gw.BondOptions = bond.Options{DisconnectGrace: time.Duration(opts.BondDisconnectGraceSeconds) * time.Second}
 		if uplink != nil {
 			gw.DialContext = uplink.DialContext
 			gw.Probe = uplink.Probe

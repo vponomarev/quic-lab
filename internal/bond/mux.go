@@ -18,6 +18,7 @@ type Mux struct {
 	Session   *Session
 	mu        sync.Mutex
 	client    bool
+	draining  bool
 	next      uint32
 	flows     map[uint32]*Stream
 	closed    map[uint32]bool
@@ -25,12 +26,16 @@ type Mux struct {
 	datagrams chan []byte
 }
 
-func NewMux(ctx context.Context, client bool) *Mux {
+func NewMux(ctx context.Context, client bool) *Mux { return NewMuxWithOptions(ctx, client, Options{}) }
+func NewMuxWithOptions(ctx context.Context, client bool, opts Options) *Mux {
 	m := &Mux{client: client, flows: map[uint32]*Stream{}, closed: map[uint32]bool{}, accepted: make(chan *Stream, 128), datagrams: make(chan []byte, 128)}
-	m.Session = New(ctx, m.deliver)
+	m.Session = NewWithOptions(ctx, m.deliver, opts)
 	return m
 }
 func (m *Mux) deliver(r Record) bool {
+	if m.Context().Err() != nil {
+		return false
+	}
 	if r.Kind == Datagram {
 		select {
 		case m.datagrams <- r.Payload:
@@ -109,7 +114,12 @@ func (m *Mux) newStream(id uint32) *Stream {
 }
 func (m *Mux) OpenStream(ctx context.Context) (*Stream, error) {
 	m.mu.Lock()
-	if !m.client || len(m.flows) >= 128 || m.next >= 65536 {
+	if m.next >= 65536 {
+		m.mu.Unlock()
+		m.BeginDrain()
+		return nil, ErrDraining
+	}
+	if !m.client || len(m.flows) >= 128 {
 		m.mu.Unlock()
 		return nil, errors.New("bond flow limit")
 	}
@@ -331,4 +341,18 @@ func (f *Stream) Close() error {
 		f.m.mu.Unlock()
 	})
 	return nil
+}
+
+// BeginDrain rejects new flows and bounds the remaining lifetime of old flows.
+func (m *Mux) BeginDrain() {
+	m.mu.Lock()
+	if m.draining {
+		m.mu.Unlock()
+		return
+	}
+	m.draining = true
+	m.next = 65536
+	m.mu.Unlock()
+	timer := time.AfterFunc(m.Session.options.DisconnectGrace, func() { m.Close() })
+	context.AfterFunc(m.Context(), func() { timer.Stop() })
 }

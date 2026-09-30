@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"github.com/quic-go/quic-go"
@@ -14,6 +15,10 @@ import (
 const BondALPN = bondquic.ALPN
 
 type BondHello struct {
+	PathID       string `json:"path_id,omitempty"`
+	ProfileID    string `json:"profile_id,omitempty"`
+	Network      string `json:"network,omitempty"`
+	Generation   uint64 `json:"generation,omitempty"`
 	CellDisabled bool   `json:"cell_disabled"`
 	CopyBudget   uint64 `json:"copy_budget"`
 	CellBudget   uint64 `json:"cell_budget"`
@@ -22,6 +27,7 @@ type BondHello struct {
 	Create       bool   `json:"create"`
 }
 type BondWelcome struct {
+	Token string `json:"token,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 type bondEntry struct {
@@ -53,9 +59,18 @@ func (s *Server) serveBond(ctx context.Context, c *quic.Conn) {
 		return
 	}
 	token, e := hex.DecodeString(h.Token)
-	if e != nil || len(token) != 32 || (h.Path != "wifi" && h.Path != "cell") {
+	if e != nil || len(token) != 32 || (h.PathID == "" && h.Path != "wifi" && h.Path != "cell") {
 		WriteJSON(st, BondWelcome{Error: "invalid join"})
 		return
+	}
+	// CREATE always receives a fresh server-generated secret; an old token cannot
+	// recreate its previous session, even after its registry entry is removed.
+	if h.Create {
+		var secret [32]byte
+		if _, e = rand.Read(secret[:]); e != nil {
+			return
+		}
+		h.Token = hex.EncodeToString(secret[:])
 	}
 	owner := sha256.Sum256(cs.PeerCertificates[0].Raw)
 	s.bonds.mu.Lock()
@@ -71,7 +86,7 @@ func (s *Server) serveBond(ctx context.Context, c *quic.Conn) {
 		}
 	}
 	if entry == nil && h.Create && ownerCount < 4 && len(s.bonds.entries) < 32 {
-		entry = &bondEntry{mux: bond.NewMux(ctx, false), owner: owner, ready: make(chan struct{})}
+		entry = &bondEntry{mux: bond.NewMuxWithOptions(ctx, false, s.BondOptions), owner: owner, ready: make(chan struct{})}
 		s.bonds.entries[h.Token] = entry
 		entry.mux.Session.Configure(h.CopyBudget, h.CellBudget)
 		if h.CellDisabled {
@@ -124,14 +139,23 @@ func (s *Server) serveBond(ctx context.Context, c *quic.Conn) {
 		return
 	}
 	// Existing per-path authorization/revocation is installed by ServeQUIC as well.
-	if h.Path == "cell" && !entry.mux.Session.CellAllowed() {
+	if (h.Network == "cell" || h.Path == "cell") && !entry.mux.Session.CellAllowed() {
 		WriteJSON(st, BondWelcome{Error: "LTE session budget exhausted"})
 		return
 	}
-	if WriteJSON(st, BondWelcome{}) != nil {
+	path := bondquic.NewQUICPath(c, nil)
+	var joinErr error
+	if h.PathID != "" {
+		joinErr = entry.mux.Session.AddNamedPath(bond.PathInfo{ID: h.PathID, ProfileID: h.ProfileID, Network: h.Network, Generation: h.Generation}, path)
+	} else {
+		joinErr = entry.mux.Session.AddPath(h.Path, path)
+	}
+	if joinErr != nil {
+		path.Close()
 		return
 	}
-	if entry.mux.Session.AddPath(h.Path, bondquic.NewQUICPath(c, nil)) != nil {
+	if WriteJSON(st, BondWelcome{Token: h.Token}) != nil {
+		path.Close()
 		return
 	}
 	select {

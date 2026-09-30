@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** План предложен для проверки; реализация не начата.
+**Status:** B1 выполнен с переходным ограничением конечного LTE-бюджета до C1/C2; B2–B4 не начаты.
 
 ## Global Constraints
 
@@ -51,7 +51,7 @@ A1–A3. B1/B2 можно проверить на Go-стенде до Android. 
 
 **Interfaces:** type Options struct { DisconnectGrace time.Duration; MaxPendingSession, MaxPendingFlow int }; func NewWithOptions(ctx context.Context, deliver func(Record) bool, opts Options) *Session; type PathInfo struct { ID, ProfileID, Network string; Generation uint64 }; func (s *Session) AddNamedPath(info PathInfo, p Path) error; сохранить New/AddPath как внутренние совместимые обёртки. BondHello получает path_id/profile_id/network/generation, не ограничивает path_id строками wifi/cell.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestRetentionPreservesPendingUntilGrace; TestPathGenerationReplacement; TestFlowIDExhaustionDrains. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestRetentionPreservesPendingUntilGrace; TestPathGenerationReplacement; TestFlowIDExhaustionDrains. Минимальные обязательные проверки:
 
 ```text
 assert disconnected(119*second).sessionAlive
@@ -62,17 +62,17 @@ assert lateOpenFromPreviousSession.doesNotCreateSocket
 assert exhaustion.rejectsNewFlowWithoutKillingExisting
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** По умолчанию DisconnectGrace=120s, max pending 1024/64. При полном отсутствии путей отделить срок удержания от 30s таймаута медленного читателя; заморозить таймер прогресса потока на время полной потери путей, но не срок сессии. Сохранить bounded receive queues. Перед исчерпанием ID перевести старую сессию в draining, новые потоки — в новую; старые остаются до завершения/таймаута. Секрет новой сессии новый; токен старой не возобновляет её после закрытия. Закрытие и удаление пути проверяют поколение.
+- [x] **Step 3 — реализация:** По умолчанию DisconnectGrace=120s, max pending 1024/64. При полном отсутствии путей отделить срок удержания от 30s таймаута медленного читателя; заморозить таймер прогресса потока на время полной потери путей, но не срок сессии. Сохранить bounded receive queues. Перед исчерпанием ID перевести старую сессию в draining, новые потоки — в новую; старые остаются до завершения/таймаута. Секрет новой сессии новый; токен старой не возобновляет её после закрытия. Закрытие и удаление пути проверяют поколение.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/bond ./internal/gateway ./mobile ./cmd/server ./cmd/demux -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: retain bounded bond sessions across path replacement"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: retain bounded bond sessions across path replacement"`. Не включать соседние незавершённые задачи.
 
 ### Task B2: HTTPS WebSocket-адаптер общей сессии
 

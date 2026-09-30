@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-const ALPN = "quic-lab-bond/1"
+const ALPN = "quic-lab-bond/2"
 
 // Queue isolates each path's congestion controller; it cannot block the other path.
 type QUICPath struct {

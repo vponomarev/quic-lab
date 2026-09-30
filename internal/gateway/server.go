@@ -23,10 +23,12 @@ import (
 	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go"
 	"github.com/xtaci/smux"
+	"quiclab/internal/bond"
 	"quiclab/internal/protocol"
 )
 
 type Server struct {
+	BondOptions      bond.Options
 	bonds            bondRegistry
 	Capture          func(tls.ConnectionState, string, string, net.Conn) net.Conn
 	DialContext      func(context.Context, string, string) (net.Conn, error)

@@ -42,26 +42,29 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
-	bondCellUsed    uint64
-	bondCellBlocked bool
-	bond            *bond.Mux
-	bondToken       string
-	probes          probePolicy
-	direct          flowDialer // Set only before publishing a direct-only router backend.
-	udpStream       bool
-	datagrams       *gateway.DatagramMux
-	awg             *awg.Engine
-	exitChecking    bool
-	mu              sync.Mutex
-	q               *Client
-	mux             *smux.Session
-	cfg             gatewayConfig
-	tls             *tls.Config
-	sink            EventSink
-	ctx             context.Context
-	cancel          context.CancelFunc
-	tunStop         func()
-	session         int64
+	bondCellUsed       uint64
+	bondCellBlocked    bool
+	bond               *bond.Mux
+	bondToken          string
+	bondPathGeneration uint64
+	bondDraining       []*bond.Mux
+	bondBinders        map[string]SocketBinder
+	probes             probePolicy
+	direct             flowDialer // Set only before publishing a direct-only router backend.
+	udpStream          bool
+	datagrams          *gateway.DatagramMux
+	awg                *awg.Engine
+	exitChecking       bool
+	mu                 sync.Mutex
+	q                  *Client
+	mux                *smux.Session
+	cfg                gatewayConfig
+	tls                *tls.Config
+	sink               EventSink
+	ctx                context.Context
+	cancel             context.CancelFunc
+	tunStop            func()
+	session            int64
 }
 
 func NewGateway(sink EventSink) *Gateway { return &Gateway{sink: sink} }
@@ -254,7 +257,25 @@ func (g *Gateway) open(ctx context.Context) (gateway.Stream, error) {
 	q, m, bonded := g.q, g.mux, g.bond
 	g.mu.Unlock()
 	if bonded != nil {
-		return bonded.OpenStream(ctx)
+		stream, err := bonded.OpenStream(ctx)
+		if err != bond.ErrDraining {
+			return stream, err
+		}
+		g.mu.Lock()
+		if g.bond == bonded {
+			err = g.rotateBondLocked(bonded)
+		} else {
+			err = nil
+		}
+		replacement := g.bond
+		g.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if replacement == nil {
+			return nil, net.ErrClosed
+		}
+		return replacement.OpenStream(ctx)
 	}
 	if q != nil {
 		q.op.Lock()
@@ -355,6 +376,11 @@ func (g *Gateway) LocalAddress() string {
 }
 func (g *Gateway) Stop() {
 	g.mu.Lock()
+	for _, old := range g.bondDraining {
+		old.Close()
+	}
+	g.bondDraining = nil
+	g.bondBinders = nil
 	if g.bond != nil {
 		g.bond.Close()
 		g.bond = nil

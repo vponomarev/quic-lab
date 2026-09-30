@@ -39,3 +39,16 @@ func TestFallbackRemoteAddresses(t *testing.T) {
 		}
 	}
 }
+
+func TestBondRetentionConfiguration(t *testing.T) {
+	for _, value := range []string{"-1", "3601"} {
+		if _, err := parseServerConfig([]string{"-ephemeral-cert", "-bond-disconnect-grace-seconds", value}); err == nil {
+			t.Fatalf("accepted retention %s", value)
+		}
+	}
+	for _, value := range []string{"0", "120", "3600"} {
+		if _, err := parseServerConfig([]string{"-ephemeral-cert", "-bond-disconnect-grace-seconds", value}); err != nil {
+			t.Fatalf("retention %s: %v", value, err)
+		}
+	}
+}

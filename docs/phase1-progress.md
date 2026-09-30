@@ -15,7 +15,7 @@ Verification: Linux `go test ./internal/vpnmodel ./mobile -count=1 -timeout=120s
 - Existing ordinary QUIC/HTTPS remain standalone; only max_availability maps to demux. No automatic grouping by hostname.
 - Installed task-start helper requires numeric headings but plans use A1 etc.; use equivalent exact task extraction with BASE and private ledger.
 
-Next: B1, stable demux session and bounded retention. Remaining 17 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
+Next: B2, HTTPS WebSocket adapter for the shared session. Remaining 16 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
 
 Private ledger: .superpowers/sdd/2026-09-30-phase1-01-model-lifecycle/progress.md.
 
@@ -38,3 +38,13 @@ MultipleLiveTest now accepts an optional synthetic profile_file and restores the
 A3 final device gate (2026-09-30): MultipleLiveTest ran with multiple_live=true, probe_host=192.168.5.214 and an isolated synthetic profile. OK (1 test), 34.341 s; not a skipped/default invocation. Real TCP/UDP over QUIC/HTTPS, app UID and subnet priority, unmatched direct traffic, pause-without-fallback, other-exit survival, resume/reorder and single QUIC/HTTPS regression passed. The test restored profile metadata; no VPN service remained afterwards. Temporary server/responders stopped and synthetic profile removed from Android external storage. Final Linux routing/mobile suite passed again. Local evidence: artifacts/a3-live-result.log and artifacts/a3-live-report.txt (not committed; diagnostics can contain user network metadata).
 
 Scope: two logical tunnels to one isolated Linux server over the available network. This does not certify two physical servers, Wi-Fi/LTE migration, demux session continuity or long-duration soak; those belong to later gates.
+
+## B1 — complete with C1/C2 integration gate
+
+Added Options with 120-second default disconnect grace, bounded pending records (1024 per session / 64 per flow), and configurable server grace (0 defaults to 120; accepted explicit range 1–3600 seconds). Reliable record ageing pauses while all paths are absent and resumes on reconnect; datagrams retain their short expiry. PathInfo carries independent path/profile/network identity and generation; stale replacement/removal callbacks cannot remove the current path. Scheduler, LTE classification and stats support named paths. Receive queues remain bounded.
+
+Flow-ID exhaustion enters draining. New TCP/UDP flows can rotate to a new session without canceling the Gateway root/TUN or existing TCP sockets. Retirees are capped at three plus current and have a bounded drain timeout. CREATE receives a server-generated fresh secret; expired-token resume is rejected. Wire change bumps bond ALPN to quic-lab-bond/2, requiring matching client/server versions; no production deployment or phone APK installation was performed in B1.
+
+Transitional limitation: automatic draining rotation with a finite legacy LTE budget explicitly returns an error, leaving old flows alive. This prevents budget reset/double allowance. C1/C2 must share accounting across current and retired sessions before lifting this guard; the C2 plan now includes the regression/removal gate. Therefore the complete MVP budget contract is not claimed at B1.
+
+Verification: full Linux suite `go test ./internal/bond ./internal/gateway ./mobile ./cmd/server ./cmd/demux -count=1 -timeout=120s` passed; targeted bond/retention/mobile integration tests with race passed; vet passed. Final AAR/APK and lint build passed (artifacts/b1-final-build.log). Tests exercise 119/120-second boundaries using an adjusted disconnect timestamp, not a two-minute wall-clock soak; real pending payload delivery after a scaled outage and real TCP preservation across session rotation passed. Existing slow-reader regression still passes. No Android device test was required by B1; B4/E5 remain responsible for device/network acceptance.

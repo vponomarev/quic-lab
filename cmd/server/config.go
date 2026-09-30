@@ -14,28 +14,30 @@ import (
 )
 
 type serverConfig struct {
-	Listen               string `json:"listen"`
-	Cert                 string `json:"cert"`
-	Key                  string `json:"key"`
-	EphemeralCert        bool   `json:"ephemeral_cert"`
-	TLSFallback          string `json:"tls_fallback"`
-	TLSHost              string `json:"tls_host"`
-	HTTPSListen          string `json:"https_listen"`
-	PublicTLSMin         string `json:"public_tls_min,omitempty"`
-	PublicTLSDiagnostics bool   `json:"public_tls_diagnostics,omitempty"`
-	WebListen            string `json:"web_listen"`
-	GatewayQUIC          string `json:"gateway_quic"`
-	GatewayHTTPS         string `json:"gateway_https"`
-	ClientCA             string `json:"client_ca"`
-	GatewayAllow         string `json:"gateway_allow"`
-	DemoListen           string `json:"demo_listen"`
-	AdminConfig          string `json:"admin_config"`
+	BondDisconnectGraceSeconds int    `json:"bond_disconnect_grace_seconds,omitempty"`
+	Listen                     string `json:"listen"`
+	Cert                       string `json:"cert"`
+	Key                        string `json:"key"`
+	EphemeralCert              bool   `json:"ephemeral_cert"`
+	TLSFallback                string `json:"tls_fallback"`
+	TLSHost                    string `json:"tls_host"`
+	HTTPSListen                string `json:"https_listen"`
+	PublicTLSMin               string `json:"public_tls_min,omitempty"`
+	PublicTLSDiagnostics       bool   `json:"public_tls_diagnostics,omitempty"`
+	WebListen                  string `json:"web_listen"`
+	GatewayQUIC                string `json:"gateway_quic"`
+	GatewayHTTPS               string `json:"gateway_https"`
+	ClientCA                   string `json:"client_ca"`
+	GatewayAllow               string `json:"gateway_allow"`
+	DemoListen                 string `json:"demo_listen"`
+	AdminConfig                string `json:"admin_config"`
 }
 
 func parseServerConfig(args []string) (serverConfig, error) {
 	c := serverConfig{Listen: "127.0.0.1:4433"}
 	fs := flag.NewFlagSet("quic-lab-server", flag.ContinueOnError)
 	path := fs.String("config", "", "server JSON configuration; explicit CLI flags override file values")
+	fs.IntVar(&c.BondDisconnectGraceSeconds, "bond-disconnect-grace-seconds", 0, "bond disconnect retention, seconds (0 = 120)")
 	check := fs.Bool("check-config", false, "validate configuration without opening listeners")
 	fs.StringVar(&c.Listen, "listen", c.Listen, "Echo QUIC UDP listen address")
 	fs.StringVar(&c.Cert, "cert", "", "PEM certificate file")
@@ -120,6 +122,9 @@ func validateAddress(value string, backend bool) error {
 }
 
 func (c serverConfig) validate() error {
+	if c.BondDisconnectGraceSeconds < 0 || c.BondDisconnectGraceSeconds > 3600 {
+		return errors.New("bond_disconnect_grace_seconds must be 0..3600")
+	}
 	if _, err := publicTLSMinimum(c.PublicTLSMin); err != nil {
 		return err
 	}

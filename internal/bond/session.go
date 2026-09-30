@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"sort"
 	"sync"
 	"time"
 )
@@ -47,6 +48,7 @@ type packet struct {
 }
 type traffic struct{ sent, received, copies, probes, rxCopies, rxControl uint64 }
 type pathState struct {
+	info PathInfo
 	*traffic
 	p                                                 Path
 	rtt, variance                                     time.Duration
@@ -75,6 +77,8 @@ type Stats struct {
 	CellBlocked bool        `json:"cell_blocked"`
 }
 type Session struct {
+	options       Options
+	generations   map[string]uint64
 	cellBlocked   bool
 	totals        map[string]*traffic
 	recordTimeout time.Duration
@@ -99,10 +103,7 @@ type Session struct {
 }
 
 func New(ctx context.Context, deliver func(Record) bool) *Session {
-	c, cancel := context.WithCancel(ctx)
-	s := &Session{totals: map[string]*traffic{}, recordTimeout: 30 * time.Second, ctx: c, cancel: cancel, paths: map[string]*pathState{}, pending: map[uint64]*packet{}, perFlow: map[uint32]int{}, changed: make(chan struct{}), deliver: deliver, emptySince: time.Now()}
-	go s.run()
-	return s
+	return NewWithOptions(ctx, deliver, Options{})
 }
 func (s *Session) Configure(copyPerMinute, cellPerDirection uint64) {
 	s.mu.Lock()
@@ -120,7 +121,7 @@ func (s *Session) CellAllowed() bool {
 func (s *Session) BlockCell()     { s.mu.Lock(); s.cellBlocked = true; s.mu.Unlock() }
 func (s *Session) noteDuplicate() { s.mu.Lock(); s.duplicate++; s.mu.Unlock() }
 func (s *Session) sendOn(name string, p *pathState, b []byte, control bool) error {
-	if name == "cell" && (s.cellBlocked || s.cellLimit > 0 && s.cellSent+uint64(len(b)) > s.cellLimit) {
+	if p.info.Network == "cell" && (s.cellBlocked || s.cellLimit > 0 && s.cellSent+uint64(len(b)) > s.cellLimit) {
 		s.cellBlocked = true
 		return errors.New("LTE session budget exhausted")
 	}
@@ -129,7 +130,7 @@ func (s *Session) sendOn(name string, p *pathState, b []byte, control bool) erro
 	}
 	p.sent += uint64(len(b))
 	p.lastSend = time.Now()
-	if name == "cell" {
+	if p.info.Network == "cell" {
 		s.cellSent += uint64(len(b))
 	}
 	if control {
@@ -140,7 +141,11 @@ func (s *Session) sendOn(name string, p *pathState, b []byte, control bool) erro
 func (s *Session) Context() context.Context { return s.ctx }
 func (s *Session) signal()                  { close(s.changed); s.changed = make(chan struct{}) }
 func (s *Session) AddPath(name string, p Path) error {
-	if name != "wifi" && name != "cell" {
+	return s.addPath(PathInfo{ID: name, ProfileID: name, Network: name}, p)
+}
+func (s *Session) addPath(info PathInfo, p Path) error {
+	name := info.ID
+	if p == nil || name == "" || len(name) > 128 || len(info.ProfileID) > 128 || (info.Network != "wifi" && info.Network != "cell") {
 		return errors.New("invalid path")
 	}
 	s.mu.Lock()
@@ -148,13 +153,27 @@ func (s *Session) AddPath(name string, p Path) error {
 	if s.ctx.Err() != nil {
 		return net.ErrClosed
 	}
-	if name == "cell" && (s.cellBlocked || s.cellLimit > 0 && s.cellSent >= s.cellLimit) {
+	if info.Network == "cell" && (s.cellBlocked || s.cellLimit > 0 && s.cellSent >= s.cellLimit) {
 		return errors.New("LTE session budget exhausted")
 	}
+	if info.Generation == 0 {
+		info.Generation = s.generations[name] + 1
+	}
+	if info.Generation <= s.generations[name] {
+		return errors.New("stale path generation")
+	}
+	if _, known := s.generations[name]; !known && len(s.generations) >= 1024 {
+		return errors.New("path identity limit")
+	}
+	s.generations[name] = info.Generation
 	if old := s.paths[name]; old != nil {
 		old.p.Close()
 	}
 	now := time.Now()
+	if len(s.paths) == 0 && !s.emptySince.IsZero() && now.Sub(s.emptySince) >= s.options.DisconnectGrace {
+		s.cancel()
+		return net.ErrClosed
+	}
 	healthy := now
 	// A first Wi-Fi path may be used immediately; a recovered path must prove stability.
 	if s.next == 0 && len(s.paths) == 0 {
@@ -163,17 +182,33 @@ func (s *Session) AddPath(name string, p Path) error {
 	if s.totals[name] == nil {
 		s.totals[name] = &traffic{}
 	}
-	ps := &pathState{traffic: s.totals[name], p: p, rtt: 100 * time.Millisecond, variance: 25 * time.Millisecond, lastReply: now, healthySince: healthy}
+	ps := &pathState{info: info, traffic: s.totals[name], p: p, rtt: 100 * time.Millisecond, variance: 25 * time.Millisecond, lastReply: now, healthySince: healthy}
+	if len(s.paths) == 0 && !s.emptySince.IsZero() {
+		for _, packet := range s.pending {
+			if packet.Kind != Datagram {
+				packet.created = packet.created.Add(now.Sub(maxTime(s.emptySince, packet.created)))
+			}
+		}
+	}
 	s.paths[name] = ps
 	s.emptySince = time.Time{}
 	s.signal()
 	go s.receive(name, ps)
 	return nil
 }
-func (s *Session) RemovePath(name string) {
+func (s *Session) RemovePath(name string) { s.removePath(name, 0) }
+func (s *Session) RemoveNamedPath(info PathInfo) {
+	if info.Generation != 0 {
+		s.removePath(info.ID, info.Generation)
+	}
+}
+func (s *Session) removePath(name string, generation uint64) {
 	s.mu.Lock()
-	if p := s.paths[name]; p != nil {
+	if p := s.paths[name]; p != nil && (generation == 0 || p.info.Generation == generation) {
 		delete(s.paths, name)
+		if len(s.paths) == 0 && s.emptySince.IsZero() {
+			s.emptySince = time.Now()
+		}
 		p.p.Close()
 		s.signal()
 	}
@@ -211,7 +246,7 @@ func (s *Session) Send(ctx context.Context, r Record) error {
 			s.mu.Unlock()
 			return net.ErrClosed
 		}
-		if len(s.pending) < maxPending && s.perFlow[r.Flow] < 64 {
+		if len(s.pending) < s.options.MaxPendingSession && s.perFlow[r.Flow] < s.options.MaxPendingFlow {
 			s.next++
 			p := &packet{Record: r, id: s.next, created: time.Now()}
 			p.Payload = append([]byte(nil), r.Payload...)
@@ -252,30 +287,39 @@ func frame(kind byte, flow uint32, seq, id uint64, stamp int64, copy bool, paylo
 }
 func copyBytes(dst, src []byte) { copy(dst, src) }
 func (s *Session) preferred(now time.Time) string {
-	w, c := s.paths["wifi"], s.paths["cell"]
+	wn, cn := "", ""
+	for name, p := range s.paths {
+		if p.info.Network == "wifi" && (wn == "" || p.rtt < s.paths[wn].rtt || p.rtt == s.paths[wn].rtt && name < wn) {
+			wn = name
+		}
+		if p.info.Network == "cell" && (cn == "" || p.rtt < s.paths[cn].rtt || p.rtt == s.paths[cn].rtt && name < cn) {
+			cn = name
+		}
+	}
+	w, c := s.paths[wn], s.paths[cn]
 	if s.cellBlocked || s.cellLimit > 0 && s.cellSent >= s.cellLimit {
 		c = nil
 	}
 	if w != nil {
 		if c == nil {
-			return "wifi"
+			return wn
 		}
 		if now.Sub(c.lastReply) > 2*time.Second && now.Sub(w.lastReply) < 2*time.Second {
-			return "wifi"
+			return wn
 		}
 		healthy := now.Sub(w.healthySince)
 		if now.After(w.penalizedUntil) && now.Sub(w.lastReply) < 2*time.Second && healthy > 5*time.Second && w.rtt <= max(150*time.Millisecond, c.rtt*3/2) {
 			if healthy > 8*time.Second {
-				return "wifi"
+				return wn
 			}
 			if now.Sub(s.lastTrial) > 100*time.Millisecond {
 				s.lastTrial = now
-				return "wifi"
+				return wn
 			}
 		}
 	}
 	if c != nil {
-		return "cell"
+		return cn
 	}
 	return ""
 }
@@ -338,6 +382,7 @@ func (s *Session) remove(id uint64, p *packet) {
 func (s *Session) run() {
 	t := time.NewTicker(10 * time.Millisecond)
 	defer t.Stop()
+	defer s.Close()
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -349,15 +394,18 @@ func (s *Session) run() {
 				if s.emptySince.IsZero() {
 					s.emptySince = now
 				}
-				if now.Sub(s.emptySince) > 30*time.Second {
+				if now.Sub(s.emptySince) >= s.options.DisconnectGrace {
 					s.cancel()
 				}
 			} else {
 				s.emptySince = time.Time{}
 			}
 			for name, p := range s.paths {
-				if name == "cell" && s.cellBlocked {
+				if p.info.Network == "cell" && s.cellBlocked {
 					delete(s.paths, name)
+					if len(s.paths) == 0 && s.emptySince.IsZero() {
+						s.emptySince = time.Now()
+					}
 					p.p.Close()
 					continue
 				}
@@ -382,6 +430,9 @@ func (s *Session) run() {
 					s.remove(id, p)
 					continue
 				}
+				if len(s.paths) == 0 && p.Kind != Datagram {
+					continue
+				}
 				if age > s.recordTimeout {
 					if p.Kind == Reset {
 						s.remove(id, p)
@@ -397,9 +448,11 @@ func (s *Session) run() {
 				}
 				threshold := hedge(s.paths[p.primary])
 				if !p.copied && now.Sub(p.last) > threshold {
-					other := "wifi"
-					if p.primary == "wifi" {
-						other = "cell"
+					other := ""
+					for name, path := range s.paths {
+						if name != p.primary && (other == "" || path.rtt < s.paths[other].rtt || path.rtt == s.paths[other].rtt && name < other) {
+							other = name
+						}
 					}
 					if s.paths[other] != nil {
 						if bad := s.paths[p.primary]; bad != nil {
@@ -436,6 +489,9 @@ func (s *Session) receive(name string, ps *pathState) {
 		s.mu.Lock()
 		if s.paths[name] == ps {
 			delete(s.paths, name)
+			if len(s.paths) == 0 && s.emptySince.IsZero() {
+				s.emptySince = time.Now()
+			}
 			s.signal()
 		}
 		s.mu.Unlock()
@@ -454,6 +510,10 @@ func (s *Session) receive(name string, ps *pathState) {
 		stamp := int64(binary.BigEndian.Uint64(b[22:]))
 		now := time.Now()
 		s.mu.Lock()
+		if s.paths[name] != ps {
+			s.mu.Unlock()
+			return
+		}
 		ps.received += uint64(len(b))
 		if kind >= ack {
 			ps.rxControl += uint64(len(b))
@@ -521,7 +581,12 @@ func (s *Session) Stats() Stats {
 	defer s.mu.Unlock()
 	now := time.Now()
 	v := Stats{CellSent: s.cellSent, CellBlocked: s.cellBlocked || s.cellLimit > 0 && s.cellSent >= s.cellLimit, Pending: len(s.pending), Duplicates: s.duplicate, Rescued: s.rescued, Expired: s.expired}
-	for _, n := range []string{"wifi", "cell"} {
+	names := make([]string, 0, len(s.totals))
+	for n := range s.totals {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
 		total := s.totals[n]
 		if total == nil {
 			continue
@@ -540,4 +605,11 @@ func (s *Session) Stats() Stats {
 		}
 	}
 	return v
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
