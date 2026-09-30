@@ -79,6 +79,7 @@ internal object ProfileImport {
                 .putString("hostname",p.getString("hostname")).putString("ca",p.optString("ca"))
                 .putString("dns",p.optString("dns","1.1.1.1")).putInt("mode",p.optInt("mode",0))
                 .putString("routes",p.optString("routes")).putStringSet("apps",emptySet()).commit())
+            VpnProfiles.configuration(context)
             } catch(e:Exception) {
                 VpnProfiles.delete(context,added.id); VpnProfiles.select(context,previous); throw e
             }

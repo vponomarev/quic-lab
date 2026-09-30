@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal object VpnProfiles {
+    fun configuration(c:Context):JSONObject = VpnConfiguration.load(c)
     data class Profile(val id:String,val name:String)
     private fun meta(c:Context)=c.getSharedPreferences("vpn_profiles",Context.MODE_PRIVATE)
     @Synchronized fun list(c:Context):List<Profile> {

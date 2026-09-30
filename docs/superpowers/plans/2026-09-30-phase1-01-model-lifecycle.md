@@ -51,7 +51,7 @@
 
 **Interfaces:** vpnmodel: type Config struct { Version int; Exits []Exit; Profiles []Profile }; type Exit struct { ID, Name, Kind, DemuxID string }; type Profile struct { ID, ExitID, Transport, Mode, Endpoint string; Priority, PoolSize int; CheckReserve bool }; func Parse(raw []byte) (Config,error); func Validate(c Config) error. Kind: demux/standalone; Mode: auto/reserve/disabled. VpnConfiguration.migrate(context: Context): JSONObject; load(context: Context): JSONObject.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestConfigOwnership; VpnConfigurationTest.migrationIsIdempotentAndAtomic. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestConfigOwnership; VpnConfigurationTest.migrationIsIdempotentAndAtomic. Минимальные обязательные проверки:
 
 ```text
 assert migrate(migrate(oldConfig)) == migrate(oldConfig)
@@ -62,17 +62,17 @@ assert standaloneAWG.profileCount == 1
 assert failedWriteLeavesOldConfigAndKeysIntact
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Старый профиль становится отдельным выходом с прежним ID для маршрутов; существующий max_availability — demux, остальные сохраняют фактический backend. Не группировать разные серверы автоматически. Profile.PoolSize=1 означает выключенную карусель; при включении 2–5. Версионированный JSON плюс атомарная замена, backup прежних настроек. Секреты остаются в VpnIdentity, в JSON только ссылки. Перенести выбор DNS без изменения поведения.
+- [x] **Step 3 — реализация:** Старый профиль становится отдельным выходом с прежним ID для маршрутов; существующий max_availability — demux, остальные сохраняют фактический backend. Не группировать разные серверы автоматически. Profile.PoolSize=1 означает выключенную карусель; при включении 2–5. Версионированный JSON плюс атомарная замена, backup прежних настроек. Секреты остаются в VpnIdentity, в JSON только ссылки. Перенести выбор DNS без изменения поведения.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/vpnmodel -count=1; Android: VpnConfigurationTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: introduce exit and connection profile model"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: introduce exit and connection profile model"`. Не включать соседние незавершённые задачи.
 
 ### Task A2: Контроллер выхода и защита от устаревших событий
 

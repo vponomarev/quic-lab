@@ -1,19 +1,20 @@
 # Phase one execution progress
 
-Execution method: inline, selected by owner; do not use subagents unless the owner revisits this preference. Plan: docs/superpowers/plans/2026-09-30-phase1-00-roadmap.md.
+Execution: inline, selected by owner; no subagents unless requested. Plan: docs/superpowers/plans/2026-09-30-phase1-00-roadmap.md.
 
-## A1 — in progress
+## A1 — complete
 
-Portable Go model and gomobile validation bridge implemented. Rejects invalid ownership, duplicate IDs, unsupported modes/transports, unsupported standalone carousel and invalid endpoints; preserves disabled empty drafts and standalone legacy QUIC/HTTPS semantics.
+Portable Go model, gomobile validator, and Android atomic configuration projection implemented. Stable legacy IDs, DNS/routes/apps and encrypted identity references are preserved. Ordinary QUIC/HTTPS/AWG remain standalone; existing max_availability becomes demux. Profile import publishes the snapshot and rolls back a newly added profile and identity if writing fails.
 
-Verified on Linux: expected behavioral RED before implementation; GREEN for internal/vpnmodel and mobile, exit 0; vet for new model passed. Android AAR/APK/lint and instrumentation APK compilation passed. No instrumentation tests executed yet: physical device unavailable.
+Verification: Linux `go test ./internal/vpnmodel ./mobile -count=1 -timeout=120s` and `go vet ./internal/vpnmodel` passed. Android debug and test APK builds plus lint passed. Connected Android device: `VpnConfigurationTest`, OK (7 tests). Observed RED before implementation for migration and import; final GREEN includes forced write failure, rollback, idempotence, settings and identity preservation, ordinary transport compatibility, and empty drafts. Tests use isolated preferences/files and synthetic keys; no live tunnel was started.
 
-Next action: connect phone to Windows, install the current test build, run ru.vpnc.quiclab.VpnConfigurationTest and observe expected failure against the migration stub. Then implement and verify migration. Tests use namespaced SharedPreferences and a dedicated cache/files directory, not the owner's profiles. Do not claim migration complete or install this build as a release.
+## Rulings and transition constraints
 
-## Rulings
+- Disabled blank drafts are valid; activation still requires endpoint validation.
+- Legacy SharedPreferences remain authoritative during A1 and are retained unchanged as the migration fallback. The versioned JSON is an atomic projection refreshed on load/import; encrypted identities stay in their existing files. Lifecycle consumers arrive in A2. Before introducing new model-only editing, replace this projection with an explicit ownership/version transition so local edits cannot be overwritten.
+- Existing ordinary QUIC/HTTPS remain standalone; only max_availability maps to demux. No automatic grouping by hostname.
+- Installed task-start helper requires numeric headings but plans use A1 etc.; use equivalent exact task extraction with BASE and private ledger.
 
-- Allow disabled blank drafts to preserve fresh installations. Risk: consumers must continue to validate before activation.
-- Migrate ordinary QUIC/HTTPS as standalone; only existing max_availability becomes demux. Risk: grouping profiles requires a later explicit operation, not heuristic migration.
-- Installed task-start helper expects numeric headings but plans use A1 etc.; extracted the exact task brief and recorded BASE=1e38aec in the equivalent local ledger. No installed skill scripts modified.
+Next: A2, isolate exit lifecycle and reject stale callbacks. Remaining 19 tasks are not complete. This is a development build, not a release or a verified whole-MVP implementation.
 
-Private execution ledger: .superpowers/sdd/2026-09-30-phase1-01-model-lifecycle/progress.md. All 20 tasks remain incomplete until their task-level checks, including device checks where required, pass.
+Private ledger: .superpowers/sdd/2026-09-30-phase1-01-model-lifecycle/progress.md.
