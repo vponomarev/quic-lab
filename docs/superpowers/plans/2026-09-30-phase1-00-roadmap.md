@@ -51,37 +51,51 @@
 - [ ] Выполнить базовые Go-тесты и build/lint Android указанными ниже командами, на Linux — platform-specific/race tests. Записать известные исходные failures отдельно от новых; не объявлять всю матрицу пройденной по Windows.
 - [ ] Сохранить docs/phase1-baseline.md с commit hashes, списком перенесённых исходных изменений, командами и фактическими результатами. Не включать чувствительные локальные пути/конфиги в публичный отчёт.
 
+## Среда выполнения тестов — уточнение владельца 2026-09-30
+
+Тестовые серверы, клиенты CLI, генераторы нагрузки, fault-injection helpers, Go-тесты (в том числе race/vet) и Python-тесты установщика выполняются на тестовом Linux-хосте. Не запускать эти тестовые бинарники на пользовательской Windows-машине.
+
+Windows сохраняется для редактирования, существующей Android-сборки и управления физическим телефоном через USB/ADB. Android instrumentation выполняется на телефоне, команды ADB запускаются с Windows. Это не перенос телефона или ADB на Linux. Инструменты сборки APK/AAR не считаются отдельными сетевыми тестовыми серверами. Перенос Android toolchain на Linux не является предпосылкой этого уточнения.
+
+Все команды Go/Python и standalone-бинарники в дочерних планах подразумевают Linux, даже когда возле команды отдельно не написано «Linux».
+
+Проверено: root@192.168.5.214, host debian13, Debian 13 / Linux 6.12.96 x86_64, 8 CPU, около 8 GiB RAM. SSH существующим ключом codex-socks-test работает с проверкой известного host key. Ключ не копировать в репозиторий или на сервер. Системный Go — 1.24.4; проект требует toolchain 1.26.8, его доступность проверить внутри рабочей копии до тестов.
+
+На момент проверки корневой диск имеет около 806 MiB свободного места (99% занят), /tmp — tmpfs около 3.9 GiB, а не дополнительный постоянный диск. Тяжёлые сборки/нагрузку не начинать до появления достаточного свободного места. Не очищать автоматически чужие данные, журналы, Kubernetes/containerd или общие кэши. На хосте работают другие приложения и quic-lab.service; не менять их конфигурацию и не перезапускать при подготовке тестовой копии.
+
+- [ ] Подготовить отдельный каталог тестового checkout после решения вопроса места; переносить точный baseline/commit из шага 0, не использовать /opt/quic-lab как рабочую копию.
+- [ ] Проверить наличие проектного toolchain, C compiler для race и зависимости тестов; записать версии и git hash в отчёт.
+- [ ] Использовать отдельные порты/процессы и фиктивные credentials; для сетевых отказов — отдельный namespace/изолированный стенд. Не менять глобальные firewall/routes хоста.
+- [ ] Запускать нагрузку с ограниченными ресурсами, учитывая другие службы. Если нужна изолированная VM для проверки systemd/nginx/установщика, подготовить её как тестовую среду, а не переустанавливать основной хост.
+
 ## Общие команды проверки
 
-Из корня изолированного репозитория:
+Через SSH, из корня отдельного Linux-checkout:
 
-```powershell
+```sh
+go version
 go test ./internal/bond ./internal/bondquic ./internal/gateway ./internal/admin ./mobile ./cmd/server ./cmd/demux -count=1 -timeout=120s
 go vet ./...
-./scripts/build-android.ps1 -BuildApk
-./android/gradlew.bat -p android assembleDebugAndroidTest
+go test ./... -count=1 -timeout=180s
+go test -race ./internal/... ./mobile/... -count=1 -timeout=300s
+python3 scripts/test-install-server.py
 ```
 
-Перед Android-сборкой обнаружить JDK 17, Android SDK Platform 35 и NDK 27.2.12479018; задать JAVA_HOME/ANDROID_HOME по существующей инструкции README. Не устанавливать другой toolchain вслепую.
+Пакет mobile/multiple.go имеет linux build tag. Windows-проверки не заменяют этот контур. Приведённые команды являются планом запусков; в рамках проверки SSH они ещё не выполнялись.
 
-Android-классы после пометки «Android:» запускаются так (подставить названия из конкретной задачи; пример для первой):
+Android-сборка и управление телефоном остаются на Windows, из корня изолированного репозитория:
 
 ```powershell
+./scripts/build-android.ps1 -BuildApk
+./android/gradlew.bat -p android assembleDebugAndroidTest
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb install -r -t android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 adb shell am instrument -w -e class ru.vpnc.quiclab.VpnConfigurationTest ru.vpnc.quiclab.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-Несколько классов: полные имена через запятую. Device/network tests используют только разрешённый тестовый стенд; перед запуском сохранить/после восстановить Wi-Fi, профили и режим VPN как делают текущие instrumentation-тесты. Устройство может быть отключено или требовать подтверждение установки — тогда указать конкретную непроведённую проверку.
+Перед Android-сборкой обнаружить существующие JDK 17, SDK Platform 35 и NDK 27.2.12479018; задать JAVA_HOME/ANDROID_HOME по README. APK и Linux-test binaries должны соответствовать одному baseline. Android-классы из дочерней задачи подставить в -e class, полные имена через запятую.
 
-На Linux (пакет mobile/multiple.go имеет linux build tag):
-
-```sh
-go test ./... -count=1 -timeout=180s
-go test -race ./internal/... ./mobile/... -count=1 -timeout=300s
-```
-
-Финальные 8-часовые проверки не заменять минутным smoke-тестом. Выполнять длительный процесс с доступным progress/report, чтобы можно было проверить состояние и остановить его.
+Сетевые responders для телефона запускаются на Linux. Перед/после device tests сохранять/восстанавливать Wi-Fi, профили и режим VPN. Телефон может требовать подтверждение установки; непроведённую проверку обозначать явно. Финальные 8-часовые проверки не заменять минутным smoke-тестом; длительный процесс должен оставлять progress/report.
 
 ## Матрица покрытия спецификации
 
