@@ -61,10 +61,13 @@ internal class VpnSession(
     private fun reserveAllowed(kind: Int, network: Network? = networks[kind]): Boolean =
         service?.let { VpnReserveSettings.allowed(it, kind, network in unmetered) } ?: true
 
+    private fun candidateAllowed(kind: Int, network: Network) =
+        policy.canProbeCandidate(kind == WIFI, alive && activeKind == CELLULAR, reserveAllowed(kind, network))
+
     private fun refreshReserve() {
         if (closed) return
         networks.forEach { (kind, network) ->
-            if (!isBond && network != activeNetwork && !reserveAllowed(kind, network)) {
+            if (!isBond && network != activeNetwork && !candidateAllowed(kind, network)) {
                 client?.invalidatePath(key(network))
                 readySince.remove(network)
                 if (preparedNetwork == network) preparedNetwork = null
@@ -405,7 +408,7 @@ internal class VpnSession(
             // A second socket to the same AWG peer would move its return endpoint.
             // Prefer a validated Wi-Fi only after dwell; no standby AWG traffic.
             val wifi = networks[WIFI]
-            if (wifi != null && wifi in validated && wifi != activeNetwork && reserveAllowed(WIFI, wifi)) {
+            if (wifi != null && wifi in validated && wifi != activeNetwork && candidateAllowed(WIFI, wifi)) {
                 readySince.putIfAbsent(wifi, time)
                 if ((retryAt[wifi] ?: 0L) <= time && policy.canPreferWifi(time - (readySince[wifi] ?: time), time - lastSwitchAt))
                     try { migrate(WIFI, wifi, "Wi-Fi устойчиво доступен") }
@@ -416,7 +419,7 @@ internal class VpnSession(
         if (!alive || time < nextProbeAt) return
         val reserve =
             networks.entries.firstOrNull {
-                it.value != activeNetwork && reserveAllowed(it.key, it.value) && (retryAt[it.value] ?: 0L) <= time
+                it.value != activeNetwork && candidateAllowed(it.key, it.value) && (retryAt[it.value] ?: 0L) <= time
             } ?: return
         nextProbeAt = time + 1500
         try {

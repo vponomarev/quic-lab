@@ -58,7 +58,7 @@ class VpnReserveTest {
             Thread.sleep(1000)
             profile.edit().putString("transport",transport).putString("endpoint",endpoint).commit()
             settings.edit().putLong("screen_on",1000).putLong("screen_off",0).commit()
-            reserve.edit().clear().putBoolean("metered_wifi",true).commit()
+            reserve.edit().clear().putBoolean("metered_wifi",false).commit()
             context.startForegroundService(Intent(context,LabVpnService::class.java))
             waitFor("initial Wi-Fi",45000) {LabVpnService.active && LabVpnService.network.startsWith("Wi-Fi") && LabVpnService.lastEcho>0}
             Thread.sleep(2000)

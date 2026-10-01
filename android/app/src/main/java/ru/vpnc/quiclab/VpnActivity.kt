@@ -517,14 +517,14 @@ class VpnActivity : Activity() {
         budget("Лимит LTE за сессию, MiB · 0 без ограничения", "bond_cell_mib",0,1048576)
         label(maximum,"Лимит делится поровну между направлениями. Считаются записи туннеля, не биллинг оператора: внешний QUIC/IP и повторные передачи добавляют расход. После исчерпания бюджета копий обычное восстановление продолжается; после лимита LTE остаётся только Wi-Fi. Сторонние VPN и multiple пока не поддерживают этот режим.")
         val reserve = section("РЕЗЕРВНАЯ СЕТЬ VPN")
-        label(reserve, "Общие настройки для всех профилей, применяются сразу. Проверки расходуют трафик резервной сети и аккумулятор. RTT текущего VPN настраивается отдельно.")
+        label(reserve, "Настройки фонового резерва общие для всех профилей и применяются сразу. При работе через LTE клиент проверяет появившийся Wi-Fi, включая лимитный, и переходит на него после подтверждения доступности. Эти проверки расходуют трафик Wi-Fi. RTT текущего VPN настраивается отдельно.")
         val reservePrefs = VpnReserveSettings.preferences(this)
         for ((key, title, default) in listOf(
-            Triple("wifi_on", "LTE → Wi-Fi · экран включён", true),
-            Triple("wifi_off", "LTE → Wi-Fi · экран выключен", true),
+            Triple("wifi_on", "Фоновый резерв Wi-Fi · экран включён", true),
+            Triple("wifi_off", "Фоновый резерв Wi-Fi · экран выключен", true),
             Triple("cell_on", "Wi-Fi → LTE · экран включён", false),
             Triple("cell_off", "Wi-Fi → LTE · экран выключен", false),
-            Triple("metered_wifi", "Разрешить проверки лимитного Wi-Fi", false))) {
+            Triple("metered_wifi", "Разрешить фоновые проверки лимитного Wi-Fi", false))) {
             reserve.addView(android.widget.Switch(this).apply {
                 text = title
                 isChecked = reservePrefs.getBoolean(key, default)

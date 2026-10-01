@@ -37,3 +37,7 @@ Server archives include AWG/transit workers, installers, documentation and licen
 - SHA256 comparison confirmed all 613 Go/module/installer source files on the Linux build host match the publishing worktree.
 
 Long-duration eight-hour soak, 15-device/100-Mbit acceptance and future B4/C/D/E functionality have not been certified by this checkpoint. Optional tests requiring separately provisioned capture identities or failure orchestration are not counted as passed merely because the standard runner skips them.
+
+## Known phase-one limitation (confirmed 2026-10-01)
+
+On the tested Android/MIUI phone, all-app routing can abort application TCP connections when Wi-Fi returns, even though the ordinary QUIC VPN session survives. Use selected-app routing on this device: two automated handover tests passed, and the owner confirmed Brawl Stars works after restoring that mode. Full-device seamless handover on this device is not certified. Remediation is deferred beyond phase one as [POST-P1-01](post-phase1-backlog.md); system traffic is not silently excluded from VPN.

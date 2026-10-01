@@ -2,6 +2,10 @@ package ru.vpnc.quiclab
 
 /** Conservative preference changes; urgent failover does not wait for dwell. */
 internal class MigrationPolicy {
+    // A preferred path is a handover candidate, not optional idle reserve traffic.
+    fun canProbeCandidate(wifi: Boolean, activeCellular: Boolean, reserveAllowed: Boolean) =
+        (wifi && activeCellular) || reserveAllowed
+
     fun isStalled(silenceMS: Long, rttMS: Double, intervalMS: Long): Boolean =
         silenceMS > maxOf(400L, (rttMS * 4).toLong().coerceAtMost(2000L), intervalMS * 3)
 

@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MigrationPolicyTest {
+    @Test fun preferredWifiIsIndependentOfBackgroundReserve() {
+        val p = MigrationPolicy()
+        assertTrue(p.canProbeCandidate(wifi=true, activeCellular=true, reserveAllowed=false))
+        assertFalse(p.canProbeCandidate(wifi=false, activeCellular=false, reserveAllowed=false))
+        assertFalse(p.canProbeCandidate(wifi=true, activeCellular=false, reserveAllowed=false))
+        assertTrue(p.canProbeCandidate(wifi=false, activeCellular=false, reserveAllowed=true))
+    }
+
     @Test fun avoidsFlappingButDetectsSilentLoss() {
         val p = MigrationPolicy()
         assertFalse(p.isStalled(300, 50.0, 50))
