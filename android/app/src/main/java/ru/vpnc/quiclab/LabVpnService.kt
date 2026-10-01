@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import org.json.JSONObject
 
 class LabVpnService : VpnService() {
+    internal val budgetRun = VpnBudgetRun()
     private var session: VpnSession? = null
     private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
@@ -66,6 +67,8 @@ class LabVpnService : VpnService() {
         startForeground(42, vpnNotification())
         handler.postDelayed(notificationTick, 1000)
         try {
+            // C1 creates one run owner. C2 wires the shared limit and socket meters.
+            budgetRun.start(0)
             if (VpnProfiles.multiple(this)) {
                 val plan=MultipleVpnPlan.load(this)
                 tun=Builder().setSession("QUIC Lab · multiple").setMtu(1280).addAddress("10.254.254.1",32)
@@ -209,6 +212,7 @@ class LabVpnService : VpnService() {
         runCatching { exits?.stopAll() }.onFailure { Diagnostics.event("vpn", JSONObject().put("event", "close_failed").put("error", it.toString())) }
         exits = null
         session = null
+        budgetRun.stop()
         runCatching { tun?.close() }
         tun = null
         starting = false

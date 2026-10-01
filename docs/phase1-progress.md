@@ -92,3 +92,11 @@ Existing user option: РЕЗЕРВНАЯ СЕТЬ VPN → Разрешить п�
 ## Metered Wi-Fi fix — v0.8.0-pre.2
 
 Preferred Wi-Fi eligibility is now separate from optional background reserve permissions while active on cellular, including ordinary QUIC/HTTPS/AWG. Existing validation, successful QUIC/HTTPS probes, dwell/backoff and latency guards remain. User settings labels explain the distinction. Regression observed RED on pre.1 and GREEN on pre.2 with one persistent TCP socket. Build/lint passed; 14 core Android cases passed with one explicit live skip, then opt-in reserve tests passed separately for all three transports on metered Wi-Fi. Linux mobile standby/migration race tests passed, including recovery after initially lost replies. Server binary/protocol unchanged. Details: [pre.2 release](release-v0.8.0-pre.2.md). Group C has not started.
+
+## C1 — complete (budget core and run ownership)
+
+Added a shared concurrency-safe trafficbudget ledger: atomic reservations, partial write refund, idempotent commit, saturated uint64 counters, incoming overshoot, class totals and copied snapshots. Mobile wrapper validates epoch/nonnegative limit. LabVpnService owns one VpnBudgetRun until whole-service shutdown; restart of an exit must reuse its object. Android lifecycle test verifies retained object and new epoch after Stop/Start.
+
+C2 must attach socket meters, configure the common limit and enforce cellular shutdown. C1 initializes an unlimited unmetered owner; it does not yet implement user-facing traffic limiting or replace legacy bond limits. Keeping the bond rotation guard is intentional until C2.
+
+Verification: observed ledger RED on missing API; Linux go test ./internal/trafficbudget ./mobile -count=1 -timeout=120s passed, ledger race/vet passed. Android AAR/APK/lint/test APK passed; VpnBudgetRunTest and VpnExitLifecycleTest: 5 passed. Published pre.2 APK restored after tests. No release/deploy. Account meter moved from 86% used to 87% used across C1; shared rounded measurement, not exact per-task/model billing. Stop after C1 to preserve the owner's reserve.

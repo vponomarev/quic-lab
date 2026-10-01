@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** План предложен для проверки; реализация не начата.
+**Status:** C1 завершён; C2–C4 не начаты.
 
 ## Global Constraints
 
@@ -51,7 +51,7 @@ A1–A3; C1/C2 используются B4. C3 включает методы D4 
 
 **Interfaces:** type Class string: user/control/copy/config/apk; type Snapshot struct { Epoch string; Limit, Used, Reserved uint64; Blocked bool }; type Ledger struct; func New(epoch string, limit uint64) *Ledger; func (l *Ledger) Reserve(n uint64, class Class) (ticket uint64, ok bool); func (l *Ledger) Commit(ticket, actual uint64); func (l *Ledger) ObserveReceived(n uint64, class Class); func (l *Ledger) Snapshot() Snapshot. gomobile: type TrafficBudget; NewTrafficBudget(epoch string, limit int64) *TrafficBudget; Snapshot() string. Один экземпляр на LabVpnService.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestConcurrentReservation; TestSharedEpoch; TestNoOverflowOrDoubleCommit. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestConcurrentReservation; TestSharedEpoch; TestNoOverflowOrDoubleCommit. Минимальные обязательные проверки:
 
 ```text
 assert reserveConcurrently(2,remaining=100,each=80).successCount == 1
@@ -61,17 +61,19 @@ assert duplicateCommit.doesNotDoubleCharge
 assert counterOverflow.doesNotUnblock
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Бюджет 0 — без пользовательского ограничения, но счётчики растут. Резервирование защищено mutex; возвращать неотправленный остаток, учитывать фактически переданные байты один раз. Входящие байты наблюдать и прекращать дальнейшее использование LTE на пороге. Общий snapshot для UI, транспортов и загрузчика; не сохранять отдельные независимые лимиты на профилях. Epoch создаёт только запуск всего VPN.
+- [x] **Step 3 — реализация:** Бюджет 0 — без пользовательского ограничения, но счётчики растут. Резервирование защищено mutex; возвращать неотправленный остаток, учитывать фактически переданные байты один раз. Входящие байты наблюдать и прекращать дальнейшее использование LTE на пороге. Общий snapshot для UI, транспортов и загрузчика; не сохранять отдельные независимые лимиты на профилях. Epoch создаёт только запуск всего VPN.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/trafficbudget ./mobile -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: share LTE budget across all VPN exits"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: share LTE budget across all VPN exits"`. Не включать соседние незавершённые задачи.
+
+C1 completed 2026-10-01: ledger, gomobile snapshot wrapper and VpnBudgetRun service ownership verified. Added mobile/traffic_budget_test.go and Android VpnBudgetRunTest. Service owner starts unlimited until C2 configures the shared limit and attaches socket meters. No claim of runtime LTE enforcement; legacy bond accounting and finite-budget rotation guard deliberately unchanged until C2. Linux package tests/race/vet and Android build/lint + 5 lifecycle tests passed. Wrapper/Android tests were first run green; ledger API tests were observed red before implementation.
 
 ### Task C2: Единица учёта и закрытие LTE-путей
 
