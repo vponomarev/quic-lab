@@ -501,21 +501,23 @@ class VpnActivity : Activity() {
             setOnCheckedChangeListener { _, value -> prefs.edit().putBoolean("max_availability",value).apply() }
         })
         label(maximum,"Повышенный расход LTE и аккумулятора ради быстрого переключения, в том числе при выключенном экране. Требует обновлённого QUIC Lab сервера и транспорта QUIC. Применяется после перезапуска VPN. Переключатели резерва ниже в этом режиме не действуют.")
-        fun budget(title:String,key:String,default:Long,limit:Long) {
-            label(maximum,title)
-            maximum.addView(EditText(this).apply {
+        fun budget(title:String,key:String,default:Long,limit:Long, target: android.content.SharedPreferences = prefs, container: LinearLayout = maximum) {
+            label(container,title)
+            container.addView(EditText(this).apply {
                 inputType=android.text.InputType.TYPE_CLASS_NUMBER
-                setText(prefs.getLong(key,default).toString())
+                setText(target.getLong(key,default).toString())
                 addTextChangedListener(object: android.text.TextWatcher {
                     override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
-                    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { s?.toString()?.toLongOrNull()?.let { if(it in 0..limit) prefs.edit().putLong(key,it).apply() } }
+                    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { s?.toString()?.toLongOrNull()?.let { if(it in 0..limit) target.edit().putLong(key,it).apply() } }
                     override fun afterTextChanged(s:android.text.Editable?) {}
                 })
             })
         }
         budget("Бюджет упреждающих копий, KiB/мин · 0 — только обычные повторы", "bond_copy_kib",256,65536)
-        budget("Лимит LTE за сессию, MiB · 0 без ограничения", "bond_cell_mib",0,1048576)
-        label(maximum,"Лимит делится поровну между направлениями. Считаются записи туннеля, не биллинг оператора: внешний QUIC/IP и повторные передачи добавляют расход. После исчерпания бюджета копий обычное восстановление продолжается; после лимита LTE остаётся только Wi-Fi. Сторонние VPN и multiple пока не поддерживают этот режим.")
+        val sharedBudget = section("ОБЩИЙ ЛИМИТ LTE")
+        budget("На один запуск VPN, MiB · 0 без ограничения", "cell_mib",0,1048576,VpnBudgetSettings.preferences(this),sharedBudget)
+        label(sharedBudget,"Общий для всех профилей и транспортов. Применяется после остановки и запуска всего VPN; переподключение отдельного выхода лимит не сбрасывает. После исчерпания остаётся Wi-Fi. Учитываются внешние данные сокетов, включая шифрование, но не IP/TCP-заголовки и повторы TCP ядром. Уже летящие входящие данные могут превысить порог; это не счётчик оператора.")
+        label(maximum,"Бюджет копий делится поровну между направлениями. После его исчерпания обычное восстановление продолжается. Сторонние VPN и multiple пока не поддерживают максимальную доступность.")
         val reserve = section("РЕЗЕРВНАЯ СЕТЬ VPN")
         label(reserve, "Настройки фонового резерва общие для всех профилей и применяются сразу. При работе через LTE клиент проверяет появившийся Wi-Fi, включая лимитный, и переходит на него после подтверждения доступности. Эти проверки расходуют трафик Wi-Fi. RTT текущего VPN настраивается отдельно.")
         val reservePrefs = VpnReserveSettings.preferences(this)

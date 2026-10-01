@@ -10,18 +10,31 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"quiclab/internal/awg/netstack"
+	"quiclab/internal/trafficbudget"
 )
 
 type Binder interface{ Bind(int64) error }
 type protectedBind struct {
 	conn.Bind
-	mu     sync.Mutex
-	binder Binder
+	mu         sync.Mutex
+	binder     Binder
+	meter      *trafficbudget.Meter
+	unregister func()
+	generation uint64
 }
 
 func (b *protectedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.generation++
+	generation := b.generation
+	b.meter = nil
+	if source, ok := b.binder.(interface{ CellMeter() *trafficbudget.Meter }); ok {
+		b.meter = source.CellMeter()
+	}
+	if b.meter != nil && !b.meter.Allowed() {
+		return nil, 0, trafficbudget.ErrBlocked
+	}
 	f, p, e := b.Bind.Open(port)
 	if e != nil {
 		return nil, 0, e
@@ -48,6 +61,30 @@ func (b *protectedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 			}
 		}
 	}
+	if meter := b.meter; meter != nil {
+		b.unregister = meter.Register(func() {
+			go func() {
+				b.mu.Lock()
+				defer b.mu.Unlock()
+				if b.generation == generation {
+					b.Bind.Close()
+				}
+			}()
+		})
+		for i, receive := range f {
+			base := receive
+			f[i] = func(bufs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
+				if !meter.Allowed() {
+					return 0, trafficbudget.ErrBlocked
+				}
+				n, err := base(bufs, sizes, eps)
+				for j := 0; j < n; j++ {
+					meter.Receive(uint64(sizes[j]), trafficbudget.User)
+				}
+				return n, err
+			}
+		}
+	}
 	return f, p, nil
 }
 
@@ -60,6 +97,9 @@ type Engine struct {
 }
 
 func Start(c *Config, endpoint string, binder Binder) (*Engine, error) {
+	return startWithBind(c, endpoint, binder, conn.NewStdNetBind())
+}
+func startWithBind(c *Config, endpoint string, binder Binder, sockets conn.Bind) (*Engine, error) {
 	addr, e := netip.ParseAddrPort(endpoint)
 	if e != nil || !addr.Addr().Is4() {
 		return nil, errors.New("numeric IPv4 endpoint required")
@@ -68,7 +108,7 @@ func Start(c *Config, endpoint string, binder Binder) (*Engine, error) {
 	if e != nil {
 		return nil, e
 	}
-	b := &protectedBind{Bind: conn.NewStdNetBind(), binder: binder}
+	b := &protectedBind{Bind: sockets, binder: binder}
 	// UAPI and verbose logs can contain key material; never forward them to Android.
 	d := device.NewDevice(tun, b, &device.Logger{Verbosef: func(string, ...any) {}, Errorf: func(string, ...any) {}})
 	if e = d.IpcSet(c.IPC(endpoint)); e != nil {
@@ -137,4 +177,44 @@ func (e *Engine) Close() {
 		e.device.Close()
 		e.device = nil
 	}
+}
+
+// One datagram per send makes partial batch failure accounting unambiguous.
+
+func (b *protectedBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.meter == nil {
+		return b.Bind.Send(bufs, endpoint)
+	}
+	for _, buf := range bufs {
+		id, ok := b.meter.Reserve(uint64(len(buf)), trafficbudget.User)
+		if !ok {
+			return trafficbudget.ErrBlocked
+		}
+		e := b.Bind.Send([][]byte{buf}, endpoint)
+		var fallback conn.ErrUDPGSODisabled
+		if errors.As(e, &fallback) {
+			e = fallback.RetryErr
+		}
+		actual := uint64(0)
+		if e == nil {
+			actual = uint64(len(buf))
+		}
+		b.meter.Commit(id, actual)
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+func (b *protectedBind) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.generation++
+	if b.unregister != nil {
+		b.unregister()
+		b.unregister = nil
+	}
+	return b.Bind.Close()
 }

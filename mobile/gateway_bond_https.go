@@ -30,7 +30,11 @@ func (g *Gateway) addBondHTTPS(ctx context.Context, endpoint string, info bond.P
 	tc := g.tls.Clone()
 	tc.NextProtos = []string{"http/1.1"}
 	tr := &http.Transport{TLSClientConfig: tc, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return dialer.DialContext(ctx, "tcp4", endpoint)
+		c, e := dialer.DialContext(ctx, "tcp4", endpoint)
+		if e != nil {
+			return nil, e
+		}
+		return meterBoundConn(c, binder), nil
 	}}
 	_, port, e := net.SplitHostPort(endpoint)
 	if e != nil {

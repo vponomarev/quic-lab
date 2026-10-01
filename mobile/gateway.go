@@ -42,6 +42,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	budget             *TrafficBudget
 	bondCellUsed       uint64
 	bondCellBlocked    bool
 	bond               *bond.Mux
@@ -89,6 +90,11 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	}
 	if e := json.Unmarshal([]byte(configJSON), &g.cfg); e != nil {
 		return e
+	}
+	g.budget = nil
+	if b, ok := binder.(*budgetBinder); ok {
+		g.budget = b.budget
+		g.cfg.BondCellBudget = 0
 	}
 	if g.cfg.MaxAvailability && g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
 		return errors.New("maximum availability requires QUIC or HTTPS")
@@ -182,7 +188,11 @@ func (g *Gateway) connect(binder SocketBinder) error {
 		}
 	}
 	tr := &http.Transport{TLSClientConfig: g.tls.Clone(), DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return dialer.DialContext(ctx, "tcp4", g.cfg.Endpoint)
+		c, e := dialer.DialContext(ctx, "tcp4", g.cfg.Endpoint)
+		if e != nil {
+			return nil, e
+		}
+		return meterBoundConn(c, binder), nil
 	}}
 	defer tr.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(g.ctx, 10*time.Second)
@@ -326,7 +336,15 @@ func (g *Gateway) PreparePath(key string, binder SocketBinder) error {
 		}
 	}
 	started := time.Now()
-	c, e := (&tls.Dialer{NetDialer: d, Config: tc}).DialContext(ctx, "tcp4", cfg.Endpoint)
+	raw, e := d.DialContext(ctx, "tcp4", cfg.Endpoint)
+	if e != nil {
+		return e
+	}
+	c := tls.Client(meterBoundConn(raw, binder), tc)
+	e = c.HandshakeContext(ctx)
+	if e != nil {
+		c.Close()
+	}
 	if e != nil {
 		return e
 	}

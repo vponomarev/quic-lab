@@ -77,7 +77,11 @@ func (c *WebSocketClient) Start(numericEndpoint, hostname string, intervalMS int
 	}
 	tr := &http.Transport{TLSClientConfig: tlsConfig, ForceAttemptHTTP2: false,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "tcp", numericEndpoint)
+			c, e := dialer.DialContext(ctx, "tcp", numericEndpoint)
+			if e != nil {
+				return nil, e
+			}
+			return meterBoundConn(c, binder), nil
 		}}
 	ctx, cancel := context.WithCancel(context.Background())
 	dialCtx, dialCancel := context.WithTimeout(ctx, 5*time.Second)

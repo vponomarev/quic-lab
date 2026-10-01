@@ -14,6 +14,7 @@ internal class MultipleVpnController(
     private val service: VpnService,
     private val plan: MultipleVpnPlan,
     fd: Int,
+    private val budget: TrafficBudget,
 ) {
     private val cm = service.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -114,6 +115,7 @@ internal class MultipleVpnController(
                 service,
                 JSONObject(p.config.toString()),
                 -1,
+                budget = budget,
                 selected = { n, _ ->
                     handler.post {
                         if (!closed && exits.current(p.id, token)) {

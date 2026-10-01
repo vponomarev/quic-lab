@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** C1 завершён; C2–C4 не начаты.
+**Status:** C1–C2 завершены; C3–C4 не начаты.
 
 ## Global Constraints
 
@@ -84,7 +84,7 @@ C1 completed 2026-10-01: ledger, gomobile snapshot wrapper and VpnBudgetRun serv
 
 **Interfaces:** Внутренние func meterConn(c net.Conn, network string, l *trafficbudget.Ledger, class trafficbudget.Class) net.Conn; func meterPacketConn(c net.PacketConn, network string, l *trafficbudget.Ledger, class trafficbudget.Class) net.PacketConn. transport callback onBudgetBlocked(epoch string) закрывает все LTE пути и запрещает новые. user/control/copy статистика отдельно от total wire ledger.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestSocketAccountingOnce; TestBudgetClosesEveryCellPath; TrafficBudgetTest. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestSocketAccountingOnce; TestBudgetClosesEveryCellPath; TrafficBudgetTest. Минимальные обязательные проверки:
 
 ```text
 assert totalCountsReadAndWrittenSocketPayload
@@ -94,17 +94,19 @@ assert budgetBlocked.noNewCellDialsOrProbes
 assert wifiContinuesAfterCellBudgetExhaustion
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Единый уровень общего счётчика — байты payload внешних socket read/write до/после TLS, включая QUIC/AWG datagrams. Это учитывает QUIC повторы в UDP payload, но не IP/TCP headers и kernel TCP retransmits. Транспортные метрики overlay не складывать с ним. Для AWG подключить meter к внешнему bind, а не inner netstack; HTTPS оборачивать TCP до TLS. Входящий overshoot возможен для уже летящих данных: после порога закрыть LTE, величину сверх порога показать, не заявлять операторский hard cap. Общий ledger должен охватывать текущую и draining bond-сессии при ротации; добавить регрессию отсутствия сброса бюджета и снять временный запрет rotateBondLocked при конечном LTE-лимите только после подключения обоих направлений. Согласовать отказ от старого split-budget bond с общим ledger; server BlockCell посылается best effort, а клиент закрывает путь независимо.
+- [x] **Step 3 — реализация:** Единый уровень общего счётчика — байты payload внешних socket read/write до/после TLS, включая QUIC/AWG datagrams. Это учитывает QUIC повторы в UDP payload, но не IP/TCP headers и kernel TCP retransmits. Транспортные метрики overlay не складывать с ним. Для AWG подключить meter к внешнему bind, а не inner netstack; HTTPS оборачивать TCP до TLS. Входящий overshoot возможен для уже летящих данных: после порога закрыть LTE, величину сверх порога показать, не заявлять операторский hard cap. Общий ledger должен охватывать текущую и draining bond-сессии при ротации; добавить регрессию отсутствия сброса бюджета и снять временный запрет rotateBondLocked при конечном LTE-лимите только после подключения обоих направлений. Согласовать отказ от старого split-budget bond с общим ledger; server BlockCell посылается best effort, а клиент закрывает путь независимо.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/trafficbudget ./mobile ./internal/awg -count=1 -timeout=120s; Android: TrafficBudgetTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: meter and stop cellular traffic across transports"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: meter and stop cellular traffic across transports"`. Не включать соседние незавершённые задачи.
+
+C2 evidence: Linux socket/ledger/AWG suites with race and vet PASS; bond suite PASS excluding the pre-existing untracked Wi-Fi return experiment; gateway/server checks PASS. Final Android AAR/APK/lint PASS, TrafficBudgetTest + VpnBudgetRunTest + VpnExitLifecycleTest OK (6 tests). Socket API, GSO fallback, insufficient-tail and peer notification RED observed; Android test first run GREEN. Scope also includes run settings/UI, common Meter, and best-effort bond peer control record. Published pre.2 restored; no deploy. See docs/phase1-progress.md.
 
 ### Task C3: Ограниченные служебные исключения и разрешение превышения
 

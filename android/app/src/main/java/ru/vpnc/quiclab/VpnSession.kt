@@ -20,6 +20,7 @@ internal class VpnSession(
     private val service: android.net.VpnService?,
     private val config: JSONObject,
     private val tunFD: Int,
+    private val budget: mobile.TrafficBudget? = null,
     private val selected: (Network, Int) -> Unit = { _, _ -> },
     private val availability: (Network, Int, Boolean) -> Unit = { _, _, _ -> },
     private val validation: (Network, Int, Boolean) -> Unit = { _, _, _ -> },
@@ -35,7 +36,7 @@ internal class VpnSession(
         service?.setUnderlyingNetworks(networks.values.toTypedArray())
         for ((kind, network) in networks) {
             val name = if (kind == WIFI) "wifi" else "cell"
-            if (kind == CELLULAR && client?.bondCellAllowed() == false) {
+            if (kind == CELLULAR && (!cellAllowed() || client?.bondCellAllowed() == false)) {
                 client?.dropBondPath(name); bondNetworks.remove(kind); continue
             }
             if ((bondRetry[kind] ?: 0L) > now()) continue
@@ -61,7 +62,10 @@ internal class VpnSession(
     private fun reserveAllowed(kind: Int, network: Network? = networks[kind]): Boolean =
         service?.let { VpnReserveSettings.allowed(it, kind, network in unmetered) } ?: true
 
+    private fun cellAllowed() = budget?.cellAllowed() != false
+    private var budgetReported = false
     private fun candidateAllowed(kind: Int, network: Network) =
+        (kind != CELLULAR || cellAllowed()) &&
         policy.canProbeCandidate(kind == WIFI, alive && activeKind == CELLULAR, reserveAllowed(kind, network))
 
     private fun refreshReserve() {
@@ -74,8 +78,8 @@ internal class VpnSession(
             }
         }
         // A failed primary may acquire mobile data for recovery, even when prewarming is disabled.
-        val needCell = if (isBond) alive && client?.bondCellAllowed() != false else (alive && (activeKind == CELLULAR || failedNetwork != null ||
-            (automatic && reserveAllowed(CELLULAR)))) || now() < manualCellUntil
+        val needCell = cellAllowed() && (if (isBond) alive && client?.bondCellAllowed() != false else (alive && (activeKind == CELLULAR || failedNetwork != null ||
+            (automatic && reserveAllowed(CELLULAR)))) || now() < manualCellUntil)
         if (needCell && cellRequest == null) {
             val callback = object : ConnectivityManager.NetworkCallback() {}
             try {
@@ -183,7 +187,7 @@ internal class VpnSession(
     fun startOrMigrate(kind: Int, endpoint: String, name: String, pin: String, interval: Long): Unit =
         submit {
             try {
-                if (kind == CELLULAR) { manualCellUntil = now() + 15000; refreshReserve() }
+                if (kind == CELLULAR) { check(cellAllowed()) { "Общий лимит LTE исчерпан; доступен только Wi-Fi" }; manualCellUntil = now() + 15000; refreshReserve() }
                 val network = networks[kind] ?: run {
                     if (kind == CELLULAR) {
                         pendingCellStart = { startOrMigrate(kind, endpoint, name, pin, interval) }
@@ -316,13 +320,13 @@ internal class VpnSession(
             listOf(WIFI, CELLULAR)
                 .mapNotNull { kind ->
                     networks[kind]
-                        ?.takeIf { it != activeNetwork && (retryAt[it] ?: 0L) <= now() }
+                        ?.takeIf { it != activeNetwork && (kind != CELLULAR || cellAllowed()) && (retryAt[it] ?: 0L) <= now() }
                         ?.let { kind to it }
                 }
                 .firstOrNull()
                 ?: if ((reconnectRequired || config.optString("transport") == "https" || isAWG) && failedNetwork != null)
                     networks[activeKind]
-                        ?.takeIf { (retryAt[it] ?: 0L) <= now() }
+                        ?.takeIf { (activeKind != CELLULAR || cellAllowed()) && (retryAt[it] ?: 0L) <= now() }
                         ?.let { activeKind to it }
                 else null
         if (candidate == null) {
@@ -363,6 +367,11 @@ internal class VpnSession(
         }
         refreshReserve()
         if (!alive) return
+        if (!cellAllowed()) {
+            pendingCellStart = null
+            if (!budgetReported) { budgetReported = true; event("budget_blocked", "Общий лимит LTE исчерпан. Доступен только Wi-Fi. ${budget?.snapshot()}") }
+            if (!isBond && activeKind == CELLULAR) { recover("Лимит LTE исчерпан"); return }
+        }
         val time = now()
         if (config.optBoolean("probe_exit_ip") && time >= nextExitCheckAt && time - lastEchoAt < 2000) {
             client?.checkExitIP()
@@ -371,7 +380,7 @@ internal class VpnSession(
         if (isBond) {
             if (client?.isConnected() != true && time-lastAttemptAt>5000) {
                 lastAttemptAt=time
-                val network=networks[WIFI] ?: networks[CELLULAR]?.takeIf { client?.bondCellAllowed()!=false }
+                val network=networks[WIFI] ?: networks[CELLULAR]?.takeIf { cellAllowed() && client?.bondCellAllowed()!=false }
                 if (network != null) try {
                     event("reconnecting", "Общая сессия завершена; старые потоки закрыты")
                     client?.restartBond(if(network==networks[WIFI]) "wifi" else "cell",binder(network)); bondNetworks.clear(); bondRetry.clear()
@@ -577,7 +586,8 @@ internal class VpnSession(
         }
     }
 
-    private fun binder(network: Network) =
+    private fun binder(network: Network): SocketBinder {
+        val raw =
         object : SocketBinder {
             override fun bind(fd: Long) {
                 check(service?.protect(fd.toInt()) ?: (attached != null)) { "Cannot protect tunnel socket" }
@@ -586,6 +596,16 @@ internal class VpnSession(
                 }
             }
         }
+
+        if (budget == null) return raw
+        val caps = cm.getNetworkCapabilities(network)
+        val kind = when {
+            caps?.hasTransport(CELLULAR) == true -> "cell"
+            caps?.hasTransport(WIFI) == true -> "wifi"
+            else -> error("Физическая сеть недоступна")
+        }
+        return budget.bind(raw, kind)
+    }
 
     companion object {
         const val WIFI = NetworkCapabilities.TRANSPORT_WIFI

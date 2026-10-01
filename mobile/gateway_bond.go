@@ -16,6 +16,9 @@ import (
 )
 
 func (g *Gateway) startBond(binder SocketBinder) error {
+	if g.budget != nil && !g.budget.CellAllowed() {
+		g.bondCellBlocked = true
+	}
 	newContext := g.ctx == nil || g.ctx.Err() != nil
 	if newContext {
 		g.ctx, g.cancel = context.WithCancel(context.Background())
@@ -68,6 +71,12 @@ func (g *Gateway) startBond(binder SocketBinder) error {
 	return nil
 }
 func (g *Gateway) addBondPath(name string, binder SocketBinder, create bool) error {
+	if g.budget != nil {
+		b, ok := binder.(*budgetBinder)
+		if !ok || b.budget != g.budget || b.network != name {
+			return errors.New("bond path must use the run budget and physical network")
+		}
+	}
 	if g.cfg.Transport == "https" {
 		g.bondPathGeneration++
 		return g.addBondHTTPS(g.ctx, g.cfg.Endpoint, bond.PathInfo{ID: name, ProfileID: "legacy", Network: name, Generation: g.bondPathGeneration}, binder, create)
@@ -77,7 +86,7 @@ func (g *Gateway) addBondPath(name string, binder SocketBinder, create bool) err
 	if e != nil {
 		return e
 	}
-	cleanup := func() { tr.q.Close(); tr.udp.Close() }
+	cleanup := func() { tr.close() }
 	tc := g.tls.Clone()
 	tc.NextProtos = []string{bondquic.ALPN}
 	ctx, cancel := context.WithTimeout(g.ctx, 3*time.Second)
@@ -144,7 +153,7 @@ func (g *Gateway) EnsureBondPath(name string, binder SocketBinder) error {
 	if g.bond == nil {
 		return errors.New("maximum availability is not running")
 	}
-	if name == "cell" && !g.bond.Session.CellAllowed() {
+	if name == "cell" && ((g.budget != nil && !g.budget.CellAllowed()) || !g.bond.Session.CellAllowed()) {
 		return errors.New("LTE session budget exhausted")
 	}
 	if g.bond.Session.HasPath(name) {
@@ -155,6 +164,16 @@ func (g *Gateway) EnsureBondPath(name string, binder SocketBinder) error {
 func (g *Gateway) DropBondPath(name string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if name == "cell" && g.budget != nil && !g.budget.CellAllowed() {
+		g.bondCellBlocked = true
+		if g.bond != nil {
+			g.bond.Session.BlockCellAndNotify()
+		}
+		for _, m := range g.bondDraining {
+			m.Session.BlockCellAndNotify()
+			m.Session.RemovePath("cell")
+		}
+	}
 	if g.bond != nil {
 		g.bond.Session.RemovePath(name)
 	}
@@ -257,7 +276,7 @@ func (d bondUDP) DialContext(ctx context.Context, network, address string) (net.
 func (g *Gateway) BondCellAllowed() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return !g.bondCellBlocked && (g.bond == nil || g.bond.Session.CellAllowed())
+	return (g.budget == nil || g.budget.CellAllowed()) && !g.bondCellBlocked && (g.bond == nil || g.bond.Session.CellAllowed())
 }
 
 func (g *Gateway) RestartBond(name string, binder SocketBinder) error {
@@ -293,7 +312,7 @@ func (g *Gateway) remainingBondBudget() uint64 {
 // Called under g.mu. The root context/TUN survives; retired sessions keep their
 // existing sockets until their bounded drain timeout or whole-Gateway Stop.
 func (g *Gateway) rotateBondLocked(old *bond.Mux) error {
-	// C1 must share the LTE ledger across current and draining sessions first.
+	// Legacy callers without a shared socket budget must not reset their finite limit.
 	if g.cfg.BondCellBudget > 0 {
 		return errors.New("bond rotation with finite LTE budget requires shared ledger")
 	}

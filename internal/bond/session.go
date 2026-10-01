@@ -22,6 +22,7 @@ const (
 	ping       byte = 7
 	pong       byte = 8
 	Stop       byte = 9
+	blockCell  byte = 10
 	Chunk           = 1050
 	header          = 30
 	maxPending      = 1024
@@ -128,7 +129,23 @@ func (s *Session) CellAllowed() bool {
 	defer s.mu.Unlock()
 	return !s.cellBlocked && (s.cellLimit == 0 || s.cellSent < s.cellLimit)
 }
-func (s *Session) BlockCell()     { s.mu.Lock(); s.cellBlocked = true; s.mu.Unlock() }
+func (s *Session) BlockCell() { s.mu.Lock(); s.cellBlocked = true; s.mu.Unlock() }
+
+// BlockCellAndNotify sends a best-effort hint only over non-cellular paths.
+// The socket meter is authoritative even if this hint is lost or unsupported.
+func (s *Session) BlockCellAndNotify() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cellBlocked {
+		return
+	}
+	s.cellBlocked = true
+	for name, p := range s.paths {
+		if p.info.Network != "cell" {
+			s.sendOn(name, p, frame(blockCell, 0, 0, 0, 0, false, nil), true)
+		}
+	}
+}
 func (s *Session) noteDuplicate() { s.mu.Lock(); s.duplicate++; s.mu.Unlock() }
 func (s *Session) sendOn(name string, p *pathState, b []byte, control bool) error {
 	if p.info.Network == "cell" && (s.cellBlocked || s.cellLimit > 0 && s.cellSent+uint64(len(b)) > s.cellLimit) {
@@ -529,6 +546,11 @@ func (s *Session) receive(name string, ps *pathState) {
 			ps.rxControl += uint64(len(b))
 		} else if b[1] == 1 {
 			ps.rxCopies += uint64(len(b))
+		}
+		if kind == blockCell && len(b) == header {
+			s.cellBlocked = true
+			s.mu.Unlock()
+			continue
 		}
 		if kind == ack || kind == pong {
 			elapsed := now.Sub(time.Unix(0, stamp))

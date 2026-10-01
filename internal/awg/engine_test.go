@@ -5,14 +5,29 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"io"
 	"net/netip"
+	"quiclab/internal/trafficbudget"
 	"strings"
 	"testing"
 	"time"
 )
 
+// Linux lacks Android's FD-peek interface; protection is a no-op in this loopback test.
+type testPeekBind struct{ conn.Bind }
+
+func (testPeekBind) PeekLookAtSocketFd4() (int, error) { return 0, nil }
+func (testPeekBind) PeekLookAtSocketFd6() (int, error) { return 0, nil }
+
+type meteredTestBinder struct{ meter *trafficbudget.Meter }
+
+func (b meteredTestBinder) Bind(int64) error                { return nil }
+func (b meteredTestBinder) CellMeter() *trafficbudget.Meter { return b.meter }
+
 func TestEnginePeerTrafficRebindAndStop(t *testing.T) {
+	meter := trafficbudget.NewMeter(trafficbudget.New("peer-test", 1<<20))
+	binder := meteredTestBinder{meter}
 	a, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	b, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	cfg := func(address string, private, public []byte, allowed string) *Config {
@@ -33,11 +48,12 @@ func TestEnginePeerTrafficRebindAndStop(t *testing.T) {
 			port = strings.TrimPrefix(line, "listen_port=")
 		}
 	}
-	client, e := Start(cfg("10.55.0.2", a.Bytes(), b.PublicKey().Bytes(), "10.55.0.1/32"), "127.0.0.1:"+port, nil)
+	client, e := startWithBind(cfg("10.55.0.2", a.Bytes(), b.PublicKey().Bytes(), "10.55.0.1/32"), "127.0.0.1:"+port, binder, testPeekBind{conn.NewStdNetBind()})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer client.Close()
+
 	ln, e := server.network.ListenTCPAddrPort(netip.MustParseAddrPort("10.55.0.1:8080"))
 	if e != nil {
 		t.Fatal(e)
@@ -67,7 +83,7 @@ func TestEnginePeerTrafficRebindAndStop(t *testing.T) {
 		if _, e = io.ReadFull(c, buf); e != nil || string(buf) != "test" {
 			t.Fatal("TCP roundtrip", e)
 		}
-		if e = client.Migrate(nil); e != nil {
+		if e = client.Migrate(binder); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -100,6 +116,23 @@ func TestEnginePeerTrafficRebindAndStop(t *testing.T) {
 	}
 	if _, e = client.DialContext(ctx, "udp4", "192.0.2.1:53"); e == nil {
 		t.Fatal("AllowedIPs bypass")
+	}
+	if meter.Ledger.Snapshot().Used <= 12 {
+		t.Fatal("outer AWG traffic was not metered")
+	}
+	meter.Receive(1<<20, trafficbudget.User)
+	if e = client.Migrate(binder); e == nil {
+		t.Fatal("exhausted cell reopened")
+	}
+	if e = client.Migrate(nil); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = c.Write([]byte("wifi")); e != nil {
+		t.Fatal(e)
+	}
+	response := make([]byte, 4)
+	if _, e = io.ReadFull(c, response); e != nil || string(response) != "wifi" {
+		t.Fatal("Wi-Fi continuation", e)
 	}
 	done := make(chan struct{})
 	go func() { client.Close(); client.Close(); close(done) }()

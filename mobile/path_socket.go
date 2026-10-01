@@ -3,6 +3,7 @@ package mobile
 import (
 	"errors"
 	"net"
+	"quiclab/internal/trafficbudget"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -17,11 +18,12 @@ import (
 type pathSocket struct {
 	net.PacketConn
 	unavailable   atomic.Bool
+	closing       atomic.Bool
 	onUnavailable func(net.Addr, error)
 }
 
 func networkUnavailable(err error) bool {
-	return errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.ENETDOWN) || errors.Is(err, syscall.EHOSTUNREACH)
+	return errors.Is(err, trafficbudget.ErrBlocked) || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.ENETDOWN) || errors.Is(err, syscall.EHOSTUNREACH)
 }
 
 func (s *pathSocket) report(err error) {
@@ -42,8 +44,18 @@ func (s *pathSocket) WriteTo(b []byte, addr net.Addr) (int, error) {
 	return n, err
 }
 
+func (s *pathSocket) SetReadDeadline(t time.Time) error {
+	if !t.IsZero() && !t.After(time.Now()) {
+		s.closing.Store(true)
+	}
+	return s.PacketConn.SetReadDeadline(t)
+}
+
 func (s *pathSocket) ReadFrom(b []byte) (int, net.Addr, error) {
 	for {
+		if s.closing.Load() {
+			return 0, nil, net.ErrClosed
+		}
 		n, addr, err := s.PacketConn.ReadFrom(b)
 		if !networkUnavailable(err) {
 			return n, addr, err

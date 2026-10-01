@@ -20,12 +20,27 @@ import (
 	"path/filepath"
 	"quiclab/internal/bond"
 	"quiclab/internal/gateway"
+	"quiclab/internal/trafficbudget"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestBondTCPPreservesExitConnection(t *testing.T) {
+	t.Run("legacy", func(t *testing.T) { testBondTCPBudget(t, false) })
+	t.Run("shared", func(t *testing.T) { testBondTCPBudget(t, true) })
+}
+func testBondTCPBudget(t *testing.T, shared bool) {
+	var budget *TrafficBudget
+	if shared {
+		budget, _ = NewTrafficBudget("bond-run", 1<<20)
+	}
+	bind := func(name string) SocketBinder {
+		if budget == nil {
+			return nil
+		}
+		return budget.Bind(nil, name)
+	}
 	pair, cp, kp := testIdentity(t)
 	ca := filepath.Join(t.TempDir(), "ca.pem")
 	os.WriteFile(ca, []byte(cp), 0600)
@@ -58,10 +73,10 @@ func TestBondTCPPreservesExitConnection(t *testing.T) {
 	g := NewGateway(nil)
 	defer g.Stop()
 	cfg, _ := json.Marshal(gatewayConfig{MaxAvailability: true, Transport: "quic", Endpoint: ln.Addr().String(), Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
-	if e = g.Start(string(cfg), nil); e != nil {
+	if e = g.Start(string(cfg), bind("wifi")); e != nil {
 		t.Fatal(e)
 	}
-	if e = g.EnsureBondPath("cell", nil); e != nil {
+	if e = g.EnsureBondPath("cell", bind("cell")); e != nil {
 		t.Fatal(e)
 	}
 
@@ -104,7 +119,7 @@ func TestBondTCPPreservesExitConnection(t *testing.T) {
 		if _, e = io.ReadFull(st, b); e != nil || !bytes.Equal(b, payload) {
 			t.Fatal("stream changed on path loss", e)
 		}
-		if e = g.EnsureBondPath(path, nil); e != nil {
+		if e = g.EnsureBondPath(path, bind(path)); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -124,14 +139,23 @@ func TestBondTCPPreservesExitConnection(t *testing.T) {
 	oldMux, oldToken := g.bond, g.bondToken
 	oldMux.BeginDrain()
 	// Until the shared LTE ledger is wired (C1), rotation must not reset a finite budget.
-	g.cfg.BondCellBudget = 1024
-	if _, err := g.dialStream(ctx, "tcp", target.Addr().String()); err == nil {
-		t.Fatal("rotation reset finite LTE budget")
+	if !shared {
+		g.cfg.BondCellBudget = 1024
+		if _, err := g.dialStream(ctx, "tcp", target.Addr().String()); err == nil {
+			t.Fatal("rotation reset finite LTE budget")
+		}
+		if g.bond != oldMux || g.bondToken != oldToken {
+			t.Fatal("failed rotation changed session")
+		}
+		g.cfg.BondCellBudget = 0
 	}
-	if g.bond != oldMux || g.bondToken != oldToken {
-		t.Fatal("failed rotation changed session")
+	var used uint64
+	if shared {
+		used = budget.ledger.Snapshot().Used
+		if used == 0 {
+			t.Fatal("cell sockets not counted")
+		}
 	}
-	g.cfg.BondCellBudget = 0
 	newer, err := g.dialStream(ctx, "tcp", target.Addr().String())
 	if err != nil {
 		t.Fatal("draining session failed to rotate", err)
@@ -139,6 +163,12 @@ func TestBondTCPPreservesExitConnection(t *testing.T) {
 	defer newer.Close()
 	if g.bond == oldMux || g.bondToken == oldToken {
 		t.Fatal("session identity reused")
+	}
+	if shared {
+		if budget.ledger.Snapshot().Used < used {
+			t.Fatal("rotation reset ledger")
+		}
+		budget.meter.Receive(1<<20, trafficbudget.User)
 	}
 	if _, err = st.Write([]byte("old")); err != nil {
 		t.Fatal(err)
@@ -153,13 +183,13 @@ func TestBondTCPPreservesExitConnection(t *testing.T) {
 		t.Fatalf("half-close: %v", e)
 	}
 	g.bond.Session.BlockCell()
-	if e = g.RestartBond("wifi", nil); e != nil {
+	if e = g.RestartBond("wifi", bind("wifi")); e != nil {
 		t.Fatal(e)
 	}
 	if g.BondCellAllowed() {
 		t.Fatal("logical-session recovery reset blocked LTE budget")
 	}
-	if e = g.EnsureBondPath("cell", nil); e == nil {
+	if e = g.EnsureBondPath("cell", bind("cell")); e == nil {
 		t.Fatal("blocked LTE reconnected")
 	}
 
@@ -206,6 +236,7 @@ func TestBondCreateNeverReusesCallerToken(t *testing.T) {
 func TestQUICHTTPSShareOneExitSocket(t *testing.T) { testBondTransportContinuity(t, false) }
 func TestHTTPSQUICShareOneExitSocket(t *testing.T) { testBondTransportContinuity(t, true) }
 func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
+	budget, _ := NewTrafficBudget("mixed-run", 1<<20)
 	pair, cp, kp := testIdentity(t)
 	ca := filepath.Join(t.TempDir(), "ca.pem")
 	os.WriteFile(ca, []byte(cp), 0600)
@@ -252,7 +283,7 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 		transport, endpoint = "https", ln.Addr().String()
 	}
 	cfg, _ := json.Marshal(gatewayConfig{MaxAvailability: true, Transport: transport, Endpoint: endpoint, Hostname: "localhost", Certificate: cp, Key: kp, CA: cp})
-	if e = g.Start(string(cfg), nil); e != nil {
+	if e = g.Start(string(cfg), budget.Bind(nil, "wifi")); e != nil {
 		t.Fatal(e)
 	}
 	noCert := NewGateway(nil)
@@ -272,14 +303,14 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 	if startHTTPS {
 		g.cfg.Transport = "quic"
 		g.cfg.Endpoint = q.Addr().String()
-		if e = g.addBondPath("cell", nil, false); e != nil {
+		if e = g.addBondPath("cell", budget.Bind(nil, "cell"), false); e != nil {
 			t.Fatal(e)
 		}
 		g.cfg.Transport = transport
 		g.cfg.Endpoint = endpoint
 	} else {
 		info := bond.PathInfo{ID: "fallback-https", ProfileID: "fallback", Network: "wifi", Generation: 1}
-		if e = g.addBondHTTPS(ctx, ln.Addr().String(), info, nil, false); e != nil {
+		if e = g.addBondHTTPS(ctx, ln.Addr().String(), info, budget.Bind(nil, "cell"), false); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -323,6 +354,9 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 	}
 	if after := <-seen; after != before {
 		t.Fatal("UDP mapping changed", before, after)
+	}
+	if budget.ledger.Snapshot().Used == 0 {
+		t.Fatal("physical fallback traffic not accounted")
 	}
 	payload := []byte("same exit socket")
 	if _, e = st.Write(payload); e != nil {

@@ -33,7 +33,7 @@ type transport struct {
 	udp *net.UDPConn
 }
 
-func (t transport) close() { t.q.Close(); t.udp.Close() }
+func (t transport) close() { t.q.Close(); t.q.Conn.Close(); t.udp.Close() }
 
 type preparedPath struct {
 	key       string
@@ -101,7 +101,7 @@ func openTransport(ip net.IP, binder SocketBinder, onUnavailable func(net.Addr, 
 		return transport{}, err
 	}
 	udp := pc.(*net.UDPConn)
-	return transport{q: &quic.Transport{Conn: &pathSocket{PacketConn: udp, onUnavailable: onUnavailable}}, udp: udp}, nil
+	return transport{q: &quic.Transport{Conn: &pathSocket{PacketConn: meterBoundPacket(udp, binder), onUnavailable: onUnavailable}}, udp: udp}, nil
 }
 
 func (c *Client) pathUnavailable(local net.Addr, err error) {

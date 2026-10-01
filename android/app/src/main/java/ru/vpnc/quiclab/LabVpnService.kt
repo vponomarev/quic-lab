@@ -67,15 +67,15 @@ class LabVpnService : VpnService() {
         startForeground(42, vpnNotification())
         handler.postDelayed(notificationTick, 1000)
         try {
-            // C1 creates one run owner. C2 wires the shared limit and socket meters.
-            budgetRun.start(0)
+            // One shared meter survives every exit reconnect in this VPN run.
+            val runBudget = budgetRun.start(VpnBudgetSettings.limitBytes(this))
             if (VpnProfiles.multiple(this)) {
                 val plan=MultipleVpnPlan.load(this)
                 tun=Builder().setSession("QUIC Lab · multiple").setMtu(1280).addAddress("10.254.254.1",32)
                     .addRoute("0.0.0.0",0).addDnsServer(plan.dns).addDisallowedApplication(packageName)
                     .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
                 active=true; multipleMode=true;transport="multiple";exitEnabled=false;status="Несколько VPN · ${plan.profiles.size} профилей"
-                multiple=MultipleVpnController(this,plan,tun!!.fd)
+                multiple=MultipleVpnController(this,plan,tun!!.fd,runBudget)
                 return START_NOT_STICKY
             }
             multipleMode=false
@@ -116,7 +116,7 @@ class LabVpnService : VpnService() {
                     .put("transport", prefs.getString("transport", "quic"))
                     .put("max_availability", prefs.getBoolean("max_availability", false))
                     .put("bond_copy_budget", prefs.getLong("bond_copy_kib",256).coerceIn(0,65536)*1024/2)
-                    .put("bond_cell_budget", prefs.getLong("bond_cell_mib",0).coerceIn(0,1048576)*1024*1024/2)
+                    .put("bond_cell_budget", 0) // Shared physical socket budget replaces direction split.
                     .put("transit_endpoint", prefs.getString("transit_endpoint", ""))
                     .put("probe_exit_ip", mode != 3)
                     .put("ca", prefs.getString("ca", ""))
@@ -133,6 +133,7 @@ class LabVpnService : VpnService() {
                     this,
                     cfg,
                     tun!!.fd,
+                    budget = runBudget,
                     selected = { n, _ -> handler.post { controller.withCurrent(id, token) { setUnderlyingNetworks(arrayOf(n)) } } },
                     availability = { _, kind, up ->
                         if (up)
