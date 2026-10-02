@@ -62,6 +62,8 @@ internal object VpnProfiles {
     fun setMultiple(c:Context,value:Boolean){editable();check(meta(c).edit().putBoolean("multiple",value).commit())}
     fun enabled(c:Context)=meta(c).getStringSet("multiple_enabled",emptySet())!!.toSet()
     fun setEnabled(c:Context,ids:Set<String>){editable();check(meta(c).edit().putStringSet("multiple_enabled",ids.toSet()).commit())}
+    fun dnsMode(c:Context)=meta(c).getString("dns_mode","tunnel").orEmpty()
+    fun setDnsMode(c:Context,mode:String){editable();require(mode in listOf("tunnel","system"));check(meta(c).edit().putString("dns_mode",mode).commit())}
     fun dnsProfile(c:Context)=meta(c).getString("multiple_dns","").orEmpty()
     fun setDnsProfile(c:Context,id:String){editable();check(meta(c).edit().putString("multiple_dns",id).commit())}
     fun move(c:Context,id:String,delta:Int){editable();val ps=list(c).toMutableList();val i=ps.indexOfFirst{it.id==id};val j=i+delta;if(i>=0 && j in ps.indices){java.util.Collections.swap(ps,i,j);write(c,ps,current(c).id)}}

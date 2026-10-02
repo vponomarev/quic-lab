@@ -4,11 +4,13 @@ package mobile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
 	"quiclab/internal/gateway"
 	"quiclab/internal/routing"
+	"quiclab/internal/trafficbudget"
 	"sync"
 	"syscall"
 )
@@ -27,38 +29,85 @@ type multiProfile struct {
 // MultiRouter owns one TUN, never the independent transport lifecycles.
 // Rules are immutable while running; unavailable profiles retain their rules.
 type MultiRouter struct {
-	mu         sync.Mutex
-	root       *Gateway
-	policy     *routing.Policy
-	owner      FlowOwner
-	profiles   map[string]*multiProfile
-	dnsProfile string
-	disabled   map[string]bool
-	closed     bool
+	mu           sync.Mutex
+	root         *Gateway
+	policy       *routing.Policy
+	owner        FlowOwner
+	profiles     map[string]*multiProfile
+	dns          routing.DNSPolicy
+	budget       *TrafficBudget
+	directBinder SocketBinder
+	disabled     map[string]bool
+	closed       bool
 }
 
 func NewMultiRouter(raw string, dnsProfile string, owner FlowOwner, directBinder SocketBinder, sink EventSink) (*MultiRouter, error) {
+	rawDNS, _ := json.Marshal(routing.DNSPolicy{Mode: "tunnel", ExitID: dnsProfile})
+	return CreateMultiRouterWithDNS(raw, string(rawDNS), owner, directBinder, sink)
+}
+func CreateMultiRouterWithDNS(raw, dnsJSON string, owner FlowOwner, directBinder SocketBinder, sink EventSink) (*MultiRouter, error) {
 	p, e := routing.Parse(raw)
 	if e != nil {
 		return nil, e
 	}
-	found := false
-	for _, r := range p.Rules {
-		if r.ID == dnsProfile {
-			found = true
-		}
-	}
-	if !found {
-		return nil, errors.New("choose a DNS profile")
-	}
 	if directBinder == nil {
 		return nil, errors.New("direct sockets require a VPN bypass binder")
 	}
-	m := &MultiRouter{root: NewGateway(sink), policy: p, owner: owner, profiles: map[string]*multiProfile{}, dnsProfile: dnsProfile, disabled: map[string]bool{}}
+	m := &MultiRouter{root: NewGateway(sink), policy: p, owner: owner, profiles: map[string]*multiProfile{}, disabled: map[string]bool{}, directBinder: directBinder}
 	g := NewGateway(sink)
 	g.direct = protectedDialer{directBinder}
 	m.profiles["direct"] = newMultiProfile(g)
+	if e = m.UpdateDNS(dnsJSON, directBinder); e != nil {
+		m.Close()
+		return nil, e
+	}
 	return m, nil
+}
+func (m *MultiRouter) SetTrafficBudget(b *TrafficBudget) { m.mu.Lock(); m.budget = b; m.mu.Unlock() }
+
+// UpdateDNS retires every stale resolver flow before publishing a physical-network snapshot.
+func (m *MultiRouter) UpdateDNS(raw string, binder SocketBinder) error {
+	var p routing.DNSPolicy
+	if e := json.Unmarshal([]byte(raw), &p); e != nil {
+		return e
+	}
+	ids := make([]string, len(m.policy.Rules))
+	for i, r := range m.policy.Rules {
+		ids[i] = r.ID
+	}
+	if p.Mode == "" {
+		p.Mode = "tunnel"
+	}
+	if p.Mode == "tunnel" && p.ExitID == "" {
+		p.ExitID = ids[0]
+	}
+	if e := routing.ValidateDNS(p, ids); e != nil {
+		return e
+	}
+	if p.Mode == "system" && binder == nil {
+		return errors.New("system DNS requires physical binder")
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return errors.New("router closed")
+	}
+	old := m.profiles["system_dns"]
+	delete(m.profiles, "system_dns")
+	if old != nil {
+		old.cancel()
+	}
+	m.dns = p
+	if p.Mode == "system" && len(p.Servers) > 0 {
+		g := NewGateway(nil)
+		g.direct = protectedDNSDialer{binder: binder, server: p.Servers[0].String(), network: p.Network, budget: m.budget}
+		m.profiles["system_dns"] = newMultiProfile(g)
+	}
+	m.mu.Unlock()
+	if old != nil {
+		go old.stop()
+	}
+	return nil
 }
 func newMultiProfile(g *Gateway) *multiProfile {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -193,11 +242,14 @@ func (m *MultiRouter) selectFlow(protocol int64, src string, sp int64, dst strin
 		uid = m.owner.Owner(protocol, src, sp, dst, dp)
 	}
 	d := m.policy.Choose(ip, uid)
+	m.mu.Lock()
 	// One explicit resolver path. Never infer app identity from system DNS traffic.
 	if dp == 53 {
-		d = routing.Decision{Profile: m.dnsProfile, Reason: "dns_profile"}
+		d = routing.Decision{Profile: m.dns.ExitID, Reason: "dns_tunnel"}
+		if m.dns.Mode == "system" {
+			d = routing.Decision{Profile: "system_dns", Reason: "dns_system"}
+		}
 	}
-	m.mu.Lock()
 	p := m.profiles[d.Profile]
 	closed := m.closed || m.disabled[d.Profile]
 	m.mu.Unlock()
@@ -218,7 +270,14 @@ func (m *MultiRouter) emitTraffic() {
 	m.mu.Unlock()
 	for id, p := range copy {
 		h := p.h
-		m.root.emit("profile_traffic", map[string]any{"profile_id": id, "tx_bytes": h.tx.Load(), "rx_bytes": h.rx.Load(), "tcp_flows": h.tcpFlows.Load(), "udp_flows": h.udpFlows.Load(), "udp_rejected": h.udpRejected.Load()})
+		h.g.mu.Lock()
+		datagrams := h.g.datagrams
+		h.g.mu.Unlock()
+		var drops int64
+		if datagrams != nil {
+			drops = datagrams.Drops.Load()
+		}
+		m.root.emit("profile_traffic", map[string]any{"profile_id": id, "tx_bytes": h.tx.Load(), "rx_bytes": h.rx.Load(), "tcp_flows": h.tcpFlows.Load(), "udp_flows": h.udpFlows.Load(), "udp_rejected": h.udpRejected.Load(), "udp_tx": h.udpTx.Load(), "udp_rx": h.udpRx.Load(), "datagram_drops": drops})
 	}
 }
 func (m *MultiRouter) Close() {
@@ -253,4 +312,25 @@ func (d protectedDialer) DialContext(ctx context.Context, network, address strin
 		return bindErr
 	}}
 	return dial.DialContext(ctx, network, address)
+}
+
+type protectedDNSDialer struct {
+	binder          SocketBinder
+	server, network string
+	budget          *TrafficBudget
+}
+
+func (d protectedDNSDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, e := net.SplitHostPort(address)
+	if e != nil || port != "53" || net.ParseIP(host).To4() == nil {
+		return nil, errors.New("system DNS only permits numeric IPv4 port 53")
+	}
+	if d.network == "cell" && d.budget != nil && !d.budget.CellAllowed() {
+		return nil, trafficbudget.ErrBlocked
+	}
+	c, e := (protectedDialer{d.binder}).DialContext(ctx, network, net.JoinHostPort(d.server, "53"))
+	if e != nil {
+		return nil, e
+	}
+	return meterConn(c, d.network, d.budget, trafficbudget.User), nil
 }

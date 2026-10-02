@@ -146,7 +146,7 @@ go test ./mobile -run 'Service|Transfer|Grant|Redirect' -count=1; Android: Servi
 
 **Interfaces:** type DNSPolicy struct { Mode, ExitID string; Servers []netip.Addr }; func ValidateDNS(p DNSPolicy, exits []string) error; Mode=tunnel/system. Kotlin VpnDnsPolicy.snapshot(network: Network?): JSONObject. MultiRouter NewMultiRouter сохраняет shim, новый NewMultiRouterWithDNS(raw, dnsJSON string, owner FlowOwner, directBinder SocketBinder, sink EventSink) (*MultiRouter,error).
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestTunnelDNSNoFallback; TestSystemDNSNetworkChange; TestUnknownUIDBlocked; DnsRoutingTest. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestTunnelDNSNoFallback; TestSystemDNSNetworkChange; TestUnknownUIDBlocked; DnsRoutingTest. Минимальные обязательные проверки:
 
 ```text
 assert defaultDNS.mode == 'tunnel'
@@ -157,17 +157,17 @@ assert stopOneExit.keepsTunAndBlocksItsRules
 assert stopAll.restoresNormalNetwork
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Tunnel DNS TCP/UDP53 направлять в один выбранный выход, без переписывания запросов на direct при ошибке. System DNS берётся из LinkProperties выбранной физической сети и обновляется при смене сети; bootstrap разрешение собственных VPN/update endpoints выделить как служебное, иначе невозможен старт при сломанном туннеле. Bootstrap не выдаётся приложениям как fallback. DoH/DoT — обычные потоки. Заблокировать захваченный IPv6 правилами TUN; не включать поддержку IPv6. Сохранить системное нормальное поведение после явного Stop всего VPN.
+- [x] **Step 3 — реализация:** Tunnel DNS TCP/UDP53 направлять в один выбранный выход, без переписывания запросов на direct при ошибке. System DNS берётся из LinkProperties выбранной физической сети и обновляется при смене сети; bootstrap разрешение собственных VPN/update endpoints выделить как служебное, иначе невозможен старт при сломанном туннеле. Bootstrap не выдаётся приложениям как fallback. DoH/DoT — обычные потоки. Заблокировать захваченный IPv6 правилами TUN; не включать поддержку IPv6. Сохранить системное нормальное поведение после явного Stop всего VPN.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 Linux: go test ./internal/routing ./mobile -count=1 -timeout=120s; Android: DnsRoutingTest, MultipleLiveTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: enforce explicit DNS policy and exit fail-closed routing"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: enforce explicit DNS policy and exit fail-closed routing"`. Не включать соседние незавершённые задачи.
 
 ## Проверка плана
 

@@ -14,6 +14,9 @@ class LabVpnService : VpnService() {
     private var session: VpnSession? = null
     private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
+    private var singleRouter: mobile.MultiRouter? = null
+    private var singleRouterToken: Any? = null
+    private var dnsPolicy: VpnDnsPolicy? = null
     private var tun: ParcelFileDescriptor? = null
     private val handler = Handler(Looper.getMainLooper())
     private var starting = false
@@ -97,7 +100,6 @@ class LabVpnService : VpnService() {
                 }
             else {
                 builder.addRoute("0.0.0.0", 0)
-                builder.addDnsServer(prefs.getString("dns", "1.1.1.1")!!)
             }
             when (mode) {
                 1 -> {
@@ -109,7 +111,10 @@ class LabVpnService : VpnService() {
                 }
                 else -> builder.addDisallowedApplication(packageName)
             }
-            // IPv6 is blocked for captured apps; it must not silently bypass this IPv4 VPN.
+            // Do not allowFamily(AF_INET6) or add IPv6 addresses: VpnService blocks the
+            // unconfigured family for captured apps; the IPv4 router also rejects IPv6.
+            builder.addDnsServer(prefs.getString("dns", "1.1.1.1")!!)
+            builder.addRoute(prefs.getString("dns", "1.1.1.1")!!,32)
             tun = builder.establish() ?: error("VPN не разрешён")
             val cfg =
                 VpnIdentity.load(this)
@@ -126,15 +131,35 @@ class LabVpnService : VpnService() {
             val cm = getSystemService(ConnectivityManager::class.java)
             val exitId = VpnProfiles.current(this).id
             VpnProfiles.configuration(this)
+            val dnsOwner=VpnDnsPolicy(this,VpnProfiles.dnsMode(this),exitId)
+            dnsPolicy=dnsOwner
+            val routerToken=Any()
+            singleRouterToken=routerToken
+            val router=mobile.Mobile.createMultiRouterWithDNS(
+                org.json.JSONArray().put(JSONObject().put("id",exitId).put("mode","all")).toString(),
+                dnsOwner.snapshot(null).toString(), null,
+                object:mobile.SocketBinder {override fun bind(fd:Long) {check(protect(fd.toInt())) {"Cannot protect direct socket"}}},
+                object:mobile.EventSink {
+                    override fun onEvent(eventJSON:String) {
+                        val event=JSONObject(eventJSON)
+                        if(event.optString("event")=="profile_traffic" && event.optString("profile_id")!=exitId) return
+                        handler.post {if(singleRouterToken===routerToken) record(event)}
+                    }
+                },
+            )
+            singleRouter=router
+            router.setTrafficBudget(runBudget)
+            dnsOwner.attach(router)
+            router.attach(tun!!.fd.toLong())
             lateinit var controller: VpnExitController<VpnSession>
             controller = VpnExitController(setOf(exitId)) { id, token ->
                 VpnSession(
                     cm,
                     this,
                     cfg,
-                    tun!!.fd,
+                    -1,
                     budget = runBudget,
-                    selected = { n, _ -> handler.post { controller.withCurrent(id, token) { setUnderlyingNetworks(arrayOf(n)) } } },
+                    selected = { n, kind -> handler.post { controller.withCurrent(id, token) { if(!cfg.optBoolean("max_availability")) setUnderlyingNetworks(arrayOf(n)); dnsOwner.selected(n,kind) } } },
                     availability = { _, kind, up ->
                         if (up)
                             handler.post {
@@ -144,6 +169,8 @@ class LabVpnService : VpnService() {
                                 }
                             }
                     },
+                    attached = { g -> check(controller.withCurrent(id,token) {router.setGateway(id,g)}) {"Exit stopped"} },
+                    detached = { g -> router.detachGateway(id,g) },
                     output = { event ->
                         val type = event.optString("event")
                         handler.post {
@@ -210,6 +237,12 @@ class LabVpnService : VpnService() {
         handler.removeCallbacksAndMessages(null)
         runCatching { multiple?.close() }.onFailure { Diagnostics.event("vpn", JSONObject().put("event", "close_failed").put("error", it.toString())) }
         multiple = null
+        runCatching { dnsPolicy?.close() }
+        dnsPolicy = null
+        singleRouterToken=null
+        val closingRouter=singleRouter
+        singleRouter=null
+        if(closingRouter!=null) Thread({closingRouter.close()},"single-router-close").start()
         runCatching { exits?.stopAll() }.onFailure { Diagnostics.event("vpn", JSONObject().put("event", "close_failed").put("error", it.toString())) }
         exits = null
         session = null
@@ -308,7 +341,7 @@ class LabVpnService : VpnService() {
                 "exit_ip_failed" -> { exitState="Проверка недоступна"; return }
             }
             val now=android.os.SystemClock.elapsedRealtime()
-            if(kind=="traffic") {
+            if(kind=="traffic" || kind=="profile_traffic") {
                 flowSummary="Потоки TCP/UDP: ${e.optLong("tcp_flows")}/${e.optLong("udp_flows")} · UDP пакеты ↑${e.optLong("udp_tx")} ↓${e.optLong("udp_rx")}\nUDP отклонено потоков: ${e.optLong("udp_rejected")} · DATAGRAM локальные сбросы: ${e.optLong("datagram_drops")}"
                 val tx=e.optLong("tx_bytes"); val rx=e.optLong("rx_bytes")
                 val seconds=(now-trafficAt).coerceAtLeast(1)/1000.0

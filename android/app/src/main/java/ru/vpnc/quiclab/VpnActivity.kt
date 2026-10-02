@@ -428,9 +428,14 @@ class VpnActivity : Activity() {
         button(panel, "Выбрать приложения") { chooseApps() }
         routes = field(panel, "Подсети · IPv4 CIDR, по одной на строку", "routes")
         dns = field(panel, "DNS · IPv4", "dns", "1.1.1.1")
+        panel.addView(android.widget.Switch(this).apply {
+            text="Системный DNS физической сети для всего VPN"
+            isChecked=VpnProfiles.dnsMode(this@VpnActivity)=="system"
+            setOnCheckedChangeListener { _,checked -> VpnProfiles.setDnsMode(this@VpnActivity,if(checked) "system" else "tunnel") }
+        })
         label(
             panel,
-            "Network routing использует DNS текущей сети. Совпадение локальных и удалённых подсетей не обрабатывается.",
+            "DNS через выбранный VPN-выход блокируется при отказе. Системный DNS работает вне VPN. Совпадение локальных и удалённых подсетей не обрабатывается.",
         )
         panel = section("СЕРТИФИКАТ И БЕЗОПАСНОСТЬ")
         identity =

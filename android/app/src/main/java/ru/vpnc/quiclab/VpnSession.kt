@@ -31,6 +31,7 @@ internal class VpnSession(
     private val isBond = config.optBoolean("max_availability")
     private val bondNetworks = mutableMapOf<Int, Network>()
     private val bondRetry = mutableMapOf<Int, Long>()
+    private var bondResolverNetwork: Network? = null
     private fun refreshBondPaths() {
         if (!alive || !isBond) return
         service?.setUnderlyingNetworks(networks.values.toTypedArray())
@@ -47,6 +48,11 @@ internal class VpnSession(
                 if (bondNetworks[kind] != network) event("bond_path", "${label(kind)}: канал подключён")
                 bondNetworks[kind] = network
             } catch (e: Exception) { event("bond_path_unavailable", "${label(kind)}: ${e.message}") }
+        }
+        val resolver=VpnDnsPolicy.selectBondResolver(networks,bondNetworks,cellAllowed() && client?.bondCellAllowed()!=false)
+        if(resolver?.second!=bondResolverNetwork) {
+            bondResolverNetwork=resolver?.second
+            resolver?.let {selected(it.second,it.first)}
         }
     }
     private val isAWG = config.optString("transport") == "awg"
@@ -474,6 +480,7 @@ internal class VpnSession(
                     }
                     availability(network, kind, true)
                     event("network_available", "${label(kind)} $network")
+                    if(isBond) refreshBondPaths()
                 }
 
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
@@ -517,6 +524,7 @@ internal class VpnSession(
                     if (isBond) {
                         client?.dropBondPath(if(kind==WIFI) "wifi" else "cell")
                         bondNetworks.remove(kind); bondRetry.remove(kind)
+                        refreshBondPaths()
                     }
                     if (activeNetwork == network && !isBond) {
                         retryAt.clear()

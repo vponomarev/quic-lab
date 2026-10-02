@@ -17,6 +17,7 @@ internal data class MultipleVpnPlan(
     val rules: String,
     val dnsProfile: String,
     val dns: String,
+    val dnsMode: String = "tunnel",
 ) {
     companion object {
         fun load(c: Context): MultipleVpnPlan {
@@ -90,6 +91,7 @@ internal data class MultipleVpnPlan(
                 rules.toString(),
                 dnsProfile,
                 VpnProfiles.preferences(c, dnsProfile).getString("dns", "1.1.1.1")!!,
+                VpnProfiles.dnsMode(c),
             )
         }
     }

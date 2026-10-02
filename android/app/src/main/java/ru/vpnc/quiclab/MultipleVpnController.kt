@@ -28,10 +28,11 @@ internal class MultipleVpnController(
 
     private val available = mutableMapOf<String, MutableSet<Int>>()
 
+    private val dnsPolicy=VpnDnsPolicy(service,plan.dnsMode,plan.dnsProfile)
     private val router =
-        Mobile.newMultiRouter(
+        Mobile.createMultiRouterWithDNS(
             plan.rules,
-            plan.dnsProfile,
+            dnsPolicy.snapshot(null).toString(),
             object : FlowOwner {
                 override fun owner(
                     protocol: Long,
@@ -69,6 +70,8 @@ internal class MultipleVpnController(
     init {
         MultipleVpnState.reset(plan.profiles)
         try {
+            router.setTrafficBudget(budget)
+            dnsPolicy.attach(router)
             router.attach(fd.toLong())
             plan.profiles.forEach { exits.start(it.id) }
         } catch (e: Exception) {
@@ -116,10 +119,11 @@ internal class MultipleVpnController(
                 JSONObject(p.config.toString()),
                 -1,
                 budget = budget,
-                selected = { n, _ ->
+                selected = { n, kind ->
                     handler.post {
                         if (!closed && exits.current(p.id, token)) {
                             networks[p.id] = n
+                            if(p.id==plan.dnsProfile) dnsPolicy.selected(n,kind)
                             service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
                         }
                     }
@@ -179,6 +183,7 @@ internal class MultipleVpnController(
             available.remove(id)
             starting.remove(id)
 
+            if(id==plan.dnsProfile) dnsPolicy.selected(null,VpnSession.WIFI)
             networks.remove(id)
             service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
             MultipleVpnState.record(id, JSONObject().put("event", "stopped"))
@@ -194,6 +199,7 @@ internal class MultipleVpnController(
     fun close() {
         if (closed) return
         closed = true
+        dnsPolicy.close()
         plan.profiles.forEach {
             MultipleVpnState.record(it.id, JSONObject().put("event", "stopped"))
         }
