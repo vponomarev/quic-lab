@@ -116,7 +116,7 @@ C2 evidence: Linux socket/ledger/AWG suites with race and vet PASS; bond suite P
 
 **Interfaces:** gomobile: func (b *TrafficBudget) GrantTransfer(operationID string) error; RevokeTransfer(operationID string); тип ServiceTransfer; NewServiceTransfer(budget *TrafficBudget, sink EventSink) *ServiceTransfer; Fetch(requestJSON string, binder SocketBinder) error; Cancel(operationID string). requestJSON: id, kind(config/apk), https_url, output_file, device_auth_ref; секреты разрешать через существующее защищённое хранилище, не EventSink.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestGrantAppliesToSingleOperation; TestNoCrossOriginRedirect; ServiceTransferTest. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestGrantAppliesToSingleOperation; TestNoCrossOriginRedirect; ServiceTransferTest. Минимальные обязательные проверки:
 
 ```text
 assert noConsentAndExhaustedBudget.downloadBlocked
@@ -126,17 +126,17 @@ assert cancelRevokesGrant
 assert completedBytes.countInGlobalLedger
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Не предоставлять общий произвольный bypass API UI-потокам. Допуск только конфигу и APK из проверенного профиля. HTTPS identity проверяется, cleartext и cross-origin redirects запрещены; новые адреса требуют проверенной конфигурации. Физическую сеть bind/protect отдельно от VPN. Если лимит достигнут посередине загрузки — приостановить/отменить, запросить согласие и безопасно перезапустить или продолжить только с проверенным validator. Согласие относится к operationID и прекращается при завершении/отмене, а не снимает бюджет.
+- [x] **Step 3 — реализация:** Не предоставлять общий произвольный bypass API UI-потокам. Допуск только конфигу и APK из проверенного профиля. HTTPS identity проверяется, cleartext и cross-origin redirects запрещены; новые адреса требуют проверенной конфигурации. Физическую сеть bind/protect отдельно от VPN. Если лимит достигнут посередине загрузки — приостановить/отменить, запросить согласие и безопасно перезапустить или продолжить только с проверенным validator. Согласие относится к operationID и прекращается при завершении/отмене, а не снимает бюджет.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./mobile -run 'Service|Transfer|Grant|Redirect' -count=1; Android: ServiceTransferTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: gate direct service downloads with per-operation consent"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: gate direct service downloads with per-operation consent"`. Не включать соседние незавершённые задачи.
 
 ### Task C4: DNS, IPv6 и независимые блокировки
 

@@ -94,6 +94,7 @@ internal object VpnIdentity {
     }
 
     fun importBundle(context: Context, profile: JSONObject) {
+        ServiceTransfer.validateMetadata(profile)
         val content = if (profile.has("certificate")) {
             importProfile(context, profile)
             load(context)
@@ -102,6 +103,9 @@ internal object VpnIdentity {
             val raw = profile.getString("awg_config")
             mobile.Mobile.validateAWGConfig(raw)
             content.put("awg_config", raw)
+        }
+        for (field in listOf("update_token", "device_id", "config_url", "apk_url")) {
+            if (profile.has(field)) content.put(field, profile.getString(field))
         }
         require(content.has("certificate") || content.has("awg_config")) { "В профиле нет ключей" }
         save(context, content.toString().toByteArray())

@@ -26,6 +26,7 @@ internal object ProfileImport {
         if(kind=="echo") { endpoint("endpoint"); if(p.optString("https").isNotBlank()) endpoint("https");require(!p.has("key") && !p.has("certificate")) { "Echo не должен содержать ключи" }
             require(p.optString("pin").isEmpty() || p.optString("pin").matches(Regex("[0-9a-fA-F]{64}"))) { "Некорректный fingerprint" }
         } else {
+            ServiceTransfer.validateMetadata(p)
             val allowed = transports(p)
             if (p.optString("transit_endpoint").isNotBlank()) endpoint("transit_endpoint")
             if ("quic" in allowed) endpoint("quic")
