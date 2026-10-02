@@ -27,7 +27,7 @@ internal class ServiceTransfer(
     private val active = ConcurrentHashMap<String, mobile.ServiceTransfer>()
 
     fun fetch(operationID: String, profileID: String, kind: String, output: File,
-              network: Network, allowOverBudget: Boolean = false) {
+              network: Network, allowOverBudget: Boolean = false, authenticatedAPKURL: String? = null) {
         require(kind == "config" || kind == "apk")
         val transfer = Mobile.newServiceTransfer(budget, null)
         check(active.putIfAbsent(operationID, transfer) == null) { "Операция уже выполняется" }
@@ -44,7 +44,9 @@ internal class ServiceTransfer(
             // verified import. Never infer an update host from a data-plane endpoint.
             val identity = VpnIdentity.load(context, profileID)
             validateMetadata(identity)
-            val url = identity.getString(if (kind == "config") "config_url" else "apk_url")
+            require(authenticatedAPKURL == null || kind == "apk")
+            val url = authenticatedAPKURL ?: identity.getString(if (kind == "config") "config_url" else "apk_url")
+            if (authenticatedAPKURL != null) validateMetadata(JSONObject().put("apk_url",authenticatedAPKURL))
             require(url.isNotEmpty()) { "В профиле нет проверенного адреса обновления" }
             val token = identity.optString("update_token")
             if (kind == "config") require(token.isNotEmpty()) { "Нет ключа обновления устройства" }

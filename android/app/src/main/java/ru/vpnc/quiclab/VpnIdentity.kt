@@ -40,7 +40,14 @@ internal object VpnIdentity {
             Base64.encodeToString(b, Base64.NO_WRAP).chunked(64).joinToString("\n") +
             "\n-----END $type-----\n"
 
+    private fun requireManualImport(context: Context) {
+        val id=VpnProfiles.current(context).id
+        val local=context.getSharedPreferences(if(id=="default") "vpn" else "vpn_$id",Context.MODE_PRIVATE)
+        require(!local.getBoolean("managed_profile",false)) {"Сертификат управляемого профиля задаёт сервер; создайте отдельный профиль"}
+        check(!LabVpnService.active) {"Сначала остановите VPN"}
+    }
     fun import(context: Context, bytes: ByteArray, password: CharArray): String {
+        requireManualImport(context)
         val store = KeyStore.getInstance("PKCS12").apply { load(bytes.inputStream(), password) }
         val aliases = store.aliases().toList().filter { store.isKeyEntry(it) }
         require(aliases.size == 1) { "PKCS#12 должен содержать ровно один ключ" }
@@ -61,19 +68,23 @@ internal object VpnIdentity {
     }
 
     private fun save(context: Context, content: ByteArray) {
-        val cipher =
-            Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val encrypted = cipher.iv + cipher.doFinal(content)
-        val destination = VpnProfiles.identityFile(context)
-        val temp = File(context.filesDir, destination.name + ".tmp")
-        temp.writeBytes(encrypted)
-        check(temp.renameTo(destination)) {
-            "Не удалось сохранить сертификат"
-        }
-        content.fill(0)
+        try { writeBundle(context, VpnProfiles.current(context).id, JSONObject(String(content))) }
+        finally { content.fill(0) }
     }
 
+    @Synchronized fun writeBundle(context: Context, id: String, bundle: JSONObject) {
+        val content = bundle.toString().toByteArray(Charsets.UTF_8)
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+            val encrypted = cipher.iv + cipher.doFinal(content)
+            val destination = android.util.AtomicFile(VpnProfiles.identityFile(context, id))
+            val out = destination.startWrite()
+            try { out.write(encrypted); destination.finishWrite(out) }
+            catch (failure: Exception) { destination.failWrite(out); throw failure }
+        } finally { content.fill(0) }
+    }
     fun importProfile(context: Context, profile: JSONObject): String {
+        requireManualImport(context)
         val certificate = profile.getString("certificate")
         val privateKey = profile.getString("key")
         val cert = java.security.cert.CertificateFactory.getInstance("X.509")
@@ -94,6 +105,7 @@ internal object VpnIdentity {
     }
 
     fun importBundle(context: Context, profile: JSONObject) {
+        requireManualImport(context)
         ServiceTransfer.validateMetadata(profile)
         val content = if (profile.has("certificate")) {
             importProfile(context, profile)
@@ -107,17 +119,22 @@ internal object VpnIdentity {
         for (field in listOf("update_token", "device_id", "config_url", "apk_url")) {
             if (profile.has(field)) content.put(field, profile.getString(field))
         }
-        require(content.has("certificate") || content.has("awg_config")) { "В профиле нет ключей" }
+        if (profile.optString("config_url").isNotEmpty()) {
+ val server=JSONObject(profile.toString());for(k in listOf("update_token","device_id","mode","routes")) server.remove(k)
+ content.put("server_config",server)
+ }
+ require(content.has("certificate") || content.has("awg_config")) { "В профиле нет ключей" }
         save(context, content.toString().toByteArray())
     }
 
     fun importAWG(context: Context, raw: String) {
+        requireManualImport(context)
         mobile.Mobile.validateAWGConfig(raw)
         save(context, JSONObject().put("awg_config", raw).put("subject", "AmneziaWG").toString().toByteArray())
     }
 
-    fun load(context: Context, id: String = VpnProfiles.current(context).id): JSONObject {
-        val bytes = VpnProfiles.identityFile(context, id).readBytes()
+    @Synchronized fun load(context: Context, id: String = VpnProfiles.current(context).id): JSONObject {
+        val bytes = android.util.AtomicFile(VpnProfiles.identityFile(context, id)).readFully()
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))

@@ -71,11 +71,15 @@ func (s *Store) NewEnrollment(userID string, ttl time.Duration, maxDevices int) 
 	return enrollmentMetadata(en), token, nil
 }
 func (s *Store) Enroll(token, requestID, deviceName string) (Device, error) {
+	d, _, e := s.EnrollWithUpdate(token, requestID, deviceName)
+	return d, e
+}
+func (s *Store) EnrollWithUpdate(token, requestID, deviceName string) (Device, string, error) {
 	if len(token) != 64 || len(requestID) < 1 || len(requestID) > 128 {
-		return Device{}, errors.New("invalid enrollment")
+		return Device{}, "", errors.New("invalid enrollment")
 	}
 	if _, e := hex.DecodeString(token); e != nil {
-		return Device{}, errors.New("invalid enrollment")
+		return Device{}, "", errors.New("invalid enrollment")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,27 +96,37 @@ func (s *Store) Enroll(token, requestID, deviceName string) (Device, error) {
 	}
 	u, ok := s.state.Users[en.UserID]
 	if !found || en.Revoked || !en.Expires.After(now) || !ok || u.Disabled || !u.Expires.After(now) {
-		return Device{}, errors.New("enrollment unavailable")
+		return Device{}, "", errors.New("enrollment unavailable")
 	}
 	if id := en.Requests[requestID]; id != "" {
 		d, ok := s.state.Devices[id]
 		if !ok || d.Disabled || !d.Expires.After(now) {
-			return Device{}, errors.New("device unavailable")
+			return Device{}, "", errors.New("device unavailable")
+		}
+		updateToken, e := replayUpdateToken(d, en, token, requestID)
+		if e != nil {
+			return Device{}, "", e
 		}
 		// A prior primary rename may have succeeded without a successful directory
 		// sync. Recover confirmed durability before acknowledging a valid replay.
 		if e := s.save(); e != nil {
-			return Device{}, e
+			return Device{}, "", e
 		}
-		return d, nil
+		return d, updateToken, nil
 	}
 	if en.Used >= en.MaxDevices {
-		return Device{}, errors.New("enrollment device limit")
+		return Device{}, "", errors.New("enrollment device limit")
 	}
 	d, e := s.createDeviceLocked(en.UserID, deviceName, false)
 	if e != nil {
-		return Device{}, e
+		return Device{}, "", e
 	}
+	updateToken, e := issueUpdateToken(&d, en, token, requestID)
+	if e != nil {
+		delete(s.state.Devices, d.ID)
+		return Device{}, "", e
+	}
+	s.state.Devices[d.ID] = d
 	previous := en
 	en.Requests = map[string]string{}
 	for k, v := range previous.Requests {
@@ -126,9 +140,9 @@ func (s *Store) Enroll(token, requestID, deviceName string) (Device, error) {
 			delete(s.state.Devices, d.ID)
 			s.state.Enrollments[en.ID] = previous
 		}
-		return Device{}, e
+		return Device{}, "", e
 	}
-	return d, nil
+	return d, updateToken, nil
 }
 func (s *Store) RevokeEnrollment(id string) error {
 	s.mu.Lock()

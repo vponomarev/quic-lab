@@ -6,7 +6,7 @@
 **Architecture:** Единое ядро, независимые VPN-выходы и подключаемые транспорты. Работа разбита на пять планов с общими контрактами; сначала модель и устойчивость сессии, затем политики и управление, после — UI и полная приёмка.
 **Tech Stack:** Go 1.26.8, текущий fork quic-go 0.63.0, coder/websocket, AWG, Kotlin/Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md).
-**Status:** Выполняется. Шаг 0, A1–A3, B1–B3 и C1–C2 завершены. Следующий этап — C3. Завершено 8 из 20 задач разработки; полная приёмка MVP впереди.
+**Status:** Выполняется. Завершены A1–A3, B1–B3, C1–C4, D1–D4 и E3: 15 из 20 задач. B4 и E4 в работе; E1/E2 и итоговая приёмка E5 впереди.
 
 ## Global Constraints
 
@@ -33,7 +33,7 @@
 | B1 — удержание и ротация сессии | Выполнен | Linux tests/race/vet, Android build/lint; конечный LTE-бюджет — интеграционный gate C1/C2 |
 | B2 — HTTPS общей сессии | Выполнен | Linux TCP/UDP QUIC↔HTTPS, race/vet; Android build/lint |
 | B3 — здоровье путей и выбор профиля | Выполнен | Linux policy/bond/mobile, race/vet; Android build/lint; исполнение решений — B4 |
-| B4 — карусель и Android | Не начат | После C1/C2 и D1/D2 |
+| B4 — карусель и Android | В работе | Linux runtime и QUIC↔HTTPS проверены; Android и итоговые проверки впереди |
 | C1 — общий бюджет и период работы | Выполнен | Ledger, gomobile, владелец периода в службе; Linux и Android проверки |
 | C2 — учёт транспорта и блокировка LTE | Выполнен | QUIC/HTTPS/AWG, общий лимит, Linux race/vet, Android 6 тестов |
 | C3 — служебные загрузки | Выполнен | dbda3e2; Linux race/vet, независимое ревью и Android ServiceTransferTest PASS |
@@ -41,7 +41,7 @@
 | D1 — устройства и отзыв | Выполнен | Linux race/vet, повторное ревью и общий прогон PASS |
 | D2 — QR и допуск устройств | Выполнен | 24ч/5 регистраций, cap 30 с AWG; Linux race/vet, Android и ревью PASS |
 | D3 — SNI и совместимость | Выполнен | TLS/QUIC/HTTPS, независимый control PKI, Android и ревью PASS; ingress в E4 |
-| D4 — обновление профиля/APK | Не начат | После D2/D3 |
+| D4 — обновление профиля/APK | Выполнен | Linux race/vet, Android 16 тестов + живые два выхода; ревью PASS |
 | E1–E2 — UI и Echo | Не начаты | 2 задачи |
 | E3 — ограничения серверного захвата | Выполнен | Lifecycle bond, scope устройств, race/vet и ревью PASS |
 | E4–E5 — systemd и приёмка | Не начаты | 2 задачи |

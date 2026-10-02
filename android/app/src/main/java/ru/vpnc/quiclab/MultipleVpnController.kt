@@ -18,8 +18,9 @@ internal class MultipleVpnController(
 ) {
     private val cm = service.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
+    private val currentProfiles=plan.profiles.associateBy {it.id}.toMutableMap()
     private val exits = VpnExitController(plan.profiles.map { it.id }.toSet()) { id, token ->
-        createSession(plan.profiles.first { it.id == id }, token)
+        createSession(currentProfiles.getValue(id), token)
     }
     private val networks = mutableMapOf<String, Network>()
     private val starting = mutableSetOf<String>()
@@ -82,7 +83,7 @@ internal class MultipleVpnController(
             object : Runnable {
                 override fun run() {
                     if (closed) return
-                    plan.profiles
+                    currentProfiles.values
                         .filter { it.id !in paused && it.id !in starting }
                         .forEach { p ->
                             val kinds = available[p.id].orEmpty()
@@ -169,9 +170,19 @@ internal class MultipleVpnController(
         return session
     }
 
+    fun restart(id:String) {
+        if(closed || id !in currentProfiles) return
+        val fresh=MultipleVpnPlan.load(service).profiles.firstOrNull {it.id==id} ?: error("Выход удалён")
+        exits.update(id,id in paused) {
+            currentProfiles[id]=fresh
+            router.blockExit(id)
+            starting.remove(id);available.remove(id);networks.remove(id)
+        }
+        service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
+    }
     fun toggle(id: String) {
         if (closed) return
-        val p = plan.profiles.firstOrNull { it.id == id } ?: return
+        val p = currentProfiles[id] ?: return
         if (paused.remove(id)) {
             router.setProfileEnabled(id, true)
             starting.remove(id)
@@ -191,7 +202,7 @@ internal class MultipleVpnController(
     }
 
     fun move(kind: Int) {
-        plan.profiles
+        currentProfiles.values
             .filter { it.id !in paused }
             .forEach { exits.session(it.id)?.startOrMigrate(kind, it.endpoint, it.hostname, "", 100) }
     }

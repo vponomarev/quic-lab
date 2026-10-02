@@ -356,6 +356,7 @@ class VpnActivity : Activity() {
             check(!LabVpnService.active) { "Сначала остановите VPN" }
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 14)
         }
+        button(panel, "Обновить конфиг") { updateProfile(VpnProfiles.current(this).id) }
         state = label(panel, LabVpnService.status)
         state.setTextColor(accent)
         panel = section("ПОДКЛЮЧЕНИЕ")
@@ -382,7 +383,7 @@ class VpnActivity : Activity() {
                     position: Int,
                     id: Long,
                 ) {
-                    hostname.isEnabled = transportTypes[position] != "awg"
+                    hostname.isEnabled = transportTypes[position] != "awg" && !prefs.getBoolean("managed_profile",false)
                     if (initial) {
                         initial = false
                         return
@@ -459,6 +460,7 @@ class VpnActivity : Activity() {
         }
         panel.addView(advanced)
         button(advanced, "Импортировать сертификат .p12") {
+            require(!prefs.getBoolean("managed_profile",false)) {"Сертификат управляемого профиля задаёт сервер; создайте отдельный профиль"}
             require(prefs.getString("transport", "quic") != "awg") { "Для сертификата создайте отдельный профиль QUIC/HTTPS" }
             startActivityForResult(
                 Intent(Intent.ACTION_OPEN_DOCUMENT)
@@ -468,6 +470,10 @@ class VpnActivity : Activity() {
             )
         }
         ca = field(advanced, "CA сервера PEM (пусто для публичного сертификата)", "ca")
+        if(prefs.getBoolean("managed_profile",false)) {
+            label(panel,"Адреса, DNS и сертификат задаёт сервер. Используйте «Обновить конфиг». Маршруты, приложения и экономия остаются вашими.")
+            endpoint.isEnabled=false;hostname.isEnabled=false;dns.isEnabled=false;ca.isEnabled=false
+        }
         panel = section("УПРАВЛЕНИЕ")
         button(panel, "Сохранить настройки") {
             save()
@@ -557,6 +563,68 @@ class VpnActivity : Activity() {
         )
     }
 
+    private fun updateProfile(id:String,allowOverBudget:Boolean=false) {
+        val progress=AlertDialog.Builder(this).setMessage("Проверяем конфигурацию…").setCancelable(false).show()
+        Thread({
+            try {
+                val incoming=ProfileUpdate.fetch(this,id,allowOverBudget)
+                val identity=VpnIdentity.load(this,id)
+                val current=identity.optJSONObject("update_envelope") ?: org.json.JSONObject().put("server_config",identity.optJSONObject("server_config") ?: org.json.JSONObject())
+                val changes=ProfileUpdate.diff(current,incoming)
+                val selected=VpnProfiles.preferences(this,id).getString("transport","quic").orEmpty()
+                val available=ProfileImport.transports(incoming.getJSONObject("server_config"))
+                val transportChange=if(selected !in available) "\nВыбранный ${transportName(selected)} удалён; после применения используется ${transportName(available.first())}." else ""
+                handler.post {
+                    progress.dismiss()
+                    val dialog=AlertDialog.Builder(this).setTitle(if(ProfileUpdate.compatible(incoming)) "Изменения конфигурации" else "Требуется обновить приложение")
+                        .setMessage((if(changes.length()==0) "Настройки подключения не изменились." else changes.toString(2))+
+                            transportChange+"\n\nЛокальные маршруты, приложения и экономия сохранятся. Переподключится только этот выход.")
+                        .setNegativeButton("Отмена",null)
+                    if(ProfileUpdate.compatible(incoming)) dialog.setPositiveButton("Применить и переподключить") {_,_->
+                        try {ProfileUpdate.apply(this,id,incoming);recreate()}catch(e:Exception){error(e)}
+                    }
+                    val caps=incoming.getJSONObject("capabilities")
+                    if(caps.optString("apk_url").isNotEmpty() && caps.optString("apk_sha256").isNotEmpty())
+                        dialog.setNeutralButton("Загрузить APK") {_,_->downloadUpdateApk(id,incoming)}
+                    dialog.show()
+                }
+            } catch(e:Exception) {
+                handler.post {
+                    progress.dismiss()
+                    if(e is LabVpnService.UpdateConsentRequired) transferConsent {updateProfile(id,true)} else error(e)
+                }
+            }
+        },"profile-update").start()
+    }
+    private fun transferConsent(retry:()->Unit) {
+        AlertDialog.Builder(this).setTitle("Служебная загрузка через LTE")
+            .setMessage("Общий LTE-бюджет исчерпан. Разрешить только эту загрузку сверх лимита? Трафик будет учтён; VPN-бюджет не сбросится.")
+            .setNegativeButton("Отмена",null).setPositiveButton("Разрешить загрузку") {_,_->retry()}.show()
+    }
+    private fun downloadUpdateApk(id:String,envelope:org.json.JSONObject,allowOverBudget:Boolean=false) {
+        val progress=AlertDialog.Builder(this).setMessage("Загружаем и проверяем APK…").setCancelable(false).show()
+        Thread({
+            try {
+                val file=ProfileUpdate.downloadApk(this,id,envelope,allowOverBudget)
+                val hash=envelope.getJSONObject("capabilities").getString("apk_sha256")
+                handler.post {
+                    progress.dismiss()
+                    AlertDialog.Builder(this).setTitle("APK проверен")
+                        .setMessage("Hash, пакет и подпись совпадают. Открыть системный установщик?")
+                        .setNegativeButton("Отмена") {_,_->file.delete()}
+                        .setPositiveButton("Открыть установщик") {_,_->
+                            try {
+                                if(android.os.Build.VERSION.SDK_INT>=26 && !packageManager.canRequestPackageInstalls()) {
+                                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,android.net.Uri.parse("package:$packageName")))
+                                    Toast.makeText(this,"Разрешите установку и повторите загрузку APK",Toast.LENGTH_LONG).show()
+                                    file.delete()
+                                } else startActivity(ProfileUpdate.installerIntent(this,file,hash))
+                            }catch(e:Exception){file.delete();error(e)}
+                        }.show()
+                }
+            }catch(e:Exception){handler.post {progress.dismiss();if(e is LabVpnService.UpdateConsentRequired) transferConsent {downloadUpdateApk(id,envelope,true)} else error(e)}}
+        },"apk-update").start()
+    }
     private fun save() {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         require(endpoint.text.contains(':')) { "Укажите домен:порт" }

@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import org.json.JSONObject
 
 class LabVpnService : VpnService() {
+    internal class UpdateConsentRequired: IllegalStateException("Нужно разрешение на служебную загрузку сверх LTE-бюджета")
     internal val budgetRun = VpnBudgetRun()
     private var session: VpnSession? = null
     private var exits: VpnExitController<VpnSession>? = null
@@ -22,6 +23,7 @@ class LabVpnService : VpnService() {
     private var starting = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        liveService=this
         Diagnostics.init(applicationContext)
         if (intent?.action == "toggle-profile") {
             multiple?.toggle(intent.getStringExtra("profile_id").orEmpty());return START_NOT_STICKY
@@ -79,6 +81,7 @@ class LabVpnService : VpnService() {
                     .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
                 active=true; multipleMode=true;transport="multiple";exitEnabled=false;status="Несколько VPN · ${plan.profiles.size} профилей"
                 multiple=MultipleVpnController(this,plan,tun!!.fd,runBudget)
+                updateRuntime=VpnProfileUpdateRuntime(plan.dnsProfile,runBudget,requireNotNull(tun)) {id-> handler.post {runCatching {multiple?.restart(id)}.onFailure {MultipleVpnState.record(id,JSONObject().put("event","operation_failed"))}}}
                 return START_NOT_STICKY
             }
             multipleMode=false
@@ -158,6 +161,25 @@ class LabVpnService : VpnService() {
             router.attach(tun!!.fd.toLong())
             lateinit var controller: VpnExitController<VpnSession>
             controller = VpnExitController(setOf(exitId)) { id, token ->
+            val prefs = VpnProfiles.preferences(this,id)
+            val cfg =
+                VpnIdentity.load(this,id)
+                    .put("transport", prefs.getString("transport", "quic"))
+                    .put("max_availability", prefs.getBoolean("max_availability", false))
+                    .put("bond_copy_budget", prefs.getLong("bond_copy_kib",256).coerceIn(0,65536)*1024/2)
+                    .put("bond_cell_budget", 0) // Shared physical socket budget replaces direction split.
+                    .put("transit_endpoint", prefs.getString("transit_endpoint", ""))
+                    .put("server_name", prefs.getString("server_name", ""))
+                    .put("verify_name", prefs.getString("verify_name", ""))
+                    .put("control_url", prefs.getString("control_url", ""))
+                    .put("android_version_code", BuildConfig.VERSION_CODE)
+                    .put("data_version", prefs.getInt("data_version", 0))
+                    .put("probe_exit_ip", mode != 3)
+                    .put("ca", prefs.getString("ca", ""))
+                    .put("dns", prefs.getString("dns", "1.1.1.1"))
+            val endpoint = prefs.getString("endpoint", "")!!
+            val hostname = prefs.getString("hostname", "")!!
+
                 VpnSession(
                     cm,
                     this,
@@ -192,6 +214,10 @@ class LabVpnService : VpnService() {
             controller.start(exitId)
             session = controller.session(exitId)
             active = true
+            updateRuntime=VpnProfileUpdateRuntime(exitId,runBudget,requireNotNull(tun)) {id->handler.post {
+                if(id==exitId && active) try {singleRouter?.blockExit(id);starting=false;controller.start(id);session=controller.session(id);status="Переподключаем обновлённый выход…"}
+                catch(_:Exception) {status="Обновлённый выход заблокирован: переподключение не удалось"}
+            }}
             status = "Подключаем ${cfg.optString("transport").uppercase()}…"
         } catch (e: Exception) {
             status = "Ошибка: ${e.message}"
@@ -237,6 +263,7 @@ class LabVpnService : VpnService() {
     // Android may keep VpnService bound after stopSelf; release the VPN explicitly.
     private fun shutdown() {
         if (active) Diagnostics.event("vpn", JSONObject().put("event","stopped"))
+        updateRuntime=null
         active = false
         exitState = "VPN остановлен"
         handler.removeCallbacksAndMessages(null)
@@ -264,10 +291,40 @@ class LabVpnService : VpnService() {
 
     override fun onDestroy() {
         shutdown()
+        if(liveService===this) liveService=null
         super.onDestroy()
     }
 
     companion object {
+        @Volatile private var liveService: LabVpnService? = null
+        private val offlineBudget = VpnBudgetRun()
+
+        @Volatile internal var updateRuntime: VpnProfileUpdateRuntime? = null
+        internal fun isActiveDnsExit(context:android.content.Context,id:String):Boolean = updateRuntime?.dnsExitId==id
+        internal fun restartUpdatedExit(context:android.content.Context,id:String) {updateRuntime?.restartExit(id)}
+        internal fun fetchUpdate(context:android.content.Context,id:String,kind:String,output:java.io.File,
+            allowOverBudget:Boolean=false,authenticatedAPKURL:String?=null) {
+            val service=liveService?.takeIf {active}
+            val budget=service?.budgetRun?.current ?: synchronized(offlineBudget) {
+                offlineBudget.start(VpnBudgetSettings.limitBytes(context))
+            }
+            val cm=context.getSystemService(ConnectivityManager::class.java)
+            val networks=cm.allNetworks.mapNotNull {n->cm.getNetworkCapabilities(n)?.let {n to it}}
+                .filter { !it.second.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) }
+            val selected=networks.firstOrNull {it.second.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)}
+                ?: networks.firstOrNull {it.second.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)}
+                ?: error("Нет физической сети Wi-Fi/LTE")
+            val snapshot=JSONObject(budget.snapshot())
+            val cell=selected.second.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
+            if(cell && !allowOverBudget && snapshot.optBoolean("blocked")) throw UpdateConsentRequired()
+            try {
+                ServiceTransfer(context,budget,service).fetch(java.util.UUID.randomUUID().toString(),id,kind,output,
+                    selected.first,allowOverBudget,authenticatedAPKURL)
+            } catch(e:Exception) {
+                if(cell && !allowOverBudget && e.message?.contains("budget",true)==true) throw UpdateConsentRequired()
+                throw e
+            }
+        }
         @Volatile var multipleMode = false
         @Volatile var exitEnabled = true
         @Volatile var exitIP = ""

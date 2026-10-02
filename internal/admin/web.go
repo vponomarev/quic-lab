@@ -73,6 +73,7 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /users/delete", w.delete)
 	m.HandleFunc("POST /users/qr", w.qr)
 	m.HandleFunc("POST /enroll", w.enroll)
+	m.HandleFunc("GET /api/v1/devices/{id}/config", w.deviceConfig)
 	m.HandleFunc("POST /enrollments/revoke", w.revokeEnrollment)
 	m.HandleFunc("POST /echo/awg", func(rw http.ResponseWriter, r *http.Request) {
 		if w.PublicAWG == nil {
@@ -350,7 +351,7 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Invalid enrollment", 400)
 		return
 	}
-	d, e := w.Store.Enroll(body.Token, body.RequestID, body.DeviceName)
+	d, updateToken, e := w.Store.EnrollWithUpdate(body.Token, body.RequestID, body.DeviceName)
 	if e != nil {
 		http.Error(rw, "Enrollment unavailable", 410)
 		return
@@ -366,7 +367,16 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(rw).Encode(p)
+	raw, _ := json.Marshal(p)
+	response := map[string]any{}
+	json.Unmarshal(raw, &response)
+	response["device_id"] = d.ID
+	response["config_url"] = w.deviceConfigURL(d.ID)
+	response["update_token"] = updateToken
+	if w.Config.Capabilities.APKURL != "" {
+		response["apk_url"] = w.Config.Capabilities.APKURL
+	}
+	json.NewEncoder(rw).Encode(response)
 }
 
 type view struct {

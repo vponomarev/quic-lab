@@ -19,16 +19,21 @@ import (
 // Device owns credentials. Legacy means all clients sharing the original user
 // key are indistinguishable and are revoked together.
 type Device struct {
-	ID          string          `json:"id"`
-	UserID      string          `json:"user_id"`
-	Name        string          `json:"name"`
-	Certificate string          `json:"certificate"`
-	Key         string          `json:"key,omitempty"`
-	Disabled    bool            `json:"disabled,omitempty"`
-	Legacy      bool            `json:"legacy,omitempty"`
-	Created     time.Time       `json:"created"`
-	Expires     time.Time       `json:"expires"`
-	AWG         *awgserver.Peer `json:"awg,omitempty"`
+	UpdateTokenHash     string          `json:"update_token_hash,omitempty"`
+	UpdateTokenOutbox   string          `json:"update_token_outbox,omitempty"`
+	UpdateOutboxExpires time.Time       `json:"update_outbox_expires,omitempty"`
+	ConfigRevision      uint64          `json:"config_revision,omitempty"`
+	ConfigDigest        string          `json:"config_digest,omitempty"`
+	ID                  string          `json:"id"`
+	UserID              string          `json:"user_id"`
+	Name                string          `json:"name"`
+	Certificate         string          `json:"certificate"`
+	Key                 string          `json:"key,omitempty"`
+	Disabled            bool            `json:"disabled,omitempty"`
+	Legacy              bool            `json:"legacy,omitempty"`
+	Created             time.Time       `json:"created"`
+	Expires             time.Time       `json:"expires"`
+	AWG                 *awgserver.Peer `json:"awg,omitempty"`
 }
 
 func legacyDevice(u User) Device {
@@ -47,6 +52,9 @@ func (s *Store) devicesLocked(userID string) []Device {
 		if d.UserID != userID {
 			continue
 		}
+		d.UpdateTokenHash = ""
+		d.UpdateTokenOutbox = ""
+		d.ConfigDigest = ""
 		d.Certificate = ""
 		d.Key = ""
 		if d.AWG != nil {

@@ -27,7 +27,7 @@ internal object VpnProfiles {
     }
     fun preferences(c:Context,id:String=current(c).id):SharedPreferences {
         require(id=="default" || id.matches(Regex("[a-f0-9-]{36}")))
-        return c.getSharedPreferences(if(id=="default") "vpn" else "vpn_$id",Context.MODE_PRIVATE)
+        return VpnConfiguration.effectivePreferences(c,id)
     }
     fun identityFile(c:Context,id:String=current(c).id)=File(c.filesDir,if(id=="default") "vpn-identity.enc" else "vpn-identity-$id.enc")
     private fun write(c:Context,profiles:List<Profile>,current:String) {

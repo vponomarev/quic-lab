@@ -8,6 +8,7 @@ import (
 	"os"
 	"quiclab/internal/awgserver"
 	"quiclab/internal/debugcapture"
+	"quiclab/internal/protocol"
 	"quiclab/internal/transit"
 	"strconv"
 	"strings"
@@ -38,18 +39,19 @@ type Profile struct {
 	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
-	Capture   *debugcapture.Config `json:"capture,omitempty"`
-	EchoAWG   string               `json:"echo_awg,omitempty"`
-	Transit   *transit.Config      `json:"transit,omitempty"`
-	AWG       *awgserver.Config    `json:"awg,omitempty"`
-	APKPath   string               `json:"apk_path,omitempty"`
-	Listen    string               `json:"listen"`
-	PublicURL string               `json:"public_url"`
-	Username  string               `json:"username"`
-	Password  string               `json:"password"`
-	DataDir   string               `json:"data_dir"`
-	Echo      Profile              `json:"echo"`
-	VPN       Profile              `json:"vpn"`
+	Capabilities protocol.Capabilities `json:"capabilities,omitempty"`
+	Capture      *debugcapture.Config  `json:"capture,omitempty"`
+	EchoAWG      string                `json:"echo_awg,omitempty"`
+	Transit      *transit.Config       `json:"transit,omitempty"`
+	AWG          *awgserver.Config     `json:"awg,omitempty"`
+	APKPath      string                `json:"apk_path,omitempty"`
+	Listen       string                `json:"listen"`
+	PublicURL    string                `json:"public_url"`
+	Username     string                `json:"username"`
+	Password     string                `json:"password"`
+	DataDir      string                `json:"data_dir"`
+	Echo         Profile               `json:"echo"`
+	VPN          Profile               `json:"vpn"`
 }
 
 func ReadConfig(file string) (Config, error) {

@@ -115,6 +115,7 @@ internal object ProfileImport {
             val selected = allowed.first()
             val address = if (selected == "awg") awg!!.getString("endpoint") else p.getString(selected)
             check(VpnProfiles.preferences(context).edit()
+                .putBoolean("managed_profile",p.optString("config_url").isNotEmpty())
                 .putString("transit_endpoint",p.optString("transit_endpoint"))
                 .putString("transport",selected).putString("endpoint",address)
                 .putStringSet("available_transports",allowed.toSet())

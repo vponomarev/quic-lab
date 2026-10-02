@@ -22,6 +22,35 @@ internal object VpnConfiguration {
         "available_transports",
     )
 
+    /** One immutable view of the atomically committed server bundle. Editors
+     * still write only local preferences; managed server fields are shown readonly. */
+    fun effectivePreferences(context: Context, id: String): android.content.SharedPreferences {
+        require(id == "default" || id.matches(Regex("[a-f0-9-]{36}")))
+        val local = context.getSharedPreferences(if (id == "default") "vpn" else "vpn_$id", Context.MODE_PRIVATE)
+        val identityFile=VpnProfiles.identityFile(context,id)
+        if (!local.getBoolean("managed_profile",false)) return local
+        val bundle=VpnIdentity.load(context,id)
+        val server=bundle.optJSONObject("server_config") ?: return local
+        val values=mutableMapOf<String,Any?>()
+        val allowed=ProfileImport.transports(server)
+        val selected=local.getString("transport","quic").orEmpty().let {if(it in allowed) it else allowed.first()}
+        values["transport"]=selected;values["available_transports"]=allowed.toSet()
+        for(k in listOf("hostname","dns","ca","server_name","verify_name","control_url","transit_endpoint")) values[k]=server.optString(k,if(k=="dns") "1.1.1.1" else "")
+        values["data_version"]=server.optInt("data_version",1)
+        values["quic_endpoint"]=server.optString("quic")
+        values["https_endpoint"]=server.optString("https")
+        val awg=if("awg" in allowed) AwgImport.metadata(server.getString("awg_config")) else null
+        values["awg_endpoint"]=awg?.optString("endpoint") ?: ""
+        values["endpoint"]=when(selected) {"awg"->values["awg_endpoint"];"https"->values["https_endpoint"];else->values["quic_endpoint"]}
+        return object:android.content.SharedPreferences by local {
+            override fun getAll():MutableMap<String,*> = (local.all.toMutableMap().apply {putAll(values)})
+            override fun contains(key:String)=key in values || local.contains(key)
+            override fun getString(key:String,defValue:String?):String?=if(key in values) values[key] as? String else local.getString(key,defValue)
+            override fun getInt(key:String,defValue:Int)=if(key in values) values[key] as? Int ?: defValue else local.getInt(key,defValue)
+            @Suppress("UNCHECKED_CAST") override fun getStringSet(key:String,defValues:MutableSet<String>?):MutableSet<String>? =
+                if(key in values) (values[key] as? Set<String>)?.toMutableSet() else local.getStringSet(key,defValues)
+        }
+    }
     @Synchronized fun load(context: Context): JSONObject = migrate(context)
 
     @Synchronized fun migrate(context: Context): JSONObject {
@@ -61,7 +90,7 @@ internal object VpnConfiguration {
             val id = item.getString("id")
             require(id == "default" || id.matches(Regex("[a-f0-9-]{36}"))) { "Некорректный ID профиля" }
             ids.add(id)
-            val prefs = context.getSharedPreferences(if (id == "default") "vpn" else "vpn_$id", Context.MODE_PRIVATE)
+            val prefs = effectivePreferences(context,id)
             val transport = prefs.getString("transport", "quic").orEmpty()
             val endpoint = prefs.getString("endpoint", "").orEmpty()
             val demux = transport == "quic" && prefs.getBoolean("max_availability", false)

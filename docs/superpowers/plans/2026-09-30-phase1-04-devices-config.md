@@ -146,7 +146,7 @@ go test ./internal/servertls ./internal/protocol ./cmd/server ./internal/gateway
 
 **Interfaces:** func (w *Web) deviceConfig(rw http.ResponseWriter,r *http.Request) на GET /api/v1/devices/{id}/config; func (s *Store) AuthenticateUpdate(deviceID, token string) (Device,error). Kotlin ProfileUpdate.fetch(context: Context, exitId: String): JSONObject; diff(current: JSONObject, incoming: JSONObject): JSONObject; apply(context: Context, exitId: String, incoming: JSONObject). JSON envelope: schema_version, config_revision, device_id, exit_id, server_config, capabilities. Local preferences separate.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestUUIDAloneDenied; TestDisabledDeviceUpdateDenied; ProfileUpdateTest.atomicApplyAndLocalPreferences; ProfileUpdateTest.apkValidation. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestUUIDAloneDenied; TestDisabledDeviceUpdateDenied; ProfileUpdateTest.atomicApplyAndLocalPreferences; ProfileUpdateTest.apkValidation. Минимальные обязательные проверки:
 
 ```text
 assert UUIDWithoutBearer.status == 401
@@ -158,17 +158,17 @@ assert localRoutesAndEconomyPreserved
 assert APKWrongHashOrPackageOrSigner.notInstalled
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Предлагаемый механизм: отдельный случайный 256-bit per-device update token, hash на сервере, Android Keystore через VpnIdentity; UUID только адресует устройство. Token передаётся в Authorization, не URL/логах; регистрация выдаёт его только устройству. HTTPS update host проверяется обычной PKI независимо от cover SNI data-plane. Новый endpoint принимается только из аутентифицированного конфига. Лимит config body 1 MiB, атомарная запись после подтверждения diff; новый config не включает изменяемые локальные prefs. При incompatible показать APK через C3, проверить hash, package и подпись до Android installer; пользователь подтверждает установку. Никаких автоустановок или остановки прочих выходов.
+- [x] **Step 3 — реализация:** Предлагаемый механизм: отдельный случайный 256-bit per-device update token, hash на сервере, Android Keystore через VpnIdentity; UUID только адресует устройство. Token передаётся в Authorization, не URL/логах; регистрация выдаёт его только устройству. HTTPS update host проверяется обычной PKI независимо от cover SNI data-plane. Новый endpoint принимается только из аутентифицированного конфига. Лимит config body 1 MiB, атомарная запись после подтверждения diff; новый config не включает изменяемые локальные prefs. При incompatible показать APK через C3, проверить hash, package и подпись до Android installer; пользователь подтверждает установку. Никаких автоустановок или остановки прочих выходов.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/admin -count=1 -timeout=120s; Android: ProfileUpdateTest, ServiceTransferTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: update per-device configuration and offer required APK"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: update per-device configuration and offer required APK"`. Не включать соседние незавершённые задачи.
 
 ## Проверка плана
 

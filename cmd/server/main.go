@@ -130,6 +130,7 @@ func main() {
 			managed.SetAWGReload(func() error { return awgserver.Reload(cfg.DataDir) })
 			go managed.WatchAWG(ctx, cfg.DataDir)
 		}
+		cfg.Capabilities = opts.Capabilities
 		ui := admin.NewWeb(cfg, managed)
 		if cfg.Capture != nil {
 			portOf := func(addr string) int { _, p, _ := net.SplitHostPort(addr); n, _ := strconv.Atoi(p); return n }

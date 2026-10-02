@@ -41,6 +41,7 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 		}
 		base := u.Path
 		mux.Handle(base, http.StripPrefix(strings.TrimSuffix(base, "/"), admin))
+		mux.Handle("/api/v1/devices/", publicDeviceConfigRoute(admin))
 		if base != "/" {
 			mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, base, http.StatusFound) })
 		}
@@ -53,6 +54,22 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 		mux.Handle("/tunnel/bond", authorizedTunnel)
 	}
 	return mux
+}
+
+func publicDeviceConfigRoute(admin http.Handler) http.Handler {
+	const prefix = "/api/v1/devices/"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, prefix) || !strings.HasSuffix(r.URL.Path, "/config") {
+			http.NotFound(w, r)
+			return
+		}
+		deviceID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), "/config")
+		if deviceID == "" || strings.Contains(deviceID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		admin.ServeHTTP(w, r)
+	})
 }
 
 // Compatibility is public control metadata and must precede tunnel authorization.

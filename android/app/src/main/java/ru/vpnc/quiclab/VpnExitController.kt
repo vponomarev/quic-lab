@@ -20,6 +20,9 @@ internal class VpnExitController<T: AutoCloseable>(
   }
   return token
  }
+ @Synchronized fun update(id:String,paused:Boolean,refresh:()->Unit):Long? {
+  check(!closed);require(id in ids);refresh();return if(paused) null else start(id)
+ }
  @Synchronized fun current(id:String,token:Long)=!closed && generations[id]==token
  @Synchronized fun withCurrent(id:String,token:Long,action:()->Unit):Boolean {
   if(!current(id,token))return false
