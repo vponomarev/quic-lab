@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import urllib.request
 MARKER = "# Managed by quic-lab installer"
 CONFIG = Path("/etc/quic-lab")
 OPT = Path("/opt/quic-lab")
+DATA = Path("/var/lib/quic-lab")
 SITE = Path("/etc/nginx/sites-available/quic-lab")
 ENABLED = Path("/etc/nginx/sites-enabled/quic-lab")
 UNIT = Path("/etc/systemd/system/quic-lab.service")
@@ -42,6 +44,52 @@ def atomic(path, data, mode=0o644):
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def snapshot_identities(data, backup):
+    # StateDirectory may itself be a systemd symlink; never follow file symlinks.
+    manifest = {}
+    for name in ("identities.json", "identities.json.bak"):
+        source = data / name
+        try:
+            metadata = source.lstat()
+        except FileNotFoundError:
+            manifest[name] = None
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"Refusing nonregular identity file: {source}")
+        atomic(backup / name, source.read_bytes(), 0o600)
+        manifest[name] = dict(uid=metadata.st_uid, gid=metadata.st_gid,
+                              mode=stat.S_IMODE(metadata.st_mode))
+    # Only a completed snapshot is eligible for automatic or operator rollback.
+    atomic(backup / "state-manifest.json", json.dumps(manifest, indent=2) + "\n", 0o600)
+    # Persist payload/manifest entries, then the newly created backup directory.
+    sync_directory(backup)
+    sync_directory(backup.parent)
+
+
+def restore_identities(data, backup):
+    manifest = json.loads((backup / "state-manifest.json").read_text())
+    for name in ("identities.json", "identities.json.bak"):
+        destination = data / name
+        if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+            raise RuntimeError(f"Refusing nonregular identity file: {destination}")
+        metadata = manifest[name]
+        if metadata is None:
+            destination.unlink(missing_ok=True)
+        else:
+            atomic(destination, (backup / name).read_bytes(), 0o600)
+            os.chown(destination, metadata["uid"], metadata["gid"])
+            destination.chmod(metadata["mode"])
+    sync_directory(data)
 
 
 def domain_name(value):
@@ -147,6 +195,18 @@ server {{
     ssl_certificate_key {key};
     location = / {{ return 302 /lab/; }}
     location = /lab {{ return 302 /lab/; }}
+    location = /api/v1/capabilities {{
+        proxy_pass http://127.0.0.1:8083/api/v1/capabilities;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+    }}
+    location ^~ /api/v1/devices/ {{
+        proxy_pass http://127.0.0.1:8083;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+    }}
     location /lab/ {{
         proxy_pass http://127.0.0.1:8083/;
         proxy_http_version 1.1;
@@ -186,6 +246,7 @@ def server_config(ports, frontend, domain, allow="0.0.0.0/0", previous=None, arg
                       gateway_https=f"0.0.0.0:{ports['mtls_port']}", gateway_allow=allow,
                       cert="${CREDENTIALS_DIRECTORY}/cert.pem", key="${CREDENTIALS_DIRECTORY}/key.pem",
                       admin_config="${CREDENTIALS_DIRECTORY}/admin.json",
+                      capabilities=dict(control_version=1, data_version=1, min_android_version_code=0),
                       https_listen="0.0.0.0:443" if frontend == "direct" else "",
                       tls_host=domain if frontend == "direct" else "", tls_fallback="")
     for option, field in (("echo_quic_port", "listen"), ("vpn_quic_port", "gateway_quic"), ("mtls_port", "gateway_https")):
@@ -400,6 +461,7 @@ def install(args):
     CONFIG.mkdir(mode=0o700, parents=True, exist_ok=True)
     CONFIG.chmod(0o700)
     OPT.mkdir(mode=0o755, parents=True, exist_ok=True)
+    backup = None
     if old_config is not None:
         backup = CONFIG / ("backup-" + time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3))
         backup.mkdir(mode=0o700)
@@ -449,12 +511,22 @@ set -eu
     binary = OPT / "quic-lab-server"
     old_binary = binary.read_bytes() if binary.exists() else None
     old_unit = UNIT.read_bytes() if UNIT.exists() else None
-    if old_binary is not None:
-        atomic(OPT / "quic-lab-server.previous", old_binary, 0o755)
-    atomic(binary, args.binary.read_bytes(), 0o755)
-    atomic(UNIT, unit_config(cert, key, ports, frontend))
-    atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
+    was_active = subprocess.run(["systemctl", "is-active", "--quiet", "quic-lab"]).returncode == 0
+    snapshot_complete = False
+    stopped = False
+    replaced = False
     try:
+        if old_config is not None:
+            run("systemctl", "stop", "quic-lab")
+            stopped = True
+            snapshot_identities(DATA, backup)
+            snapshot_complete = True
+        if old_binary is not None:
+            atomic(OPT / "quic-lab-server.previous", old_binary, 0o755)
+        replaced = True
+        atomic(binary, args.binary.read_bytes(), 0o755)
+        atomic(UNIT, unit_config(cert, key, ports, frontend))
+        atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
         if old_config is not None:
             for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
                 # Keep custom hostnames, account, routing and all other settings.
@@ -479,7 +551,13 @@ set -eu
         if not ready:
             raise RuntimeError("Server did not become healthy; inspect journalctl -u quic-lab")
     except BaseException:
+        if not replaced:
+            if stopped and was_active:
+                run("systemctl", "start", "quic-lab")
+            raise
         run("systemctl", "stop", "quic-lab")
+        if snapshot_complete:
+            restore_identities(DATA, backup)
         if old_server is not None:
             atomic(server_file, old_server, 0o600)
         elif old_config is not None:
@@ -494,7 +572,8 @@ set -eu
             atomic(binary, old_binary, 0o755)
             atomic(UNIT, old_unit)
             run("systemctl", "daemon-reload")
-            run("systemctl", "start", "quic-lab")
+            if was_active:
+                run("systemctl", "start", "quic-lab")
             print("Previous server binary and unit restored.", file=sys.stderr)
         raise
     if args.apk:

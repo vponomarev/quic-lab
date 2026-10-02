@@ -141,7 +141,7 @@ go test ./internal/admin ./internal/gateway ./cmd/server -run 'Capture' -count=1
 
 **Interfaces:** Расширить существующий JSON config: bond_disconnect_grace_seconds=120, max_active_devices=30, update_base_url, accepted_vpn_sni; явная валидация port/SNI conflicts. Installer upgrade сохраняет identities/config и делает backup до миграции, не меняет известные режимы nginx/direct самовольно.
 
-- [ ] **Step 1 — регрессионный тест:** добавить Existing installer tests + test_upgrade_keeps_device_state + test_nginx_mode_preserved. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить Existing installer tests + test_upgrade_keeps_device_state + test_nginx_mode_preserved. Минимальные обязательные проверки:
 
 ```text
 assert upgrade.preservesUsersDevicesAndKeys
@@ -151,17 +151,17 @@ assert serviceRestartMayDisconnectButClientRecovers
 assert noAutomaticPublishOrDeploy
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Поддержать установку и обновление существующим systemd-путём, credentials и LE renewal. Миграция админки выполняется при старте с backup; если rollback требует старого формата, документировать восстановление backup, не читать новую схему старым бинарником. Installer проверяет конфиг перед рестартом; бинарник rollback сохраняется. Описать APK обязательность, максимальные устройства, DNS, SNI ограничения, семантику счётчиков. Обновить устаревшие roadmap-абзацы только по реально завершённым задачам.
+- [x] **Step 3 — реализация:** Поддержать установку и обновление существующим systemd-путём, credentials и LE renewal. Миграция админки выполняется при старте с backup; если rollback требует старого формата, документировать восстановление backup, не читать новую схему старым бинарником. Installer проверяет конфиг перед рестартом; бинарник rollback сохраняется. Описать APK обязательность, максимальные устройства, DNS, SNI ограничения, семантику счётчиков. Обновить устаревшие roadmap-абзацы только по реально завершённым задачам.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 python scripts/test-install-server.py; go test ./cmd/server ./cmd/demux ./internal/admin -count=1 -timeout=120s; Linux disposable VM: systemd start/restart/upgrade checks
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: package phase one server with safe systemd upgrades"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: package phase one server with safe systemd upgrades"`. Не включать соседние незавершённые задачи.
 
 ### Task E5: Воспроизводимая приёмка и полевой прогон
 

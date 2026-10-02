@@ -1,13 +1,13 @@
 # Максимальная доступность — проект и реализация
 
-Статус: экспериментальный прототип 0.8.0-dev; автоматические и базовые проверки на телефоне пройдены; проверка при постепенном ослаблении сигнала ещё требуется. Публичный релиз не подготовлен.
+Статус: разработка первой фазы MVP. Общая сессия QUIC/HTTPS и общий LTE-бюджет проверены; интеграция пула каналов B4 и полная приёмка E5 продолжаются. Дальнейшие пункты описывают устройство протокола и проверки, а актуальные отметки выполнения находятся в [плане](superpowers/plans/2026-09-30-phase1-00-roadmap.md).
 
 ## Контракт
 Один TUN, одна логическая VPN-сессия, два независимых аутентифицированных QUIC-канала на существующем mTLS порту. Echo и обычная миграция остаются прежними. HTTPS/AWG в первой версии не объединяются.
 Пользователь явно включает режим с предупреждением о расходе LTE и аккумулятора, включая погашенный экран. Приоритет Wi-Fi, резерв LTE. Переживаем потерю любого канала, но не состояния серверного процесса. Нулевая пауза не гарантируется.
 
 ## Протокол
-Каждая сессия привязана к клиентскому сертификату и случайному 256-битному секрету присоединения. Сервер проверяет доступ при подключении каждого канала. Секрет не пишется в логи. Сессия хранит соединения с адресатами независимо от внешних соединений. После полного отсутствия путей 30 секунд завершается явно, а не создаёт незаметно дубли потоков.
+Каждая сессия привязана к клиентскому сертификату и случайному 256-битному секрету присоединения. Сервер проверяет доступ при подключении каждого канала. Секрет не пишется в логи. Сессия хранит соединения с адресатами независимо от внешних соединений. В первой фазе после полного отсутствия путей 120 секунд по умолчанию завершается явно, а не создаёт незаметно дубли потоков.
 Записи содержат тип, flow ID, порядковый номер, ID записи и временную метку попытки. Приём подтверждается только после помещения в ограниченную очередь. Порядок обеспечивается отдельно для каждого потока. Повтор открытия/FIN не создаёт новое действие.
 UDP не превращается в надёжный поток: ограниченная копия, срок актуальности 200 мс, окно удаления дублей. Фрагментация существующего UDP mux переиспользуется.
 Доставка идёт через QUIC DATAGRAM; контроль перегрузки остаётся у QUIC. Размер записи ограничен 1050 байтами плюс заголовок. Не более 64 неподтверждённых записей на поток, 1024 на сессию. Очереди приёма также ограничиваются. Нет безлимитного накопления при обрыве.
@@ -60,3 +60,7 @@ The portable pathpolicy package separates cumulative acknowledged payload bytes 
 Policy decisions are scoped by exit and carry path generation. All allowed automatic profile/network candidates precede reserve; disabled profiles are untouched. Optional reserve probes run every 60s with 20% jitter and must carry no user traffic. Failed dials expire after 10s. Retry delay is 1/2/4/8/16/30s with 20% jitter; 30s of sustained acknowledged progress resets it. Return to a preferred candidate requires 8s and three successful data observations. Three stall/reconnect/progress recoveries within ten minutes recommend carousel without enabling it automatically.
 
 B3 provides decisions and bond health telemetry; B4 executes profile/network decisions, schedules sized probes, and integrates Android. The current legacy bond controller is not replaced by this policy yet. Network permission input must include the shared LTE budget/consent gate from C1/C2. Optional reserve probes are separate ephemeral checks, not pool members. Probe completion alone never clears outstanding user-payload stall. Linux fault tests do not certify the 1s/10s Android acceptance targets.
+
+## Счётчики первой фазы
+
+LTE-бюджет общий для всех выходов в одном запуске VPN и не сбрасывается при реконнекте. Учёт ведётся на физических сокетах QUIC/HTTPS/AWG, включая проверки и копии; он не обязан совпадать со счётчиком оператора. Служебная загрузка сверх бюджета требует отдельного разрешения на одну операцию. DNS один на запуск: системный через выбранную физическую сеть либо через выбранный VPN-выход; скрытого прямого fallback для туннельного DNS нет. IPv6 и доменная маршрутизация в эту фазу не входят.

@@ -15,6 +15,46 @@ spec.loader.exec_module(i)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_upgrade_preserves_phase_one_server_metadata(self):
+        previous = i.server_config(i.DEFAULT_PORTS, "direct", "lab.example.org")
+        self.assertEqual(previous["capabilities"]["control_version"], 1)
+        self.assertEqual(previous["capabilities"]["data_version"], 1)
+        previous.update(
+            vpn_sni_names=["cover.example.org"],
+            capabilities={
+                "control_version": 1,
+                "data_version": 1,
+                "min_android_version_code": 45,
+                "apk_url": "https://lab.example.org/quic-lab.apk",
+                "apk_sha256": "abc123",
+            },
+        )
+        upgraded = i.server_config(
+            i.DEFAULT_PORTS,
+            "direct",
+            "lab.example.org",
+            previous=previous,
+            args=SimpleNamespace(),
+        )
+        self.assertEqual(upgraded["vpn_sni_names"], ["cover.example.org"])
+        self.assertEqual(upgraded["capabilities"], previous["capabilities"])
+        self.assertNotIn("accepted_vpn_sni", upgraded)
+        self.assertNotIn("update_base_url", upgraded)
+
+    def test_nginx_forwards_root_control_and_device_routes(self):
+        content = i.nginx_config("lab.example.org", "/cert.pem", "/key.pem")
+        self.assertIn(
+            "location = /api/v1/capabilities {\n"
+            "        proxy_pass http://127.0.0.1:8083/api/v1/capabilities;",
+            content,
+        )
+        self.assertIn(
+            "location ^~ /api/v1/devices/ {\n"
+            "        proxy_pass http://127.0.0.1:8083;",
+            content,
+        )
+        self.assertNotIn("location /api/", content)
+
     def test_existing_nginx_is_never_installed_or_upgraded(self):
         with patch.object(i.shutil, "which", side_effect=lambda c: "/usr/bin/" + c if c in ("nginx", "openssl", "kill") else None), patch.object(i.Path, "is_file", return_value=True):
             self.assertEqual(i.missing_packages(False), ["certbot"])
@@ -149,5 +189,122 @@ class InstallerTests(unittest.TestCase):
                 i.certificate_path(value)
 
 
-if __name__ == "__main__":
+
+class UpgradeStateTests(unittest.TestCase):
+    def test_snapshot_restores_primary_and_absent_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); data = root / 'data'; data.mkdir(); backup = root / 'backup'; backup.mkdir()
+            primary = data / 'identities.json'
+            primary.write_bytes(b'synthetic-v1-users-and-key'); primary.chmod(0o600)
+            original = primary.stat()
+            i.snapshot_identities(data, backup)
+            primary.write_bytes(b'migrated-v2')
+            (data / 'identities.json.bak').write_bytes(b'overwritten-backup')
+            i.restore_identities(data, backup)
+            self.assertEqual(primary.read_bytes(), b'synthetic-v1-users-and-key')
+            self.assertFalse((data / 'identities.json.bak').exists())
+            self.assertEqual(primary.stat().st_uid, original.st_uid)
+            self.assertEqual(primary.stat().st_gid, original.st_gid)
+            self.assertEqual(primary.stat().st_mode & 0o777, 0o600)
+            self.assertEqual((backup / 'identities.json').stat().st_mode & 0o777, 0o600)
+
+    def test_snapshot_preserves_original_backup_and_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); data = root / 'data'; data.mkdir(); backup = root / 'backup'; backup.mkdir()
+            (data / 'identities.json').write_bytes(b'primary')
+            (data / 'identities.json.bak').write_bytes(b'prior')
+            i.snapshot_identities(data, backup)
+            (data / 'identities.json.bak').write_bytes(b'new')
+            i.restore_identities(data, backup)
+            self.assertEqual((data / 'identities.json.bak').read_bytes(), b'prior')
+            (data / 'identities.json').unlink(); (data / 'identities.json').symlink_to(data / 'identities.json.bak')
+            with self.assertRaises(RuntimeError): i.snapshot_identities(data, backup)
+
+
+
+class UpgradeInstallTests(unittest.TestCase):
+    def exercise(self, mode='direct', failure=None, active=True):
+        import json
+        import ssl
+        import subprocess
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            root = Path(tmp)
+            for name in ('CONFIG', 'OPT', 'DATA', 'UNIT', 'HOOK', 'SITE', 'ENABLED'):
+                stack.enter_context(patch.object(i, name, root / name.lower()))
+            stack.enter_context(patch.object(i, 'WEBROOT', str(root / 'webroot')))
+            for folder in (i.CONFIG, i.OPT, i.DATA): folder.mkdir()
+            cfg = i.admin_config('lab.example.org')
+            (i.CONFIG / 'admin.json').write_text(json.dumps(cfg))
+            (i.CONFIG / 'server.json').write_text(json.dumps(i.server_config(i.DEFAULT_PORTS, mode, 'lab.example.org')))
+            (i.CONFIG / 'install.json').write_text(json.dumps(dict(domain='lab.example.org', frontend=mode, custom_cert=True, cert=str(root / 'cert'), key=str(root / 'key'))))
+            for name in ('cert', 'key'): (root / name).touch()
+            i.UNIT.write_text(i.MARKER); (i.OPT / 'quic-lab-server').write_bytes(b'old')
+            candidate = root / 'candidate'; candidate.write_bytes(b'new')
+            identity = i.DATA / 'identities.json'; identity.write_bytes(b'synthetic-users-devices-key'); identity.chmod(0o600)
+            before = {p.name:p.read_bytes() for p in i.CONFIG.iterdir()}
+            if failure == 'snapshot':
+                identity.unlink(); identity.symlink_to(root / 'cert')
+            calls = []
+            def run(*args, **kwargs):
+                calls.append(args)
+                if '-check-config' in args and failure == 'validation': raise RuntimeError('invalid')
+                if args == ('systemctl', 'restart', 'quic-lab'):
+                    self.assertIn(('systemctl', 'stop', 'quic-lab'), calls)
+                    snapshot = next(i.CONFIG.glob('backup-*/identities.json'))
+                    self.assertEqual(snapshot.read_bytes(), b'synthetic-users-devices-key')
+                    identity.write_bytes(b'new-schema'); (i.DATA / 'identities.json.bak').write_bytes(b'new-backup')
+                if args == ('systemctl', 'start', 'quic-lab') and failure != 'snapshot':
+                    self.assertEqual(identity.read_bytes(), b'synthetic-users-devices-key')
+                    self.assertFalse((i.DATA / 'identities.json.bak').exists())
+                return subprocess.CompletedProcess(args, 0, stdout='')
+            stack.enter_context(patch.object(i, 'run', side_effect=run))
+            if failure == 'sync': stack.enter_context(patch.object(i, 'sync_directory', side_effect=OSError('disk sync failed')))
+            stack.enter_context(patch.object(i, 'missing_packages', return_value=[]))
+            stack.enter_context(patch.object(i.shutil, 'which', return_value='/fake/nginx'))
+            stack.enter_context(patch.object(ssl.SSLContext, 'load_cert_chain'))
+            stack.enter_context(patch.object(i, 'apply_nginx'))
+            stack.enter_context(patch.object(i.time, 'sleep'))
+            stack.enter_context(patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0 if active else 3)))
+            http = MagicMock(); http.__enter__.return_value.status = 200
+            stack.enter_context(patch.object(i.urllib.request, 'urlopen', return_value=http, side_effect=OSError('health') if failure == 'health' else None))
+            args = SimpleNamespace(domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                if failure:
+                    with self.assertRaises((RuntimeError, OSError)): i.install(args)
+                else: i.install(args)
+            if failure:
+                for name, content in before.items(): self.assertEqual((i.CONFIG / name).read_bytes(), content)
+                self.assertEqual((i.OPT / 'quic-lab-server').read_bytes(), b'old')
+                if failure != 'snapshot': self.assertEqual(identity.read_bytes(), b'synthetic-users-devices-key')
+                if failure in ('snapshot', 'sync'):
+                    self.assertEqual(('systemctl', 'start', 'quic-lab') in calls, active)
+                    self.assertNotIn(('systemctl', 'restart', 'quic-lab'), calls)
+                if failure == 'validation': self.assertNotIn(('systemctl', 'stop', 'quic-lab'), calls)
+            else:
+                self.assertEqual(json.loads((i.CONFIG / 'admin.json').read_text())['password'], cfg['password'])
+                self.assertEqual(json.loads((i.CONFIG / 'install.json').read_text())['frontend'], mode)
+                self.assertEqual(next(i.CONFIG.glob('backup-*/identities.json')).read_bytes(), b'synthetic-users-devices-key')
+    def test_durability_failure_never_starts_new_server(self): self.exercise(failure='sync')
+    def test_snapshot_failure_restarts_previously_active_service(self): self.exercise(failure='snapshot')
+    def test_snapshot_failure_keeps_stopped_service_stopped(self): self.exercise(failure='snapshot', active=False)
+    def test_upgrade_keeps_device_state(self): self.exercise()
+    def test_nginx_mode_preserved(self): self.exercise('nginx')
+    def test_failed_validation_no_mutations(self): self.exercise(failure='validation')
+    def test_failed_health_restores_old_state_config_and_binary(self): self.exercise(failure='health')
+
+
+
+
+
+class DurableUpgradeTests(unittest.TestCase):
+    def test_snapshot_directory_sync_failure_aborts_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); data = root / 'data'; data.mkdir(); backup = root / 'backup'; backup.mkdir()
+            (data / 'identities.json').write_bytes(b'old-state')
+            with patch.object(i, 'sync_directory', side_effect=OSError('disk sync failed')):
+                with self.assertRaises(OSError): i.snapshot_identities(data, backup)
+            self.assertEqual((data / 'identities.json').read_bytes(), b'old-state')
+
+if __name__ == '__main__':
     unittest.main()

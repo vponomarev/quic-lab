@@ -1,5 +1,5 @@
 [Unit]
-Description=QUIC Lab seminar echo server
+Description=QUIC Lab echo, mTLS gateway and admin
 After=network-online.target
 Wants=network-online.target
 
@@ -7,15 +7,21 @@ Wants=network-online.target
 Type=simple
 DynamicUser=yes
 WorkingDirectory=/opt/quic-lab
+StateDirectory=quic-lab
+StateDirectoryMode=0700
+UMask=0077
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-LoadCredential=key.pem:/opt/quic-lab/key.pem
-# The private key is passed through systemd credentials rather than made world-readable.
-ExecStart=/opt/quic-lab/quic-lab-server -listen 0.0.0.0:4433 -cert /opt/quic-lab/cert.pem -key ${CREDENTIALS_DIRECTORY}/key.pem
+LoadCredential=cert.pem:/etc/letsencrypt/live/quic.example.org/fullchain.pem
+LoadCredential=key.pem:/etc/letsencrypt/live/quic.example.org/privkey.pem
+LoadCredential=admin.json:/etc/quic-lab/admin.json
+LoadCredential=server.json:/etc/quic-lab/server.json
+ExecStart=/opt/quic-lab/quic-lab-server -config ${CREDENTIALS_DIRECTORY}/server.json
+ExecReload=/bin/kill -HUP $MAINPID
 
 [Install]
 WantedBy=multi-user.target

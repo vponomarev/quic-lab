@@ -42,7 +42,10 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                  (root / "scripts/reload-certificate.py", "reload-certificate.py", 0o755),
                  (root / "scripts/publish-apk.sh", "publish-apk.sh", 0o755),
                  (root / "docs/install-server.md", "README.md", 0o644),
+                 (root / "docs/phase1-upgrade.md", "phase1-upgrade.md", 0o644),
                  (root / "docs/server-config.md", "server-config.md", 0o644),
+                 (root / "deploy/quic-lab.service", "deploy/quic-lab.service", 0o644),
+                 (root / "deploy/quic-lab-public.service", "deploy/quic-lab-public.service", 0o644),
                  (root / "examples/server.json", "server.example.json", 0o644),
                  (root / "docs/wireshark-capture.md", "wireshark-capture.md", 0o644),
                  (root / "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", 0o644)]
