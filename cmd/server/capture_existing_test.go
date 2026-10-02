@@ -142,3 +142,57 @@ func TestCaptureExistingPorts(t *testing.T) {
 	}
 	fmt.Printf("Existing ports UDP=%d TCP=%d, live capture=%d bytes\n", udpPort, tcpPort, live.Len())
 }
+
+func TestCaptureInnerHTTPSRemainsEncrypted(t *testing.T) {
+	const payload = "inner-https-application-payload-must-remain-encrypted"
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, payload) }))
+	defer target.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := debugcapture.New(ctx, debugcapture.Config{Interface: "lo", TCPDump: exe, Slots: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := manager.StartUser("teacher", "user", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := strings.TrimPrefix(target.URL, "https://")
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted := tls.Client(manager.Wrap("user", "tcp", address, conn), &tls.Config{InsecureSkipVerify: true})
+	defer encrypted.Close()
+	if _, err = fmt.Fprintf(encrypted, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(encrypted), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != payload {
+		t.Fatal("application HTTPS failed")
+	}
+	blocks, _ := session.Blocks(0)
+	if len(blocks) < 2 {
+		t.Fatal("inner TLS transport was not captured")
+	}
+	for _, block := range blocks {
+		if bytes.Contains(block, []byte(payload)) {
+			t.Fatal("inner HTTPS application plaintext leaked into capture")
+		}
+	}
+	if len(session.Keys()) != 0 {
+		t.Fatal("inner application TLS keys leaked into server capture")
+	}
+}

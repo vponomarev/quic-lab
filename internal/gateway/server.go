@@ -28,6 +28,7 @@ import (
 )
 
 type Server struct {
+	Multiplexed      func(tls.ConnectionState) (func(), error)
 	BondContext      context.Context
 	BondOptions      bond.Options
 	bonds            bondRegistry

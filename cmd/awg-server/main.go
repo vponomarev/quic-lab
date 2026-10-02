@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"
@@ -55,9 +56,10 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	d := device.NewDevice(t, conn.NewStdNetBind(), &device.Logger{Verbosef: func(string, ...any) {}, Errorf: func(string, ...any) {}})
+	gate := awgserver.NewAdmissionTUN(t, func(id string) (time.Duration, error) { return awgserver.RequestAdmission(cfg.DataDir, id) }, cfg.AWG.OfflineAfter())
+	d := device.NewDevice(gate, conn.NewStdNetBind(), &device.Logger{Verbosef: func(string, ...any) {}, Errorf: func(string, ...any) {}})
 	defer d.Close()
-	w := &awgserver.Worker{Device: d, Config: cfg.AWG, Dir: cfg.DataDir}
+	w := &awgserver.Worker{Admission: gate, Device: d, Config: cfg.AWG, Dir: cfg.DataDir}
 	if e = w.Tick(); e != nil {
 		return e
 	}

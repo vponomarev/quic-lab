@@ -2,7 +2,10 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
+	"quiclab/internal/protocol"
 	"time"
 )
 
@@ -76,6 +79,29 @@ func (w *Web) revokeTickets(id string) {
 }
 func (w *Web) profile(u User) (Profile, error) {
 	p := w.Config.VPN
+	if p.ControlURL == "" {
+		u, err := url.Parse(w.Config.PublicURL)
+		if err != nil {
+			return Profile{}, err
+		}
+		u.Path = "/api/v1/capabilities"
+		u.RawPath = ""
+		u.RawQuery = ""
+		u.Fragment = ""
+		p.ControlURL = u.String()
+	}
+	if p.DataVersion == 0 {
+		p.DataVersion = protocol.DataVersion
+	}
+	if p.ServerName == "" {
+		p.ServerName = p.Hostname
+		if p.VerifyName == "" {
+			p.VerifyName = p.Hostname
+		}
+	}
+	if p.VerifyName == "" {
+		return Profile{}, errors.New("explicit VPN SNI requires verify_name")
+	}
 	p.Version = 1
 	p.Kind = "vpn"
 	if w.Config.Transit != nil {
@@ -160,4 +186,33 @@ func (s *Store) AWGHealth() string {
 		return "нет свежего ответа процесса AWG"
 	}
 	return "работает · изменения доступа применяются в течение секунды"
+}
+
+func (w *Web) disableDevice(rw http.ResponseWriter, r *http.Request) {
+	w.userCaptureMu.Lock()
+	defer w.userCaptureMu.Unlock()
+	if _, ok := w.authorized(rw, r, true); !ok {
+		return
+	}
+	id := r.Form.Get("id")
+	userID := ""
+	for _, u := range w.Store.List() {
+		for _, d := range u.Devices {
+			if d.ID == id {
+				userID = u.ID
+				break
+			}
+		}
+	}
+	if userID == "" {
+		http.NotFound(rw, r)
+		return
+	}
+	e := w.Store.DisableDevice(id)
+	w.revokeTickets(userID)
+	if e != nil {
+		http.Error(rw, e.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	http.Redirect(rw, r, w.base+"users", http.StatusSeeOther)
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -24,6 +23,8 @@ import (
 )
 
 type User struct {
+	Enrollments   []Enrollment    `json:"-"`
+	Devices       []Device        `json:"-"`
 	Disabled      bool            `json:"disabled,omitempty"`
 	Protocols     []string        `json:"protocols"`
 	AWG           *awgserver.Peer `json:"awg,omitempty"`
@@ -39,13 +40,17 @@ type User struct {
 	Key           string          `json:"key,omitempty"`
 }
 type diskState struct {
-	AWG     *awgserver.Identity `json:"awg,omitempty"`
-	Version int                 `json:"version"`
-	CA      string              `json:"ca"`
-	Key     string              `json:"ca_key"`
-	Users   map[string]User     `json:"users"`
+	Enrollments map[string]Enrollment `json:"enrollments,omitempty"`
+	AWG         *awgserver.Identity   `json:"awg,omitempty"`
+	Version     int                   `json:"version"`
+	CA          string                `json:"ca"`
+	Key         string                `json:"ca_key"`
+	Users       map[string]User       `json:"users"`
+	Devices     map[string]Device     `json:"devices"`
 }
 type Store struct {
+	capture          *captureState
+	admission        *Admission
 	awgConfig        *awgserver.Config
 	awgPrevious      map[string]awgserver.PeerStatus
 	awgUpdated       time.Time
@@ -58,6 +63,8 @@ type Store struct {
 	ca               *x509.Certificate
 	key              *ecdsa.PrivateKey
 	active           map[string]map[string]func()
+	awgReload        func() error
+	syncDir          func(string) error
 }
 
 func randomID() string {
@@ -78,13 +85,13 @@ func OpenStore(dir string) (*Store, error) {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
-	s := &Store{path: filepath.Join(dir, "identities.json"), active: make(map[string]map[string]func())}
+	s := &Store{admission: NewAdmission(DefaultDeviceLimit), path: filepath.Join(dir, "identities.json"), active: make(map[string]map[string]func())}
 	b, e := os.ReadFile(s.path)
 	if e == nil {
 		if e = json.Unmarshal(b, &s.state); e != nil {
 			return nil, e
 		}
-		if s.state.Version != 1 || s.state.Users == nil {
+		if (s.state.Version != 1 && s.state.Version != 2) || s.state.Users == nil {
 			return nil, errors.New("invalid identity store")
 		}
 		pair, e := tls.X509KeyPair([]byte(s.state.CA), []byte(s.state.Key))
@@ -99,6 +106,18 @@ func OpenStore(dir string) (*Store, error) {
 		s.key, ok = pair.PrivateKey.(*ecdsa.PrivateKey)
 		if !ok || !s.ca.IsCA {
 			return nil, errors.New("invalid CA")
+		}
+		if s.state.Version == 1 {
+			s.state.Devices = make(map[string]Device)
+			for _, u := range s.state.Users {
+				s.state.Devices[u.ID] = legacyDevice(u)
+			}
+			s.state.Version = 2
+			if e = s.save(); e != nil {
+				return nil, e
+			}
+		} else if s.state.Devices == nil {
+			return nil, errors.New("invalid device store")
 		}
 		return s, nil
 	}
@@ -127,7 +146,7 @@ func OpenStore(dir string) (*Store, error) {
 	if e != nil {
 		return nil, e
 	}
-	s.state = diskState{Version: 1, CA: encode("CERTIFICATE", der), Key: encode("PRIVATE KEY", kd), Users: make(map[string]User)}
+	s.state = diskState{Version: 2, Devices: make(map[string]Device), CA: encode("CERTIFICATE", der), Key: encode("PRIVATE KEY", kd), Users: make(map[string]User)}
 	if e = s.save(); e != nil {
 		return nil, e
 	}
@@ -157,7 +176,42 @@ func (s *Store) save() error {
 	if ce != nil {
 		return ce
 	}
-	return os.Rename(name, s.path)
+	if old, err := os.ReadFile(s.path); err == nil {
+		backup, err := os.CreateTemp(filepath.Dir(s.path), ".identities-backup-*")
+		if err != nil {
+			return err
+		}
+		backupName := backup.Name()
+		defer os.Remove(backupName)
+		if err = backup.Chmod(0600); err == nil {
+			_, err = backup.Write(old)
+		}
+		if err == nil {
+			err = backup.Sync()
+		}
+		closeErr := backup.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if err = os.Rename(backupName, s.path+".bak"); err != nil {
+			return err
+		}
+		if err = s.syncStateDirectory(); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if e = os.Rename(name, s.path); e != nil {
+		return e
+	}
+	if e = s.syncStateDirectory(); e != nil {
+		return &publishedSaveError{e}
+	}
+	return nil
 }
 func (s *Store) Create(name string) (User, error) { return s.CreateWithProtocols(name, nil) }
 func (s *Store) CreateWithProtocols(name string, protocols []string) (User, error) {
@@ -208,8 +262,12 @@ func (s *Store) CreateWithProtocols(name string, protocols []string) (User, erro
 	u.Certificate = encode("CERTIFICATE", der) + s.state.CA
 	u.Key = encode("PRIVATE KEY", kb)
 	s.state.Users[u.ID] = u
+	s.state.Devices[u.ID] = legacyDevice(u)
 	if e = s.save(); e != nil {
-		delete(s.state.Users, u.ID)
+		if !statePublished(e) {
+			delete(s.state.Users, u.ID)
+			delete(s.state.Devices, u.ID)
+		}
 		return User{}, e
 	}
 	return u, nil
@@ -235,7 +293,9 @@ func (s *Store) Rename(id, name string) error {
 	updated.Name = name
 	s.state.Users[id] = updated
 	if e := s.save(); e != nil {
-		s.state.Users[id] = old
+		if !statePublished(e) {
+			s.state.Users[id] = old
+		}
 		return e
 	}
 	return nil
@@ -247,6 +307,8 @@ func (s *Store) List() []User {
 	out := make([]User, 0, len(s.state.Users))
 	for _, u := range s.state.Users {
 		u.Stats = s.snapshot(u.ID, time.Now())
+		u.Devices = s.devicesLocked(u.ID)
+		u.Enrollments = s.enrollmentsLocked(u.ID)
 		u.Key = ""
 		u.Certificate = ""
 		if u.AWG != nil {
@@ -264,7 +326,7 @@ func (s *Store) Profile(id string) (User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.state.Users[id]
-	if !ok || u.Disabled || time.Now().After(u.Expires) {
+	if !ok || u.Disabled || s.state.Devices[id].Disabled || time.Now().After(u.Expires) {
 		return User{}, errors.New("user unavailable")
 	}
 	return u, nil
@@ -276,35 +338,41 @@ func (s *Store) Delete(id string) error {
 		s.mu.Unlock()
 		return errors.New("unknown user")
 	}
+	removed := map[string]Device{}
+	needsAWG := false
+	for deviceID, d := range s.state.Devices {
+		if d.UserID == id {
+			removed[deviceID] = d
+			delete(s.state.Devices, deviceID)
+			needsAWG = needsAWG || d.AWG != nil
+		}
+	}
 	delete(s.state.Users, id)
-	if e := s.save(); e != nil {
+	saveErr := s.save()
+	if e := saveErr; e != nil && !statePublished(e) {
 		s.state.Users[id] = u
+		for k, d := range removed {
+			s.state.Devices[k] = d
+		}
 		s.mu.Unlock()
 		return e
 	}
 	delete(s.stats, id)
-	closers := s.active[id]
-	delete(s.active, id)
-	s.mu.Unlock()
-	for _, close := range closers {
-		close()
+	closers := []func(){}
+	for deviceID := range removed {
+		closers = append(closers, s.takeClosers(deviceID)...)
 	}
-	return nil
+	reload := s.awgReload
+	s.mu.Unlock()
+	closeAll(closers)
+	if needsAWG {
+		return errors.Join(saveErr, reloadAWG(reload))
+	}
+	return saveErr
 }
 func (s *Store) allowed(cs tls.ConnectionState) (string, error) {
-	if len(cs.VerifiedChains) == 0 || len(cs.PeerCertificates) == 0 {
-		return "", errors.New("verified client certificate required")
-	}
-	cert := cs.PeerCertificates[0]
-	u, ok := s.state.Users[cert.Subject.CommonName]
-	if !ok || u.Disabled || time.Now().After(u.Expires) {
-		return "", errors.New("client revoked or expired")
-	}
-	b, _ := pem.Decode([]byte(u.Certificate))
-	if b == nil || sha256.Sum256(b.Bytes) != sha256.Sum256(cert.Raw) {
-		return "", errors.New("identity mismatch")
-	}
-	return u.ID, nil
+	d, e := s.deviceAllowed(cs)
+	return d.UserID, e
 }
 func (s *Store) Verify(cs tls.ConnectionState) error {
 	s.mu.Lock()
@@ -317,16 +385,22 @@ func (s *Store) Verify(cs tls.ConnectionState) error {
 func (s *Store) Register(cs tls.ConnectionState, close func()) (func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id, e := s.allowed(cs)
+	d, e := s.deviceAllowed(cs)
 	if e != nil {
 		return nil, e
 	}
+	releaseAdmission, e := s.admission.Acquire(d.ID)
+	if e != nil {
+		return nil, e
+	}
+	id := d.ID
 	token := randomID()
 	if s.active[id] == nil {
 		s.active[id] = make(map[string]func())
 	}
-	s.active[id][token] = close
+	s.active[id][token] = func() { releaseAdmission(); close() }
 	return func() {
+		releaseAdmission()
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		delete(s.active[id], token)
@@ -342,4 +416,29 @@ func (s *Store) TLS(cert tls.Certificate) *tls.Config {
 }
 func (s *Store) String() string {
 	return fmt.Sprintf("managed identity store (%d users)", len(s.List()))
+}
+
+// A directory sync failure after primary rename cannot be rolled back by
+// restoring memory: readers already see the published primary file.
+type publishedSaveError struct{ cause error }
+
+func (e *publishedSaveError) Error() string {
+	return "identity state published; directory sync failed: " + e.cause.Error()
+}
+func (e *publishedSaveError) Unwrap() error { return e.cause }
+func statePublished(err error) bool {
+	var published *publishedSaveError
+	return errors.As(err, &published)
+}
+func (s *Store) syncStateDirectory() error {
+	dir := filepath.Dir(s.path)
+	if s.syncDir != nil {
+		return s.syncDir(dir)
+	}
+	f, e := os.Open(dir)
+	if e != nil {
+		return e
+	}
+	e = f.Sync()
+	return errors.Join(e, f.Close())
 }

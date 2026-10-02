@@ -75,6 +75,11 @@ internal data class MultipleVpnPlan(
                             .put("ca", p.getString("ca", ""))
                             .put("dns", dns)
                             .put("transit_endpoint", p.getString("transit_endpoint", ""))
+                            .put("server_name", p.getString("server_name", ""))
+                            .put("verify_name", p.getString("verify_name", ""))
+                            .put("control_url", p.getString("control_url", ""))
+                            .put("android_version_code", BuildConfig.VERSION_CODE)
+                            .put("data_version", p.getInt("data_version", 0))
                             .put("probe_exit_ip", false)
                     MultipleProfile(
                         profile.id,

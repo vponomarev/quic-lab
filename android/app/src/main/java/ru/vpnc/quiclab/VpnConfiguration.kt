@@ -17,6 +17,7 @@ internal object VpnConfiguration {
     private val localKeys = listOf(
         "transport", "endpoint", "quic_endpoint", "https_endpoint", "awg_endpoint",
         "hostname", "dns", "mode", "routes", "apps", "global_apps", "ca",
+        "server_name", "verify_name", "control_url", "data_version",
         "transit_endpoint", "max_availability", "bond_copy_budget", "bond_cell_budget",
         "available_transports",
     )

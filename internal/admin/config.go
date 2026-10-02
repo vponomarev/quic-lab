@@ -14,6 +14,10 @@ import (
 )
 
 type Profile struct {
+	ServerName      string   `json:"server_name,omitempty"`
+	VerifyName      string   `json:"verify_name,omitempty"`
+	ControlURL      string   `json:"control_url,omitempty"`
+	DataVersion     int      `json:"data_version,omitempty"`
 	AWGEnrollURL    string   `json:"awg_enroll_url,omitempty"`
 	TransitEndpoint string   `json:"transit_endpoint,omitempty"`
 	Transports      []string `json:"transports,omitempty"`

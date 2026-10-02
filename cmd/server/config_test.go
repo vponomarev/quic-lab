@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"quiclab/internal/protocol"
 	"testing"
 )
 
@@ -50,5 +51,28 @@ func TestBondRetentionConfiguration(t *testing.T) {
 		if _, err := parseServerConfig([]string{"-ephemeral-cert", "-bond-disconnect-grace-seconds", value}); err != nil {
 			t.Fatalf("retention %s: %v", value, err)
 		}
+	}
+}
+
+func TestServerConfigExplicitVPNNamesAndCapabilities(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "server.json")
+	os.WriteFile(p, []byte(`{"ephemeral_cert":true,"https_listen":":443","tls_host":"real.test","tls_fallback":"127.0.0.1:9443","vpn_sni_names":["cover.test"],"capabilities":{"control_version":1,"data_version":7,"min_android_version_code":45}}`), 0600)
+	c, err := parseServerConfig([]string{"-config", p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.VPNSNINames) != 1 || c.Capabilities.DataVersion != 7 {
+		t.Fatalf("lost configured capabilities or names: %+v", c)
+	}
+	c.VPNSNINames = []string{"*"}
+	if c.validate() == nil {
+		t.Fatal("wildcard VPN SNI accepted")
+	}
+}
+
+func TestCoverAllowlistRequiresRealName(t *testing.T) {
+	c := serverConfig{Listen: "127.0.0.1:4433", EphemeralCert: true, VPNSNINames: []string{"cover.test"}, Capabilities: protocol.DefaultCapabilities()}
+	if err := c.validate(); err == nil {
+		t.Fatal("cover allowlist without real tls_host accepted")
 	}
 }

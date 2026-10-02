@@ -82,9 +82,17 @@ func (w *Web) captureStart(rw http.ResponseWriter, r *http.Request) {
 	}
 	user := ""
 	kind := r.Form.Get("kind")
-	created, e := w.Capture.Start(s.CSRF, kind, user)
+	w.Store.ConfigureCapture(w.Capture)
+	var created *debugcapture.Session
+	start := func() error { var err error; created, err = w.Capture.Start(s.CSRF, kind, user); return err }
+	var e error
+	if w.Capture.CaptureIncludesVPN(kind) {
+		e = w.Store.WithCaptureEligible("", start)
+	} else {
+		e = start()
+	}
 	if e != nil {
-		if wantsCaptureJSON(r) {
+		if wantsCaptureJSON(r) || e == errMultiplexedCapture {
 			http.Error(rw, e.Error(), 409)
 			return
 		}
@@ -135,7 +143,7 @@ func (w *Web) captureLaunch(rw http.ResponseWriter, r *http.Request) {
 	}
 	ticket, e := s.Ticket()
 	if e != nil {
-		if wantsCaptureJSON(r) {
+		if wantsCaptureJSON(r) || e == errMultiplexedCapture {
 			http.Error(rw, e.Error(), 409)
 			return
 		}

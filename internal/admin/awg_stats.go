@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"quiclab/internal/awgserver"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,11 @@ func (s *Store) ObserveAWG(status awgserver.Status) {
 		s.stats = map[string]*userTraffic{}
 	}
 	for _, traffic := range s.stats {
-		delete(traffic.live, "awg")
+		for token := range traffic.live {
+			if strings.HasPrefix(token, "awg:") || token == "awg" {
+				delete(traffic.live, token)
+			}
+		}
 	}
 	if status.Updated.IsZero() || now.Sub(status.Updated) > 5*time.Second {
 		return
@@ -30,14 +35,15 @@ func (s *Store) ObserveAWG(status awgserver.Status) {
 	}
 	changed := false
 	for _, p := range status.Peers {
-		u, ok := s.state.Users[p.ID]
-		if !ok || u.Disabled || !u.Allows("awg") {
+		d, present := s.state.Devices[p.ID]
+		u, ok := s.state.Users[d.UserID]
+		if !present || !ok || d.Disabled || u.Disabled || !d.Expires.After(now) || !u.Expires.After(now) || !u.Allows("awg") {
 			continue
 		}
-		if s.stats[p.ID] == nil {
-			s.stats[p.ID] = &userTraffic{live: map[string]liveConnection{}}
+		if s.stats[d.UserID] == nil {
+			s.stats[d.UserID] = &userTraffic{live: map[string]liveConnection{}}
 		}
-		traffic := s.stats[p.ID]
+		traffic := s.stats[d.UserID]
 		previous, known := s.awgPrevious[p.ID]
 		if known {
 			var tx, rx uint64
@@ -50,19 +56,19 @@ func (s *Store) ObserveAWG(status awgserver.Status) {
 			traffic.add(now, int(tx), int(rx))
 		}
 		s.awgPrevious[p.ID] = p
-		if s.awgConfig != nil && !p.Activity.IsZero() && now.Sub(p.Activity) < s.awgConfig.OfflineAfter() {
+		if (!status.AdmissionEnforced || p.Admitted) && s.awgConfig != nil && !p.Activity.IsZero() && now.Sub(p.Activity) < s.awgConfig.OfflineAfter() {
 			source := p.Source
-			traffic.live["awg"] = liveConnection{"AmneziaWG · канал подтверждён", p.Handshake, func() string { return source }}
+			traffic.live["awg:"+d.ID] = liveConnection{"AmneziaWG · канал подтверждён", p.Handshake, func() string { return source }}
 		}
 		if p.Handshake.After(u.LastConnected) {
 			u.LastConnected = p.Handshake
 			u.LastTransport = "AmneziaWG"
 			u.LastSource = sourceIP(p.Source)
-			s.state.Users[p.ID] = u
+			s.state.Users[d.UserID] = u
 			changed = true
 		} else if u.LastTransport == "AmneziaWG" && u.LastSource != sourceIP(p.Source) && !p.Handshake.IsZero() {
 			u.LastSource = sourceIP(p.Source)
-			s.state.Users[p.ID] = u
+			s.state.Users[d.UserID] = u
 			changed = true
 		}
 	}

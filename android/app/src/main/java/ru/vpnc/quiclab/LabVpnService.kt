@@ -123,6 +123,11 @@ class LabVpnService : VpnService() {
                     .put("bond_copy_budget", prefs.getLong("bond_copy_kib",256).coerceIn(0,65536)*1024/2)
                     .put("bond_cell_budget", 0) // Shared physical socket budget replaces direction split.
                     .put("transit_endpoint", prefs.getString("transit_endpoint", ""))
+                    .put("server_name", prefs.getString("server_name", ""))
+                    .put("verify_name", prefs.getString("verify_name", ""))
+                    .put("control_url", prefs.getString("control_url", ""))
+                    .put("android_version_code", BuildConfig.VERSION_CODE)
+                    .put("data_version", prefs.getInt("data_version", 0))
                     .put("probe_exit_ip", mode != 3)
                     .put("ca", prefs.getString("ca", ""))
                     .put("dns", prefs.getString("dns", "1.1.1.1"))

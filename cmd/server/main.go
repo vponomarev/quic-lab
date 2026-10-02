@@ -16,6 +16,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"quiclab/internal/admin"
+	"quiclab/internal/awgserver"
 	"quiclab/internal/bond"
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/echo"
@@ -23,6 +24,7 @@ import (
 	"quiclab/internal/gateway"
 	"quiclab/internal/labcert"
 	"quiclab/internal/protocol"
+	"quiclab/internal/servertls"
 	"quiclab/internal/transit"
 )
 
@@ -118,6 +120,14 @@ func main() {
 			os.Exit(1)
 		}
 		if cfg.AWG != nil {
+			stopAdmission, admissionErr := managed.StartAWGAdmission(ctx)
+			if admissionErr != nil {
+				log.Error("device_admission", "error", admissionErr)
+				os.Exit(1)
+			}
+			defer stopAdmission()
+			log.Info("device_admission_recovering", "ready_at", managed.AdmissionReadyAt())
+			managed.SetAWGReload(func() error { return awgserver.Reload(cfg.DataDir) })
 			go managed.WatchAWG(ctx, cfg.DataDir)
 		}
 		ui := admin.NewWeb(cfg, managed)
@@ -140,6 +150,7 @@ func main() {
 			}
 			keys.Set(ui.Capture)
 			captureManager = ui.Capture
+			managed.ConfigureCapture(captureManager)
 		}
 		if cfg.EchoAWG != "" {
 			var probe func(context.Context) error
@@ -157,7 +168,7 @@ func main() {
 		ui.ListenerBindings = map[string]string{"public": *publicHTTPS, "echo-https": *webListen, "echo-quic": ln.Addr().String(), "vpn-quic": *gatewayQUIC, "vpn-https": *gatewayHTTPS}
 		publicAdmin = ui.Handler()
 		adminBase = cfg.PublicURL
-		as := &http.Server{Addr: cfg.Listen, Handler: ui.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		as := &http.Server{Addr: cfg.Listen, Handler: withCapabilities(ui.Handler(), opts.Capabilities), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		defer as.Close()
 		go func() {
 			if e := as.ListenAndServe(); e != nil && e != http.ErrServerClosed {
@@ -185,12 +196,14 @@ func main() {
 			mtls.NextProtos = []string{gateway.ALPN, gateway.BondALPN}
 			gw.RegisterProtocol = managed.RegisterProtocol
 			gw.Track = managed.Track
+			gw.Multiplexed = managed.TrackMultiplexed
 			if captureManager != nil {
 				gw.Capture = func(cs tls.ConnectionState, network, address string, c net.Conn) net.Conn {
-					if len(cs.VerifiedChains) == 0 || len(cs.PeerCertificates) == 0 || managed.Verify(cs) != nil {
+					device, captureErr := managed.DeviceForTLS(cs)
+					if captureErr != nil || managed.CaptureEligible(device.ID) != nil {
 						return c
 					}
-					return captureManager.Wrap(cs.PeerCertificates[0].Subject.CommonName, network, address, c)
+					return captureManager.Wrap(device.UserID, network, address, c)
 				}
 			}
 		} else {
@@ -204,7 +217,7 @@ func main() {
 		mtls.GetCertificate = reloadable.GetCertificate
 		mtls.KeyLogWriter = keys.Writer(listenerPort(*gatewayQUIC), true)
 		if *gatewayQUIC != "" {
-			ql, e := quic.ListenAddr(*gatewayQUIC, mtls, &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxFlows, MaxIncomingUniStreams: -1})
+			ql, e := quic.ListenAddr(*gatewayQUIC, servertls.AllowServerNames(mtls, *tlsHost, opts.VPNSNINames), &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxFlows, MaxIncomingUniStreams: -1})
 			if e != nil {
 				log.Error("gateway_listen", "error", e)
 				os.Exit(1)
@@ -219,20 +232,24 @@ func main() {
 		}
 		if *gatewayHTTPS != "" {
 			tc := mtls.Clone()
+			if *gatewayHTTPS != *publicHTTPS {
+				tc = servertls.AllowServerNames(tc, *tlsHost, opts.VPNSNINames)
+			}
 			tc.KeyLogWriter = keys.Writer(listenerPort(*gatewayHTTPS), false)
 			tc.NextProtos = []string{"http/1.1"}
 			mux := http.NewServeMux()
 			mux.HandleFunc("/tunnel", gw.WebSocket)
 			mux.HandleFunc("/tunnel/bond", gw.ServeBondHTTPS)
-			var handler http.Handler = mux
+			var handler http.Handler = clientCertificateRequired(vpnTunnelHandler(mux, *tlsHost, opts.VPNSNINames))
+			tc = publicTLS(tc)
 			if *publicHTTPS == *gatewayHTTPS {
-				tc = publicTLS(tc)
-				handler = publicHandler(publicAdmin, adminBase, log, mux, echoProbe)
+				handler = publicHandler(publicAdmin, adminBase, log, vpnTunnelHandler(mux, *tlsHost, opts.VPNSNINames), echoProbe)
 			}
+			handler = withCapabilities(handler, opts.Capabilities)
 			hs := &http.Server{Addr: *gatewayHTTPS, Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 			defer hs.Close()
 			go func() {
-				if e := servePublicTLS(ctx, hs, *publicHTTPS == *gatewayHTTPS, *tlsHost, *fallback); e != nil && e != http.ErrServerClosed {
+				if e := servePublicTLS(ctx, hs, *publicHTTPS == *gatewayHTTPS, *tlsHost, *fallback, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
 					log.Error("gateway_https", "error", e)
 					cancel()
 				}
@@ -240,11 +257,11 @@ func main() {
 		}
 	}
 	if *publicHTTPS != "" && *publicHTTPS != *gatewayHTTPS {
-		ps := &http.Server{Addr: *publicHTTPS, Handler: publicHandler(publicAdmin, adminBase, log, nil, echoProbe), TLSConfig: &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*publicHTTPS), false), MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+		ps := &http.Server{Addr: *publicHTTPS, Handler: withCapabilities(publicHandler(publicAdmin, adminBase, log, nil, echoProbe), opts.Capabilities), TLSConfig: &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*publicHTTPS), false), MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 		defer ps.Close()
 		configurePublicTLS(ps, opts, log)
 		go func() {
-			if e := servePublicTLS(ctx, ps, true, *tlsHost, *fallback); e != nil && e != http.ErrServerClosed {
+			if e := servePublicTLS(ctx, ps, true, *tlsHost, *fallback, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
 				log.Error("public_https", "error", e)
 				cancel()
 			}
@@ -283,7 +300,7 @@ func listenerPort(addr string) int {
 	n, _ := strconv.Atoi(p)
 	return n
 }
-func servePublicTLS(ctx context.Context, s *http.Server, public bool, host, fallback string) error {
+func servePublicTLS(ctx context.Context, s *http.Server, public bool, host, fallback string, allowedNames ...string) error {
 	if !public || fallback == "" {
 		return s.ListenAndServeTLS("", "")
 	}
@@ -291,7 +308,7 @@ func servePublicTLS(ctx context.Context, s *http.Server, public bool, host, fall
 	if e != nil {
 		return e
 	}
-	routed, e := newSNIRouter(ctx, ln, host, fallback)
+	routed, e := newSNIRouter(ctx, ln, host, fallback, allowedNames...)
 	if e != nil {
 		ln.Close()
 		return fmt.Errorf("TLS frontend: %w", e)

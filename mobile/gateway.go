@@ -20,24 +20,30 @@ import (
 	"quiclab/internal/bond"
 	"quiclab/internal/gateway"
 	"quiclab/internal/protocol"
+	"quiclab/internal/servertls"
 )
 
 type gatewayConfig struct {
-	BondCopyBudget   uint64 `json:"bond_copy_budget"`
-	BondCellBudget   uint64 `json:"bond_cell_budget"`
-	MaxAvailability  bool   `json:"max_availability"`
-	InitialPath      string `json:"initial_path"`
-	AWGProbeEndpoint string `json:"awg_probe_endpoint"`
-	TransitUDP       bool   `json:"transit_udp"`
-	TransitEndpoint  string `json:"transit_endpoint"`
-	DNS              string `json:"dns"`
-	AWGConfig        string `json:"awg_config"`
-	Transport        string `json:"transport"`
-	Endpoint         string `json:"endpoint"`
-	Hostname         string `json:"hostname"`
-	Certificate      string `json:"certificate"`
-	Key              string `json:"key"`
-	CA               string `json:"ca"`
+	ServerName         string `json:"server_name,omitempty"`
+	VerifyName         string `json:"verify_name,omitempty"`
+	ControlURL         string `json:"control_url,omitempty"`
+	AndroidVersionCode int    `json:"android_version_code,omitempty"`
+	DataVersion        int    `json:"data_version,omitempty"`
+	BondCopyBudget     uint64 `json:"bond_copy_budget"`
+	BondCellBudget     uint64 `json:"bond_cell_budget"`
+	MaxAvailability    bool   `json:"max_availability"`
+	InitialPath        string `json:"initial_path"`
+	AWGProbeEndpoint   string `json:"awg_probe_endpoint"`
+	TransitUDP         bool   `json:"transit_udp"`
+	TransitEndpoint    string `json:"transit_endpoint"`
+	DNS                string `json:"dns"`
+	AWGConfig          string `json:"awg_config"`
+	Transport          string `json:"transport"`
+	Endpoint           string `json:"endpoint"`
+	Hostname           string `json:"hostname"`
+	Certificate        string `json:"certificate"`
+	Key                string `json:"key"`
+	CA                 string `json:"ca"`
 }
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
@@ -139,14 +145,22 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	if e != nil {
 		return fmt.Errorf("client identity: %w", e)
 	}
-	g.tls = &tls.Config{KeyLogWriter: debugKeyLog("vpn", g.cfg.Hostname), ServerName: g.cfg.Hostname, Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
+	serverName, verifyName, e := g.cfg.tlsNames()
+	if e != nil {
+		return e
+	}
+	var roots *x509.CertPool
 	if g.cfg.CA != "" {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM([]byte(g.cfg.CA)) {
+		roots = x509.NewCertPool()
+		if !roots.AppendCertsFromPEM([]byte(g.cfg.CA)) {
 			return errors.New("invalid server CA")
 		}
-		g.tls.RootCAs = pool
 	}
+	g.tls, e = servertls.ClientConfig(servertls.ClientOptions{ServerName: serverName, VerifyName: verifyName, Roots: roots, Certificate: &pair})
+	if e != nil {
+		return e
+	}
+	g.tls.KeyLogWriter = debugKeyLog("vpn", serverName)
 	if g.cfg.MaxAvailability {
 		return g.startBond(binder)
 	}
@@ -156,6 +170,9 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	return nil
 }
 func (g *Gateway) connect(binder SocketBinder) error {
+	if err := g.checkCapabilities(binder); err != nil {
+		return err
+	}
 	g.ctx, g.cancel = context.WithCancel(context.Background())
 	if g.cfg.Transport == "quic" {
 		g.q = NewClient(g.sink)

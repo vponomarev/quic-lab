@@ -516,3 +516,28 @@ func (m *Manager) Enroll(token string) *Session {
 	}
 	return nil
 }
+
+// CaptureIncludesVPN reports whether a global capture can include a multiplexed
+// VPN listener. Compare UDP and TCP independently: equal numeric ports on
+// different transport protocols do not overlap.
+func (m *Manager) CaptureIncludesVPN(kind string) bool {
+	if kind == "vpn" {
+		return true
+	}
+	pair := m.Config.Ports[kind]
+	vpn := m.Config.Ports["vpn"]
+	return (pair[0] != 0 && pair[0] == vpn[0]) || (pair[1] != 0 && pair[1] == vpn[1])
+}
+
+// StopMultiplexedScope stops capture only. Existing VPN transports and all
+// capture records remain available to their authenticated administrator.
+func (m *Manager) StopMultiplexedScope(user string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.sessions {
+		info := s.Snapshot()
+		if (info.Kind == "user" && info.User == user) || (info.User == "" && m.CaptureIncludesVPN(info.Kind)) {
+			s.Stop("capture stopped: target entered multiplexed bond")
+		}
+	}
+}

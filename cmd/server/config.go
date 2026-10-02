@@ -9,32 +9,35 @@ import (
 	"io"
 	"net"
 	"os"
+	"quiclab/internal/protocol"
 	"strconv"
 	"strings"
 )
 
 type serverConfig struct {
-	BondDisconnectGraceSeconds int    `json:"bond_disconnect_grace_seconds,omitempty"`
-	Listen                     string `json:"listen"`
-	Cert                       string `json:"cert"`
-	Key                        string `json:"key"`
-	EphemeralCert              bool   `json:"ephemeral_cert"`
-	TLSFallback                string `json:"tls_fallback"`
-	TLSHost                    string `json:"tls_host"`
-	HTTPSListen                string `json:"https_listen"`
-	PublicTLSMin               string `json:"public_tls_min,omitempty"`
-	PublicTLSDiagnostics       bool   `json:"public_tls_diagnostics,omitempty"`
-	WebListen                  string `json:"web_listen"`
-	GatewayQUIC                string `json:"gateway_quic"`
-	GatewayHTTPS               string `json:"gateway_https"`
-	ClientCA                   string `json:"client_ca"`
-	GatewayAllow               string `json:"gateway_allow"`
-	DemoListen                 string `json:"demo_listen"`
-	AdminConfig                string `json:"admin_config"`
+	VPNSNINames                []string              `json:"vpn_sni_names,omitempty"`
+	Capabilities               protocol.Capabilities `json:"capabilities,omitempty"`
+	BondDisconnectGraceSeconds int                   `json:"bond_disconnect_grace_seconds,omitempty"`
+	Listen                     string                `json:"listen"`
+	Cert                       string                `json:"cert"`
+	Key                        string                `json:"key"`
+	EphemeralCert              bool                  `json:"ephemeral_cert"`
+	TLSFallback                string                `json:"tls_fallback"`
+	TLSHost                    string                `json:"tls_host"`
+	HTTPSListen                string                `json:"https_listen"`
+	PublicTLSMin               string                `json:"public_tls_min,omitempty"`
+	PublicTLSDiagnostics       bool                  `json:"public_tls_diagnostics,omitempty"`
+	WebListen                  string                `json:"web_listen"`
+	GatewayQUIC                string                `json:"gateway_quic"`
+	GatewayHTTPS               string                `json:"gateway_https"`
+	ClientCA                   string                `json:"client_ca"`
+	GatewayAllow               string                `json:"gateway_allow"`
+	DemoListen                 string                `json:"demo_listen"`
+	AdminConfig                string                `json:"admin_config"`
 }
 
 func parseServerConfig(args []string) (serverConfig, error) {
-	c := serverConfig{Listen: "127.0.0.1:4433"}
+	c := serverConfig{Listen: "127.0.0.1:4433", Capabilities: protocol.DefaultCapabilities()}
 	fs := flag.NewFlagSet("quic-lab-server", flag.ContinueOnError)
 	path := fs.String("config", "", "server JSON configuration; explicit CLI flags override file values")
 	fs.IntVar(&c.BondDisconnectGraceSeconds, "bond-disconnect-grace-seconds", 0, "bond disconnect retention, seconds (0 = 120)")
@@ -71,7 +74,7 @@ func parseServerConfig(args []string) (serverConfig, error) {
 		if err != nil {
 			return c, err
 		}
-		c = serverConfig{Listen: "127.0.0.1:4433"}
+		c = serverConfig{Listen: "127.0.0.1:4433", Capabilities: protocol.DefaultCapabilities()}
 		dec := json.NewDecoder(bytes.NewReader(data))
 		dec.DisallowUnknownFields()
 		if err = dec.Decode(&c); err != nil {
@@ -122,6 +125,17 @@ func validateAddress(value string, backend bool) error {
 }
 
 func (c serverConfig) validate() error {
+	if len(c.VPNSNINames) > 0 && (c.TLSHost == "" || strings.ContainsAny(c.TLSHost, "/ :*\x5c\r\n\t")) {
+		return errors.New("vpn_sni_names requires real tls_host")
+	}
+	for _, name := range c.VPNSNINames {
+		if name == "" || strings.ContainsAny(name, "/ :*\x5c\r\n\t") {
+			return errors.New("vpn_sni_names requires exact TLS hostnames")
+		}
+	}
+	if c.Capabilities.ControlVersion < 1 || c.Capabilities.DataVersion < 1 || c.Capabilities.MinAndroidVersionCode < 0 {
+		return errors.New("invalid capabilities versions")
+	}
 	if c.BondDisconnectGraceSeconds < 0 || c.BondDisconnectGraceSeconds > 3600 {
 		return errors.New("bond_disconnect_grace_seconds must be 0..3600")
 	}

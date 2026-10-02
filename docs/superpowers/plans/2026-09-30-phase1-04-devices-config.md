@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** План предложен для проверки; реализация не начата.
+**Status:** D1–D3 выполнены и проверены; D4 — следующий этап.
 
 ## Global Constraints
 
@@ -51,7 +51,7 @@
 
 **Interfaces:** type Device struct { ID, UserID, Name, Certificate, Key string; Disabled bool; Created, Expires time.Time; AWG *awgserver.Peer }; func (s *Store) Devices(userID string) []Device; func (s *Store) DisableDevice(id string) error; func (s *Store) DeviceForTLS(cs tls.ConnectionState) (Device,error). Store.RegisterProtocol сохраняет подпись, учитывает deviceID, а агрегаты пользователя суммируют устройства.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestDeviceMigrationAndRevocation; TestLegacyIdentityPreserved; TestRevocationDuringJoin. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestDeviceMigrationAndRevocation; TestLegacyIdentityPreserved; TestRevocationDuringJoin. Минимальные обязательные проверки:
 
 ```text
 assert migratedLegacyUser.hasOneLegacyDevice
@@ -62,17 +62,17 @@ assert joinRacingRevocation.cannotBecomeActive
 assert failedStateSave.doesNotCorruptIdentityStore
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Версионировать diskState, atomic save+backup, сохранять CA/ключи и существующие identities. Старую общую идентичность показать как legacy-устройство: несколько телефонов с тем же ключом не различимы до новой регистрации, не обещать обратного. Разнести AWG peer с пользователя на устройство и сохранить уникальные адреса. Отзыв сначала запрещает авторизацию в Store, затем закрывает все зарегистрированные callbacks/peer, не держа mutex во время close. Проверять каждый join, не только создание сессии.
+- [x] **Step 3 — реализация:** Версионировать diskState, atomic save+backup, сохранять CA/ключи и существующие identities. Старую общую идентичность показать как legacy-устройство: несколько телефонов с тем же ключом не различимы до новой регистрации, не обещать обратного. Разнести AWG peer с пользователя на устройство и сохранить уникальные адреса. Отзыв сначала запрещает авторизацию в Store, затем закрывает все зарегистрированные callbacks/peer, не держа mutex во время close. Проверять каждый join, не только создание сессии.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/admin ./internal/gateway -count=1 -timeout=120s; Linux: go test ./internal/awgserver -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: provision and revoke identities per device"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: provision and revoke identities per device"`. Не включать соседние незавершённые задачи.
 
 ### Task D2: Многоразовый QR и допуск 30 активных устройств
 
@@ -83,7 +83,7 @@ go test ./internal/admin ./internal/gateway -count=1 -timeout=120s; Linux: go te
 
 **Interfaces:** type Enrollment struct { ID, UserID string; Expires time.Time; MaxDevices, Used int }; func (s *Store) NewEnrollment(userID string, ttl time.Duration, maxDevices int) (Enrollment,string,error); func (s *Store) Enroll(token, requestID, deviceName string) (Device,error); func (s *Store) RevokeEnrollment(id string) error. type Admission struct; func NewAdmission(limit int) *Admission; Acquire(deviceID string) (release func(),err error); renew existing device lease without adding device count.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestConcurrentLastEnrollmentSlot; TestEnrollmentRetry; TestDeviceCap; TestAWGAdmission. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestConcurrentLastEnrollmentSlot; TestEnrollmentRetry; TestDeviceCap; TestAWGAdmission. Минимальные обязательные проверки:
 
 ```text
 assert defaultTTL == 24*hour && defaultLimit == 5
@@ -95,17 +95,17 @@ assert thirtyFirstDevice.rejected && existingDevicesStillWork
 assert AWGAndQUICSameDevice.count == 1
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** QR несёт HTTPS registration URL и случайный 256-bit token во fragment; клиент отправляет token в POST body. Хранить hash token, срок и атомарный счётчик; requestID постоянен при retry конкретного импорта, ответ выдаётся повторно только с валидным enrollment token, без публичного lookup по requestID. В админке срок/лимит/отзыв. Допуск устройства общий для QUIC/HTTPS/AWG; AWG учитывать по аутентифицированному peer на сервере до разрешения data-plane, освобождать lease после явного отключения либо подтверждённого таймаута активности. Не считать registered peers активными устройствами. Существующий worker API проверить на возможность admission callback; если не позволяет, выделить техническое изменение worker до заявлений о cap=30, не исключать AWG молча.
+- [x] **Step 3 — реализация:** QR несёт HTTPS registration URL и случайный 256-bit token во fragment; клиент отправляет token в POST body. Хранить hash token, срок и атомарный счётчик; requestID постоянен при retry конкретного импорта, ответ выдаётся повторно только с валидным enrollment token, без публичного lookup по requestID. В админке срок/лимит/отзыв. Допуск устройства общий для QUIC/HTTPS/AWG; AWG учитывать по аутентифицированному peer на сервере до разрешения data-plane, освобождать lease после явного отключения либо подтверждённого таймаута активности. Не считать registered peers активными устройствами. Существующий worker API проверить на возможность admission callback; если не позволяет, выделить техническое изменение worker до заявлений о cap=30, не исключать AWG молча.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/admin -count=1 -timeout=120s; Linux: go test ./internal/awgserver -count=1 -timeout=120s; Android: DeviceEnrollmentTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: enroll multiple devices and enforce shared admission limit"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: enroll multiple devices and enforce shared admission limit"`. Не включать соседние незавершённые задачи.
 
 ### Task D3: SNI, независимая проверка identity и совместимость
 
@@ -115,7 +115,7 @@ go test ./internal/admin -count=1 -timeout=120s; Linux: go test ./internal/awgse
 
 **Interfaces:** type servertls.ClientOptions struct { ServerName, VerifyName string; Roots *x509.CertPool; Certificate *tls.Certificate }; func ClientConfig(o ClientOptions) (*tls.Config,error). type protocol.Capabilities struct { ControlVersion, DataVersion, MinAndroidVersionCode int; Features []string; APKURL, APKSHA256 string }; control endpoint GET /api/v1/capabilities; authentication device token из D4 при доступе к индивидуальным данным.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestDifferentSNIStillVerifiesServer; TestRejectWrongExpiredCertificate; TestQUICAndHTTPSCustomSNI; TestIncompatibleExit. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestDifferentSNIStillVerifiesServer; TestRejectWrongExpiredCertificate; TestQUICAndHTTPSCustomSNI; TestIncompatibleExit. Минимальные обязательные проверки:
 
 ```text
 assert sentSNI == configuredCoverName
@@ -126,17 +126,17 @@ assert incompatibleInternetExit.doesNotStopHome
 assert capabilitiesReadableBeforeDataHandshake
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Отдельно протестировать Go tls.VerifyConnection с x509.Verify по VerifyName и реальной цепочке/сроку, включая resumption. Если для разделения SNI и VerifyName нужен InsecureSkipVerify, допускать его только внутри закрытого конструктора с обязательным VerifyConnection и отрицательными тестами; это не отключение проверки. Не выпускать сертификат чужого домена. Сервер принимает настроенные SNI для VPN без перехвата произвольных чужих имён; сохранить SNI fallback/nginx сценарии. Сертификаты и client auth QUIC/HTTPS прежние. Версии control/data раздельные, несовместимый data-plane возвращает определённый upgrade_required, control endpoint не ломается вместе с ним. Не обещать эффект обхода DPI по результату локального TLS-теста.
+- [x] **Step 3 — реализация:** Отдельно протестировать Go tls.VerifyConnection с x509.Verify по VerifyName и реальной цепочке/сроку, включая resumption. Если для разделения SNI и VerifyName нужен InsecureSkipVerify, допускать его только внутри закрытого конструктора с обязательным VerifyConnection и отрицательными тестами; это не отключение проверки. Не выпускать сертификат чужого домена. Сервер принимает настроенные SNI для VPN без перехвата произвольных чужих имён; сохранить SNI fallback/nginx сценарии. Сертификаты и client auth QUIC/HTTPS прежние. Версии control/data раздельные, несовместимый data-plane возвращает определённый upgrade_required, control endpoint не ломается вместе с ним. Не обещать эффект обхода DPI по результату локального TLS-теста.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/servertls ./internal/protocol ./cmd/server ./internal/gateway ./mobile -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: separate VPN SNI from verified server identity"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: separate VPN SNI from verified server identity"`. Не включать соседние незавершённые задачи.
 
 ### Task D4: Обновление профиля и APK по кнопке
 

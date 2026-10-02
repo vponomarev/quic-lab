@@ -8,6 +8,7 @@ import com.google.zxing.integration.android.IntentIntegrator
 import org.json.JSONObject
 
 class ProfileScanActivity : Activity() {
+    private var enrollmentURL:String? = null
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(TextView(this).apply{text="Импорт профиля QUIC Lab…";setPadding(24,72,24,24)})
@@ -26,11 +27,12 @@ class ProfileScanActivity : Activity() {
             }
             else if(raw.trimStart().startsWith("{")) review(JSONObject(raw))
             else {val uri=ProfileImport.enrollment(raw)
+                enrollmentURL=raw
                 val debug = uri.path.endsWith("/capture/enroll")
                 AlertDialog.Builder(this).setTitle(if(debug) "Получить настройки отладки?" else "Получить VPN-профиль?")
                     .setMessage(if(debug) "Сервер: ${uri.host}\nБудут получены настройки учебного захвата. Экспорт TLS secrets включается отдельным подтверждением." else "Сервер: ${uri.host}\nБудут получены настройки, клиентский сертификат и закрытый ключ.")
                     .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Получить"){_,_->
-                        Thread{try{val p=ProfileImport.fetch(raw);runOnUiThread{if(!isFinishing)review(p)}}catch(e:Exception){runOnUiThread{fail(e)}}}.start()
+                        Thread{try{val p=ProfileImport.fetch(this,raw);runOnUiThread{if(!isFinishing)review(p)}}catch(e:Exception){runOnUiThread{fail(e)}}}.start()
                     }.show()
             }
         }catch(e:Exception){fail(e)}
@@ -46,7 +48,7 @@ class ProfileScanActivity : Activity() {
         AlertDialog.Builder(this).setTitle(if(kind=="echo")"Настройки echo" else "VPN: ${p.optString("name")}")
             .setMessage("$address\nTLS: ${p.getString("hostname")}\n${if(kind=="vpn") "Добавить новый VPN-профиль?" else "Заменить настройки echo?"}")
             .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Сохранить"){_,_->try{
-                val saved=ProfileImport.save(this,p);setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
+                val saved=ProfileImport.save(this,p);enrollmentURL?.let { ProfileImport.completeEnrollment(this,it) };setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
             }catch(e:Exception){fail(e)}}.show()
     }
     private fun fail(e:Exception){if(isFinishing)return;AlertDialog.Builder(this).setTitle("Импорт не выполнен").setMessage(e.message ?: "Ошибка профиля").setPositiveButton("OK"){_,_->finish()}.show()}

@@ -16,6 +16,9 @@ import (
 )
 
 func (g *Gateway) startBond(binder SocketBinder) error {
+	if err := g.checkCapabilities(binder); err != nil {
+		return err
+	}
 	if g.budget != nil && !g.budget.CellAllowed() {
 		g.bondCellBlocked = true
 	}

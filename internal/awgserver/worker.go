@@ -16,6 +16,7 @@ import (
 )
 
 type Worker struct {
+	Admission *AdmissionTUN
 	lastProbe map[string]time.Time
 	Device    *device.Device
 	Config    Config
@@ -49,9 +50,10 @@ func (w *Worker) Apply(state State) error {
 	}
 	now := time.Now()
 	desired := map[string]string{}
+	admissionIDs := map[netip.Addr]string{}
 	prefix, _ := netip.ParsePrefix(w.Config.Address)
 	used := map[string]bool{}
-	for _, u := range state.Users {
+	for _, u := range state.peers() {
 		if !u.Enabled(now) {
 			continue
 		}
@@ -61,6 +63,7 @@ func (w *Worker) Apply(state State) error {
 			return errors.New("invalid or duplicate AWG peer address")
 		}
 		used[p.Address] = true
+		admissionIDs[ip] = u.ID
 		pub, e := KeyHex(p.Public)
 		if e != nil {
 			return e
@@ -73,6 +76,9 @@ func (w *Worker) Apply(state State) error {
 			return errors.New("duplicate AWG public key")
 		}
 		desired[pub] = fmt.Sprintf("public_key=%s\npreshared_key=%s\nreplace_allowed_ips=true\nallowed_ip=%s/32\n", pub, psk, p.Address)
+	}
+	if w.Admission != nil {
+		w.Admission.Update(admissionIDs)
 	}
 	// Remove only revoked peers; replacing the entire peer set would interrupt others.
 	for pub := range w.peers {
@@ -99,14 +105,14 @@ func (w *Worker) Snapshot(state State) (Status, error) {
 		return Status{}, errors.New("cannot read AWG runtime")
 	}
 	ids := map[string]string{}
-	for _, u := range state.Users {
+	for _, u := range state.peers() {
 		if u.Enabled(time.Now()) {
 			pub, _ := KeyHex(u.AWG.Public)
 			ids[pub] = u.ID
 		}
 	}
 	now := time.Now().UTC()
-	out := Status{Started: w.started, Updated: now}
+	out := Status{Started: w.started, Updated: now, AdmissionEnforced: w.Admission != nil}
 	var peer *PeerStatus
 	flush := func() {
 		if peer == nil || peer.ID == "" {
@@ -114,6 +120,9 @@ func (w *Worker) Snapshot(state State) (Status, error) {
 		}
 		previous := w.activity[peer.ID]
 		peer.Activity = confirmedActivity(previous, *peer, now)
+		if w.Admission != nil {
+			peer.Admitted = w.Admission.Allowed(peer.ID)
+		}
 		w.activity[peer.ID] = *peer
 		out.Peers = append(out.Peers, *peer)
 	}
@@ -173,15 +182,38 @@ func (w *Worker) Tick() error {
 		return e
 	}
 	w.probeIdle(state, status)
+	if w.Admission != nil {
+		w.Admission.ObserveActivity(status.Peers)
+		w.Admission.Tick()
+		for i := range status.Peers {
+			status.Peers[i].Admitted = w.Admission.Allowed(status.Peers[i].ID)
+		}
+	}
 	return WriteStatus(w.Dir, status)
 }
 func (w *Worker) Run(ctx context.Context) error {
+	requests, stop, e := w.listenReload(ctx)
+	if e != nil {
+		return e
+	}
+	defer stop()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case request := <-requests:
+			e := w.Tick()
+			reply := "ok\n"
+			if e != nil {
+				reply = "error\n"
+			}
+			request.Write([]byte(reply))
+			request.Close()
+			if e != nil {
+				return e
+			}
 		case <-tick.C:
 			if e := w.Tick(); e != nil {
 				return e
@@ -212,7 +244,7 @@ func (w *Worker) probeIdle(state State, status Status) {
 		if p.Source == "" || status.Updated.Sub(p.Activity) < w.Config.HealthInterval() || status.Updated.Sub(w.lastProbe[p.ID]) < w.Config.HealthInterval() {
 			continue
 		}
-		u, ok := state.Users[p.ID]
+		u, ok := state.peers()[p.ID]
 		if !ok || u.AWG == nil || !u.Enabled(status.Updated) {
 			continue
 		}

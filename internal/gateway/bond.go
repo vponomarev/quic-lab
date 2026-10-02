@@ -33,10 +33,13 @@ type BondWelcome struct {
 	Error string `json:"error,omitempty"`
 }
 type bondEntry struct {
-	mux   *bond.Mux
-	owner [32]byte
-	ready chan struct{}
-	err   error
+	authMu        sync.Mutex
+	registrations map[string]func()
+	authCleanup   sync.Once
+	mux           *bond.Mux
+	owner         [32]byte
+	ready         chan struct{}
+	err           error
 }
 type bondRegistry struct {
 	mu      sync.Mutex
@@ -87,6 +90,17 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 		return nil, "", errors.New("session unavailable")
 	}
 	s.bonds.mu.Unlock()
+	if (h.Network == "cell" || h.Path == "cell") && !entry.mux.Session.CellAllowed() {
+		if fresh {
+			entry.err = errors.New("LTE session budget exhausted")
+			entry.mux.Close()
+			s.bonds.mu.Lock()
+			delete(s.bonds.entries, h.Token)
+			s.bonds.mu.Unlock()
+			close(entry.ready)
+		}
+		return nil, "", errors.New("LTE session budget exhausted")
+	}
 	if fresh {
 		release := func() {}
 		if s.Register != nil || s.RegisterProtocol != nil {
@@ -101,14 +115,30 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 			close(entry.ready)
 			return nil, "", errors.New("access denied")
 		}
+		entry.retainRegistration(protocol, release)
+		multiplexedDone := func() {}
+		if s.Multiplexed != nil {
+			multiplexedDone, e = s.Multiplexed(cs)
+			if e != nil {
+				entry.err = e
+				entry.releaseRegistrations()
+				entry.mux.Close()
+				s.bonds.mu.Lock()
+				delete(s.bonds.entries, h.Token)
+				s.bonds.mu.Unlock()
+				close(entry.ready)
+				return nil, "", errors.New("access denied")
+			}
+		}
 		count, done := s.track(cs, "Bond / "+protocol, func() string { return remote })
 		close(entry.ready)
 		go func() {
-			defer release()
+			defer multiplexedDone()
+			defer entry.releaseRegistrations()
 			defer done()
 			defer entry.mux.Close()
 			defer func() { s.bonds.mu.Lock(); delete(s.bonds.entries, h.Token); s.bonds.mu.Unlock() }()
-			s.serve(s.captureContext(entry.mux.Context(), cs), newDatagramMux(entry.mux), "bond", func() (Stream, error) { return entry.mux.AcceptStream(entry.mux.Context()) }, func() { entry.mux.Close() }, count)
+			s.serve(entry.mux.Context(), newDatagramMux(entry.mux), "bond", func() (Stream, error) { return entry.mux.AcceptStream(entry.mux.Context()) }, func() { entry.mux.Close() }, count)
 		}()
 	} else {
 		select {
@@ -118,6 +148,14 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 		}
 		if entry.err != nil {
 			return nil, "", entry.err
+		}
+		// Authorize every path, including joins after the original TLS handshake.
+		if s.Register != nil || s.RegisterProtocol != nil {
+			release, err := s.register(cs, protocol, func() { entry.mux.Close() })
+			if err != nil {
+				return nil, "", errors.New("access denied")
+			}
+			entry.retainRegistration(protocol, release)
 		}
 	}
 	if entry.mux.Context().Err() != nil {
@@ -170,3 +208,30 @@ func (s *Server) serveBond(ctx context.Context, c *quic.Conn) {
 }
 
 var _ Stream = (*bond.Stream)(nil)
+
+// Keep one revocation owner per protocol; every join still performs an atomic
+// Store registration, then immediately releases an already-owned subscription.
+func (entry *bondEntry) retainRegistration(protocol string, release func()) {
+	entry.authMu.Lock()
+	if entry.registrations == nil {
+		entry.registrations = map[string]func(){}
+	}
+	_, owned := entry.registrations[protocol]
+	if !owned && entry.mux.Context().Err() == nil {
+		entry.registrations[protocol] = release
+		entry.authMu.Unlock()
+		entry.authCleanup.Do(func() { go func() { <-entry.mux.Context().Done(); entry.releaseRegistrations() }() })
+		return
+	}
+	entry.authMu.Unlock()
+	release()
+}
+func (entry *bondEntry) releaseRegistrations() {
+	entry.authMu.Lock()
+	registrations := entry.registrations
+	entry.registrations = nil
+	entry.authMu.Unlock()
+	for _, release := range registrations {
+		release()
+	}
+}

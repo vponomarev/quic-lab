@@ -33,9 +33,11 @@ class ProfileImportTest {
         val bmp=BitmapFactory.decodeFile(file.absolutePath) ?: error("QR PNG missing")
         val pixels=IntArray(bmp.width*bmp.height);bmp.getPixels(pixels,0,bmp.width,0,0,bmp.width,bmp.height)
         val decoded=MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(bmp.width,bmp.height,pixels)))).text
-        val profile=ProfileImport.fetch(decoded)
+        val profile=ProfileImport.fetch(inst.targetContext,decoded)
+        val retry=ProfileImport.fetch(inst.targetContext,decoded)
+        assertEquals(profile.getString("key"),retry.getString("key"))
         assertEquals("vpn",ProfileImport.save(inst.targetContext,profile))
         assertTrue(VpnIdentity.load(inst.targetContext).getString("key").contains("PRIVATE KEY"))
-        try {ProfileImport.fetch(decoded);fail("QR reused")}catch(_:IllegalArgumentException){}
+        ProfileImport.completeEnrollment(inst.targetContext,decoded)
     }
 }

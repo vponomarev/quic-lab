@@ -19,6 +19,18 @@ internal object ProfileImport {
         if(kind=="capture") { mobile.Mobile.validateDebugCapture(p.toString()); return kind }
         require(kind == "echo" || kind == "vpn") { "Неизвестный профиль" }
         require(p.getString("hostname").matches(Regex("[a-zA-Z0-9.-]{1,253}"))) { "Некорректное TLS имя" }
+        if (kind == "vpn") {
+        val serverName = p.optString("server_name")
+        val verifyName = p.optString("verify_name")
+        require(serverName.isBlank() || serverName.matches(Regex("[a-zA-Z0-9.-]{1,253}"))) { "Некорректное server_name" }
+        require(verifyName.isBlank() || verifyName.matches(Regex("[a-zA-Z0-9.-]{1,253}"))) { "Некорректное verify_name" }
+        require(serverName.isBlank() || verifyName.isNotBlank()) { "Для server_name требуется verify_name" }
+        if (p.optString("control_url").isNotBlank()) {
+            val control = p.getString("control_url")
+            val u = URI(control)
+            require(u.scheme == "https" && u.host != null && (u.port == -1 || u.port in 1..65535) && u.userInfo == null && u.query == null && u.fragment == null) { "Некорректный control_url" }
+        }
+        }
         fun endpoint(key:String) {
             val value=p.getString(key); val pieces=value.split(":")
             require(pieces.size==2 && pieces[0].matches(Regex("[a-zA-Z0-9.-]{1,253}")) && (pieces[1].toIntOrNull() ?: 0) in 1..65535) { "Неверный адрес $key" }
@@ -41,16 +53,47 @@ internal object ProfileImport {
     }
     fun enrollment(raw:String):URI {
         val u=URI(raw)
-        require(u.scheme=="https" && u.host!=null && u.userInfo==null && u.query==null && u.path.endsWith("/enroll") && u.fragment?.matches(Regex("[0-9a-f]{48}"))==true) { "Нужен QR профиля QUIC Lab" }
+        val capture=u.path?.endsWith("/capture/enroll")==true
+        val tokenLength=if(capture) 48 else 64
+        require(u.scheme=="https" && u.host!=null && (u.port==-1 || u.port in 1..65535) && u.userInfo==null && u.query==null && u.path?.endsWith("/enroll")==true && u.fragment?.matches(Regex("[0-9a-f]{$tokenLength}"))==true) { "Нужен QR регистрации QUIC Lab" }
         return u
     }
+    fun enrollmentEndpoint(raw:String):URI {
+        val u=enrollment(raw)
+        return URI(u.scheme,null,u.host,u.port,u.path,null,null)
+    }
+    private fun enrollmentKey(raw:String):String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(raw.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }
+    private fun deviceName():String = (android.os.Build.MANUFACTURER+" "+android.os.Build.MODEL)
+        .replace(Regex("[^a-zA-Z0-9 ._-]"),"_").take(100).ifBlank { "Android" }
+    @Synchronized fun enrollmentRequest(context:Context,raw:String):JSONObject {
+        val u=enrollment(raw)
+        if(u.path.endsWith("/capture/enroll")) return JSONObject().put("token",u.fragment)
+        val preferences=context.getSharedPreferences("enrollment_requests",Context.MODE_PRIVATE)
+        val key=enrollmentKey(raw)
+        val requestID=preferences.getString(key,null) ?: java.util.UUID.randomUUID().toString().also {
+            check(preferences.edit().putString(key,it).commit()) { "Не удалось сохранить запрос регистрации" }
+        }
+        return JSONObject().put("token",u.fragment).put("request_id",requestID).put("device_name",deviceName())
+    }
+    @Synchronized fun completeEnrollment(context:Context,raw:String) {
+        check(context.getSharedPreferences("enrollment_requests",Context.MODE_PRIVATE).edit().remove(enrollmentKey(raw)).commit()) { "Не удалось завершить регистрацию" }
+    }
+    fun fetch(context:Context,raw:String):JSONObject = fetchRequest(raw,enrollmentRequest(context,raw))
+    // Capture imports retain their existing one-use contract. User-facing VPN
+    // imports use the Context overload so response-loss retries survive restart.
     fun fetch(raw:String):JSONObject {
         val u=enrollment(raw)
-        val endpoint=URI(u.scheme,null,u.host,u.port,u.path,null,null).toURL()
-        val c=endpoint.openConnection() as HttpsURLConnection
+        val body=JSONObject().put("token",u.fragment)
+        require(u.path.endsWith("/capture/enroll")) { "Для регистрации VPN требуется сохранённый запрос импорта" }
+        return fetchRequest(raw,body)
+    }
+    private fun fetchRequest(raw:String,body:JSONObject):JSONObject {
+        val u=enrollment(raw)
+        val c=enrollmentEndpoint(raw).toURL().openConnection() as HttpsURLConnection
         try {c.instanceFollowRedirects=false;c.connectTimeout=15000;c.readTimeout=15000;c.requestMethod="POST";c.doOutput=true;c.setRequestProperty("Content-Type","application/json")
-            c.outputStream.use{it.write(JSONObject().put("token",u.fragment).toString().toByteArray())}
-            require(c.responseCode==200) { if(c.responseCode==410) "QR истёк или уже использован. Получите новый QR." else "Сервер не выдал профиль (${c.responseCode})" }
+            c.outputStream.use{it.write(body.toString().toByteArray(Charsets.UTF_8))}
+            require(c.responseCode==200) { if(c.responseCode==410) "QR истёк, отозван или достиг лимита устройств. Получите новый QR." else "Сервер не выдал профиль (${c.responseCode})" }
             val out=java.io.ByteArrayOutputStream();c.inputStream.use { input -> val buf=ByteArray(4096);while(true){val n=input.read(buf);if(n<0)break;require(out.size()+n<=32768){"Профиль слишком большой"};out.write(buf,0,n)} }
             return JSONObject(out.toString("UTF-8")).also{require(validate(it)==(if(u.path.endsWith("/capture/enroll")) "capture" else "vpn")) { "Неожиданный тип профиля" }}
         } finally { c.disconnect() }
@@ -78,6 +121,10 @@ internal object ProfileImport {
                 .putString("awg_endpoint",awg?.optString("endpoint") ?: "")
                 .putString("quic_endpoint",p.optString("quic")).putString("https_endpoint",p.optString("https"))
                 .putString("hostname",p.getString("hostname")).putString("ca",p.optString("ca"))
+                .putString("server_name",p.optString("server_name"))
+                .putString("verify_name",p.optString("verify_name"))
+                .putString("control_url",p.optString("control_url"))
+                .putInt("data_version",p.optInt("data_version",0))
                 .putString("dns",p.optString("dns","1.1.1.1")).putInt("mode",p.optInt("mode",0))
                 .putString("routes",p.optString("routes")).putStringSet("apps",emptySet()).commit())
             VpnProfiles.configuration(context)

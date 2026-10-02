@@ -63,17 +63,24 @@ type sniRouter struct {
 	once   sync.Once
 }
 
-func newSNIRouter(parent context.Context, ln net.Listener, host, fallback string) (net.Listener, error) {
+func newSNIRouter(parent context.Context, ln net.Listener, host, fallback string, allowedNames ...string) (net.Listener, error) {
 	if err := validateAddress(fallback, true); err != nil {
 		return nil, err
 	}
 	if host == "" || strings.ContainsAny(host, "/ :") {
 		return nil, errors.New("invalid TLS host")
 	}
+	names := map[string]bool{strings.ToLower(host): true}
+	for _, name := range allowedNames {
+		if name == "" || strings.ContainsAny(name, "/ :*\x5c\r\n\t") {
+			return nil, errors.New("invalid VPN SNI name")
+		}
+		names[strings.ToLower(name)] = true
+	}
 	ctx, cancel := context.WithCancel(parent)
 	r := &sniRouter{Listener: ln, ctx: ctx, cancel: cancel, local: make(chan net.Conn)}
 	go func() { <-ctx.Done(); r.Close() }()
-	go r.route(strings.ToLower(host), fallback)
+	go r.route(names, fallback)
 	return r, nil
 }
 func (r *sniRouter) Close() error {
@@ -89,7 +96,7 @@ func (r *sniRouter) Accept() (net.Conn, error) {
 		return nil, net.ErrClosed
 	}
 }
-func (r *sniRouter) route(host, fallback string) {
+func (r *sniRouter) route(names map[string]bool, fallback string) {
 	slots := make(chan struct{}, 1024)
 	for {
 		c, e := r.Listener.Accept()
@@ -112,7 +119,7 @@ func (r *sniRouter) route(host, fallback string) {
 				c.Close()
 				return
 			}
-			if name == host {
+			if names[name] {
 				select {
 				case r.local <- replay:
 					stop()

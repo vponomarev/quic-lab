@@ -80,11 +80,11 @@ func TestWebEnrollmentAndRevocation(t *testing.T) {
 	if qr.Code != 200 || !strings.Contains(qr.Body.String(), "data:image/png;base64,") {
 		t.Fatal("QR missing")
 	}
-	var token string
-	for k := range web.tickets {
-		token = k
+	_, token, enrollmentErr := s.NewEnrollment(id, 0, 0)
+	if enrollmentErr != nil {
+		t.Fatal(enrollmentErr)
 	}
-	body := `{"token":"` + token + `"}`
+	body := `{"token":"` + token + `","request_id":"same-import","device_name":"phone"}`
 	var success atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
@@ -104,8 +104,8 @@ func TestWebEnrollmentAndRevocation(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if success.Load() != 1 {
-		t.Fatal("token not single-use")
+	if success.Load() != 8 {
+		t.Fatal("idempotent enrollment retries failed")
 	}
 	u, _ := s.Profile(id)
 	block, _ := pem.Decode([]byte(u.Certificate))

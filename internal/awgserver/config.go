@@ -144,9 +144,18 @@ type User struct {
 	Expires   time.Time `json:"expires"`
 	AWG       *Peer     `json:"awg"`
 }
+type Device struct {
+	ID       string    `json:"id"`
+	UserID   string    `json:"user_id"`
+	Disabled bool      `json:"disabled"`
+	Expires  time.Time `json:"expires"`
+	AWG      *Peer     `json:"awg"`
+}
 type State struct {
-	AWG   *Identity       `json:"awg"`
-	Users map[string]User `json:"users"`
+	Version int               `json:"version"`
+	Devices map[string]Device `json:"devices"`
+	AWG     *Identity         `json:"awg"`
+	Users   map[string]User   `json:"users"`
 }
 
 func Enabled(protocols []string, protocol string) bool {
@@ -165,6 +174,7 @@ func (u User) Enabled(now time.Time) bool {
 }
 
 type PeerStatus struct {
+	Admitted  bool      `json:"admitted,omitempty"`
 	ID        string    `json:"id"`
 	Source    string    `json:"source"`
 	Handshake time.Time `json:"handshake"`
@@ -173,9 +183,10 @@ type PeerStatus struct {
 	RX        uint64    `json:"rx"`
 }
 type Status struct {
-	Started time.Time    `json:"started"`
-	Updated time.Time    `json:"updated"`
-	Peers   []PeerStatus `json:"peers"`
+	AdmissionEnforced bool         `json:"admission_enforced,omitempty"`
+	Started           time.Time    `json:"started"`
+	Updated           time.Time    `json:"updated"`
+	Peers             []PeerStatus `json:"peers"`
 }
 
 func WriteStatus(dir string, v Status) error {
@@ -213,4 +224,25 @@ func (c Config) OfflineAfter() time.Duration {
 		return 75 * time.Second
 	}
 	return time.Duration(c.OfflineAfterSeconds) * time.Second
+}
+
+// Version 2 uses devices exclusively. User AWG fields are legacy export aliases
+// and must never revive revoked peers.
+func (s State) peers() map[string]User {
+	if s.Version < 2 && s.Devices == nil {
+		return s.Users
+	}
+	out := map[string]User{}
+	for id, d := range s.Devices {
+		u, ok := s.Users[d.UserID]
+		if !ok {
+			continue
+		}
+		expires := d.Expires
+		if u.Expires.Before(expires) {
+			expires = u.Expires
+		}
+		out[id] = User{ID: id, Disabled: d.Disabled || u.Disabled, Protocols: u.Protocols, Expires: expires, AWG: d.AWG}
+	}
+	return out
 }

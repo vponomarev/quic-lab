@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"quiclab/internal/debugcapture"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,11 +67,13 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /users/rename", w.rename)
 	m.HandleFunc("POST /users/protocols", w.protocols)
 	m.HandleFunc("POST /users/toggle", w.toggle)
+	m.HandleFunc("POST /devices/disable", w.disableDevice)
 	m.HandleFunc("POST /users/awg-qr", w.awgQR)
 	m.HandleFunc("POST /users/config", w.downloadProfile)
 	m.HandleFunc("POST /users/delete", w.delete)
 	m.HandleFunc("POST /users/qr", w.qr)
 	m.HandleFunc("POST /enroll", w.enroll)
+	m.HandleFunc("POST /enrollments/revoke", w.revokeEnrollment)
 	m.HandleFunc("POST /echo/awg", func(rw http.ResponseWriter, r *http.Request) {
 		if w.PublicAWG == nil {
 			http.NotFound(rw, r)
@@ -289,54 +292,72 @@ func (w *Web) delete(rw http.ResponseWriter, r *http.Request) {
 	http.Redirect(rw, r, w.base+"users", 303)
 }
 func (w *Web) qr(rw http.ResponseWriter, r *http.Request) {
-	s, ok := w.authorized(rw, r, true)
+	session, ok := w.authorized(rw, r, true)
 	if !ok {
 		return
 	}
-	u, e := w.Store.Profile(r.Form.Get("id"))
+	ttl := DefaultEnrollmentTTL
+	limit := DefaultEnrollmentLimit
+	if raw := r.Form.Get("ttl_hours"); raw != "" {
+		hours, e := strconv.Atoi(raw)
+		if e != nil {
+			http.Error(rw, "Invalid TTL", 400)
+			return
+		}
+		ttl = time.Duration(hours) * time.Hour
+	}
+	if raw := r.Form.Get("max_devices"); raw != "" {
+		n, e := strconv.Atoi(raw)
+		if e != nil {
+			http.Error(rw, "Invalid limit", 400)
+			return
+		}
+		limit = n
+	}
+	en, token, e := w.Store.NewEnrollment(r.Form.Get("id"), ttl, limit)
 	if e != nil {
-		http.NotFound(rw, r)
+		http.Error(rw, e.Error(), 400)
 		return
 	}
-	token := randomID()
-	w.mu.Lock()
-	w.prune()
-	for k, v := range w.tickets {
-		if v.User == u.ID {
-			delete(w.tickets, k)
-		}
-	}
-	w.tickets[token] = ticket{u.ID, time.Now().Add(5 * time.Minute)}
-	w.mu.Unlock()
 	img, e := qrImage(w.Config.PublicURL + "enroll#" + token)
 	if e != nil {
 		http.Error(rw, "QR unavailable", 500)
 		return
 	}
-	w.page(rw, view{Title: "Профиль: " + u.Name, Admin: true, CSRF: s.CSRF, QR: img, Enrollment: true})
+	w.page(rw, view{Title: "Регистрация устройств", Admin: true, CSRF: session.CSRF, QR: img, Enrollment: true, EnrollmentRecord: &en})
+}
+func (w *Web) revokeEnrollment(rw http.ResponseWriter, r *http.Request) {
+	if _, ok := w.authorized(rw, r, true); !ok {
+		return
+	}
+	if e := w.Store.RevokeEnrollment(r.Form.Get("id")); e != nil {
+		http.Error(rw, e.Error(), 400)
+		return
+	}
+	http.Redirect(rw, r, w.base+"users", 303)
 }
 func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Cache-Control", "no-store")
+	r.Body = http.MaxBytesReader(rw, r.Body, 4096)
 	var body struct {
-		Token string `json:"token"`
+		Token      string `json:"token"`
+		RequestID  string `json:"request_id"`
+		DeviceName string `json:"device_name"`
 	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Token) != 48 {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&body) != nil {
 		http.Error(rw, "Invalid enrollment", 400)
 		return
 	}
-	w.mu.Lock()
-	w.prune()
-	t, ok := w.tickets[body.Token]
-	if ok {
-		delete(w.tickets, body.Token)
-	}
-	w.mu.Unlock()
-	if !ok {
-		http.Error(rw, "QR expired or already used", 410)
+	d, e := w.Store.Enroll(body.Token, body.RequestID, body.DeviceName)
+	if e != nil {
+		http.Error(rw, "Enrollment unavailable", 410)
 		return
 	}
-	u, e := w.Store.Profile(t.User)
+	u, e := w.Store.enrollmentProfileUser(d)
 	if e != nil {
-		http.Error(rw, "User no longer available", 410)
+		http.Error(rw, "Device unavailable", 410)
 		return
 	}
 	p, e := w.profile(u)
@@ -349,6 +370,7 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 }
 
 type view struct {
+	EnrollmentRecord                               *Enrollment
 	CaptureAvailable                               bool
 	Entries                                        []entryPoint
 	AWGNetwork                                     string
@@ -391,5 +413,5 @@ dialog{border:0;border-radius:20px;padding:0;width:min(540px,calc(100vw - 32px))
 [hidden]{display:none!important}.capture-dialog{width:min(680px,calc(100vw - 32px))}.capture-dialog .modal-body{padding:18px 24px;font-size:14px}.capture-dialog p{margin:10px 0}.capture-dialog .capture-controls{margin:8px 0}.capture-dialog textarea{width:100%;box-sizing:border-box;resize:vertical;font:12px monospace;padding:9px;border:1px solid #c4d1da;border-radius:6px}.capture-dialog select{max-width:100%;padding:7px}.capture-controls{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.capture-dialog [role=alert]{color:#a43e3e}.capture-dialog .capture-status{padding:10px;background:#edf5f4;border-radius:7px}.user-actions{align-items:center;gap:6px}.user-actions button,.user-actions summary{font-size:12px;line-height:1.3;padding:5px 8px;border-radius:6px;white-space:nowrap}.add-user button{font-size:14px;padding:7px 10px}.capture-entry{display:inline-flex;align-items:center;gap:8px;margin-right:auto;font-size:12px}.capture-entry a{background:#008075;color:white;border-radius:6px;padding:6px 10px;text-decoration:none;white-space:nowrap}.page-tools{flex-wrap:wrap}.user-capture{margin:0}.capture-label{color:#00877e;font-weight:600}</style><script src="{{.Base}}ui.js" defer></script>{{if .CaptureAvailable}}<script src="{{.Base}}capture-settings.js" defer></script><script src="{{.Base}}capture-users.js" defer></script>{{end}}<main><nav><a href="{{.Base}}"><strong>QUIC LAB</strong></a>{{if .Admin}}<a href="{{.Base}}users">Пользователи</a><a href="{{.Base}}capture" data-capture-open>Захват трафика</a><a href="{{.Base}}capture/settings">Настройки захвата</a><form method="post" action="{{.Base}}logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти</button></form>{{else}}<a href="{{.Base}}login">Вход администратора</a>{{end}}</nav><h1>{{.Title}}</h1>{{if .Message}}<p class="alert">{{.Message}}</p>{{end}}
 {{if .Login}}<div class="login-page"><section class="card"><h2>Добро пожаловать</h2><p class="muted">Войдите, чтобы управлять пользователями и подключениями QUIC Lab.</p><form method="post" action="{{.Base}}login"><label for="login-user">Логин</label><input id="login-user" name="username" autofocus autocomplete="username" required><label for="login-password">Пароль</label><input id="login-password" type="password" name="password" autocomplete="current-password" required><p><button>Войти</button></p></form></section></div>{{end}}
 {{if .Echo}}<p class="muted">Откройте QUIC Lab на телефоне и нажмите «Сканировать QR». Вход для echo не нужен.</p><section class="card qr"><img src="{{.QR}}" alt="QR настроек echo"><p><code>{{.Endpoint}}</code></p><small>TLS: {{.Hostname}}</small>{{if .APKSize}}<p><a class="download" href="{{.Base}}download/quic-lab.apk" download>Скачать QUIC Lab для Android · {{.APKSize}}</a></p><small>Android 11+ · ARM64 / x86-64. Установите APK, затем отсканируйте QR-код в приложении.</small><details class="download-qr"><summary>Показать QR для скачивания</summary><p>Сканируйте камерой телефона, чтобы скачать APK.</p><img src="{{.APKQR}}" alt="QR для скачивания APK QUIC Lab"></details>{{end}}</section>{{end}}
-{{if .Enrollment}}<p class="muted">{{if .AWGQR}}AmneziaWG: отсканируйте QR в совместимом клиенте.{{else}}В QUIC Lab нажмите «Сканировать QR». После импорта доступны разрешённые администратором протоколы.{{end}}</p><section class="card qr"><img src="{{.QR}}" alt="Одноразовый QR профиля VPN"><p>{{if .AWGQR}}QR содержит конфигурацию и закрытый ключ AWG.{{else}}Одно использование · действует 5 минут. QR выдаёт конфигурацию разрешённых протоколов и их ключи.{{end}}</p><small>Передавайте только владельцу устройства.</small></section>{{end}}
-{{if and .Admin (not .Enrollment)}}<section class="card entry-points"><details open><summary>Точки входа <small>· публичные адреса клиентов</small></summary><div class="entry-grid">{{range .Entries}}<div><small>{{.Service}} · {{.Network}}</small><code>{{.Address}}</code>{{if .Binding}}<small>Слушает: <code>{{.Binding}}</code></small>{{end}}{{if eq .Service "AmneziaWG"}}<small>Внутренняя сеть: <code>{{$.AWGNetwork}}</code> · {{$.AWGHealth}}</small>{{end}}</div>{{end}}</div></details></section>{{if .TransitGateway}}<section class="card uplink" id="uplink" data-url="{{.Base}}users/uplink"><div><small>Аплинк · AmneziaWG</small><strong id="uplink-state" role="status">Проверяем…</strong></div><div><small>Удалённый gateway</small><code>{{.TransitGateway}}</code></div><div><small>RTT · сервер → gateway</small><strong id="uplink-rtt">—</strong></div><div><small>Внешний IP выхода</small><strong id="uplink-exit">—</strong></div><small id="uplink-time">Обновление каждые 30 секунд</small><p id="uplink-error" class="muted"></p></section>{{end}}<div class="page-tools">{{if .CaptureAvailable}}<div class="capture-entry"><a href="{{.Base}}capture#outer-capture" data-capture-open>Внешний захват</a><span class="muted">QUIC / HTTPS · весь сервер</span></div>{{end}}<span id="live-status" class="muted" role="status">Подключение к обновлениям…</span><button class="info-button" data-help aria-label="Справка о статистике">ⓘ</button></div><dialog id="stats-help"><header class="modal-header"><h2>О лаборатории и статистике</h2><button class="modal-close" data-close aria-label="Закрыть">×</button></header><div class="modal-body"><p>Добавьте пользователя, затем покажите ему QR для импорта профиля.</p><p>TX ↑ — от клиента, RX ↓ — к клиенту. Окно 10 минут. QUIC/HTTPS: полезный трафик TCP/UDP. AWG: счётчики ядра протокола, включая служебный трафик; недавняя активность не гарантирует присутствие клиента онлайн. Скорость усреднена за 5 секунд. Счётчики обнуляются при перезапуске сервера, последнее подключение сохраняется. IP — адрес, видимый серверу; для QUIC меняется при миграции. Время UTC.</p><p>Статистика обновляется каждые 5 секунд. Изменения доступа AmneziaWG применяются в течение секунды.</p><a href="{{.Base}}users">Обновить страницу</a></div></dialog><script src="{{.Base}}stats.js" defer></script><section class="card"><form class="add-user" method="post" action="{{.Base}}users/add"><input type="hidden" name="csrf" value="{{.CSRF}}"><label for="new-user-name">Имя пользователя</label><input id="new-user-name" name="name" maxlength="100" required> <input type="hidden" name="protocols_present" value="1"><span class="protocols"><label><input type="checkbox" name="protocol" value="quic" checked> QUIC</label><label><input type="checkbox" name="protocol" value="https" checked> HTTPS</label>{{if .AWGAvailable}}<label><input type="checkbox" name="protocol" value="awg" checked> AmneziaWG</label>{{end}}</span><button>Добавить пользователя</button></form></section><section class="card table"><table><thead><tr><th>Пользователь</th><th>Подключения</th><th>Последнее подключение</th><th>Трафик · 10 мин</th><th>Доступ до</th><th>Действия</th></tr></thead><tbody id="user-stats" data-live-url="{{.Base}}users/live">{{range .Users}}<tr data-user-id="{{.ID}}"><td><strong data-stat="name">{{.Name}}</strong>{{if .Disabled}}<small class="disabled"> · выключен</small>{{end}}{{if .AWG}}<small class="user-ip">{{.AWG.Address}}</small>{{end}}<p class="protocol-badges">{{if .QUICEnabled}}<span>QUIC</span>{{end}}{{if .HTTPSEnabled}}<span>HTTPS</span>{{end}}{{if .AWGEnabled}}<span>AWG</span>{{end}}</p></td><td data-stat="connections">{{if .Stats.Connections}}<strong class="online">Онлайн · {{len .Stats.Connections}}</strong>{{range .Stats.Connections}}<p>{{.Transport}} · <code>{{.Source}}</code><br><small>С {{.Connected.Format "02.01 15:04:05"}} UTC</small></p>{{end}}{{else}}<span class="muted">Офлайн</span>{{end}}</td><td data-stat="last">{{if .LastConnected.IsZero}}<span class="muted">Ещё не подключался</span>{{else}}{{.LastConnected.Format "02.01.2006 15:04:05"}} UTC<br><small>{{.LastTransport}} · {{.LastSource}}</small>{{end}}</td><td class="traffic" data-stat="traffic">↑ {{.Stats.TXText}} · ↓ {{.Stats.RXText}}<br><small data-stat="rate">{{.Stats.RateText}}</small></td><td>{{.Expires.Format "02.01.2006"}}</td><td><div class="user-actions"><form class="inline" method="post" action="{{$.Base}}users/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="disabled" value="{{if .Disabled}}false{{else}}true{{end}}"><button role="switch" aria-checked="{{if .Disabled}}false{{else}}true{{end}}" class="{{if .Disabled}}danger{{end}}">{{if .Disabled}}Включить{{else}}Выключить{{end}}</button></form>{{if $.CaptureAvailable}}<div class="user-capture" data-user="{{.ID}}" data-base="{{$.Base}}"><form class="capture-start inline" method="post" action="{{$.Base}}users/capture"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="action" value="start"><button title="Внутренний трафик выбранного пользователя">Внутренний захват</button></form><div class="capture-active" hidden><small class="capture-label">● Захват включён</small><form class="capture-owned inline" method="post" action="{{$.Base}}users/capture"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="action" value="link"><button>Ссылка capture-cli</button></form><form class="capture-owned inline" method="post" action="{{$.Base}}users/capture"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="action" value="stop"><button class="danger">Отключить захват</button></form></div></div>{{end}}<details class="export"><summary>QR / конфиг</summary><form class="inline" method="post" action="{{$.Base}}users/qr"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>QR QUIC Lab</button></form><form class="inline" method="post" action="{{$.Base}}users/config"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>Конфиг QUIC Lab</button></form>{{if .AWGEnabled}}<form class="inline" method="post" action="{{$.Base}}users/awg-qr"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>QR AmneziaWG</button></form><form class="inline" method="post" action="{{$.Base}}users/config"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="format" value="awg"><button>Скачать .conf</button></form>{{end}}</details><details class="rename user-settings"><summary>Настройки</summary><div class="settings-body"><form method="post" action="{{$.Base}}users/rename"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><label for="name-{{.ID}}">Название клиента</label><input id="name-{{.ID}}" name="name" value="{{.Name}}" maxlength="100" required><p><button>Сохранить</button></p></form><hr><strong>Доступные протоколы</strong><form method="post" action="{{$.Base}}users/protocols"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><span class="protocols"><label><input type="checkbox" name="protocol" value="quic" {{if .QUICEnabled}}checked{{end}}> QUIC</label><label><input type="checkbox" name="protocol" value="https" {{if .HTTPSEnabled}}checked{{end}}> HTTPS</label>{{if $.AWGAvailable}}<label><input type="checkbox" name="protocol" value="awg" {{if .AWGEnabled}}checked{{end}}> AmneziaWG</label>{{end}}</span><p><button>Сохранить доступ</button></p></form><hr><form class="inline" method="post" action="{{$.Base}}users/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="danger">Удалить и отключить</button></form></div></details></div></td></tr>{{else}}<tr><td colspan="6" class="muted">Пользователей пока нет.</td></tr>{{end}}</tbody></table></section>{{end}}<p class="muted">QUIC Lab · Echo / VPN / TLS</p></main></html>`))
+{{if .Enrollment}}{{if .EnrollmentRecord}}<p>До {{.EnrollmentRecord.Expires.Format "02.01.2006 15:04"}} UTC · новых устройств: {{.EnrollmentRecord.MaxDevices}}</p><form method="post" action="{{.Base}}enrollments/revoke"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="id" value="{{.EnrollmentRecord.ID}}"><button class="danger">Отозвать QR</button></form>{{end}}<p class="muted">{{if .AWGQR}}AmneziaWG: отсканируйте QR в совместимом клиенте.{{else}}В QUIC Lab нажмите «Сканировать QR». После импорта доступны разрешённые администратором протоколы.{{end}}</p><section class="card qr"><img src="{{.QR}}" alt="QR регистрации устройств"><p>{{if .AWGQR}}QR содержит конфигурацию и закрытый ключ AWG.{{else}}Каждый импорт создаёт отдельное устройство и его ключи. Отзыв QR сохраняет ранее зарегистрированные устройства.{{end}}</p><small>Передавайте только владельцу устройства.</small></section>{{end}}
+{{if and .Admin (not .Enrollment)}}<section class="card entry-points"><details open><summary>Точки входа <small>· публичные адреса клиентов</small></summary><div class="entry-grid">{{range .Entries}}<div><small>{{.Service}} · {{.Network}}</small><code>{{.Address}}</code>{{if .Binding}}<small>Слушает: <code>{{.Binding}}</code></small>{{end}}{{if eq .Service "AmneziaWG"}}<small>Внутренняя сеть: <code>{{$.AWGNetwork}}</code> · {{$.AWGHealth}}</small>{{end}}</div>{{end}}</div></details></section>{{if .TransitGateway}}<section class="card uplink" id="uplink" data-url="{{.Base}}users/uplink"><div><small>Аплинк · AmneziaWG</small><strong id="uplink-state" role="status">Проверяем…</strong></div><div><small>Удалённый gateway</small><code>{{.TransitGateway}}</code></div><div><small>RTT · сервер → gateway</small><strong id="uplink-rtt">—</strong></div><div><small>Внешний IP выхода</small><strong id="uplink-exit">—</strong></div><small id="uplink-time">Обновление каждые 30 секунд</small><p id="uplink-error" class="muted"></p></section>{{end}}<div class="page-tools">{{if .CaptureAvailable}}<div class="capture-entry"><a href="{{.Base}}capture#outer-capture" data-capture-open>Внешний захват</a><span class="muted">QUIC / HTTPS · весь сервер</span></div>{{end}}<span id="live-status" class="muted" role="status">Подключение к обновлениям…</span><button class="info-button" data-help aria-label="Справка о статистике">ⓘ</button></div><dialog id="stats-help"><header class="modal-header"><h2>О лаборатории и статистике</h2><button class="modal-close" data-close aria-label="Закрыть">×</button></header><div class="modal-body"><p>Добавьте пользователя, затем покажите ему QR для импорта профиля.</p><p>TX ↑ — от клиента, RX ↓ — к клиенту. Окно 10 минут. QUIC/HTTPS: полезный трафик TCP/UDP. AWG: счётчики ядра протокола, включая служебный трафик; недавняя активность не гарантирует присутствие клиента онлайн. Скорость усреднена за 5 секунд. Счётчики обнуляются при перезапуске сервера, последнее подключение сохраняется. IP — адрес, видимый серверу; для QUIC меняется при миграции. Время UTC.</p><p>Статистика обновляется каждые 5 секунд. Изменения доступа AmneziaWG применяются в течение секунды.</p><a href="{{.Base}}users">Обновить страницу</a></div></dialog><script src="{{.Base}}stats.js" defer></script><section class="card"><form class="add-user" method="post" action="{{.Base}}users/add"><input type="hidden" name="csrf" value="{{.CSRF}}"><label for="new-user-name">Имя пользователя</label><input id="new-user-name" name="name" maxlength="100" required> <input type="hidden" name="protocols_present" value="1"><span class="protocols"><label><input type="checkbox" name="protocol" value="quic" checked> QUIC</label><label><input type="checkbox" name="protocol" value="https" checked> HTTPS</label>{{if .AWGAvailable}}<label><input type="checkbox" name="protocol" value="awg" checked> AmneziaWG</label>{{end}}</span><button>Добавить пользователя</button></form></section><section class="card table"><table><thead><tr><th>Пользователь</th><th>Подключения</th><th>Последнее подключение</th><th>Трафик · 10 мин</th><th>Доступ до</th><th>Действия</th></tr></thead><tbody id="user-stats" data-live-url="{{.Base}}users/live">{{range .Users}}<tr data-user-id="{{.ID}}"><td><strong data-stat="name">{{.Name}}</strong>{{if .Disabled}}<small class="disabled"> · выключен</small>{{end}}{{if .AWG}}<small class="user-ip">{{.AWG.Address}}</small>{{end}}<details class="devices"><summary>Устройства · {{len .Devices}}</summary>{{range .Devices}}<div class="device"><strong>{{.Name}}</strong>{{if .Legacy}}<small> · старый общий ключ; телефоны с ним не различимы</small>{{end}}{{if .AWG}}<small><code>{{.AWG.Address}}</code></small>{{end}}{{if .Disabled}}<small class="disabled"> · отозвано</small>{{else}}<form class="inline" method="post" action="{{$.Base}}devices/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="danger">Отозвать устройство</button></form>{{end}}</div>{{end}}</details>{{if .Enrollments}}<details class="enrollments"><summary>QR регистрации · {{len .Enrollments}}</summary>{{range .Enrollments}}<div><small>До {{.Expires.Format "02.01 15:04"}} UTC · {{.Used}} / {{.MaxDevices}} устройств{{if .Revoked}} · отозван{{else}}</small><form class="inline" method="post" action="{{$.Base}}enrollments/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="danger">Отозвать QR</button></form><small>{{end}}</small></div>{{end}}</details>{{end}}<p class="protocol-badges">{{if .QUICEnabled}}<span>QUIC</span>{{end}}{{if .HTTPSEnabled}}<span>HTTPS</span>{{end}}{{if .AWGEnabled}}<span>AWG</span>{{end}}</p></td><td data-stat="connections">{{if .Stats.Connections}}<strong class="online">Онлайн · {{len .Stats.Connections}}</strong>{{range .Stats.Connections}}<p>{{.Transport}} · <code>{{.Source}}</code><br><small>С {{.Connected.Format "02.01 15:04:05"}} UTC</small></p>{{end}}{{else}}<span class="muted">Офлайн</span>{{end}}</td><td data-stat="last">{{if .LastConnected.IsZero}}<span class="muted">Ещё не подключался</span>{{else}}{{.LastConnected.Format "02.01.2006 15:04:05"}} UTC<br><small>{{.LastTransport}} · {{.LastSource}}</small>{{end}}</td><td class="traffic" data-stat="traffic">↑ {{.Stats.TXText}} · ↓ {{.Stats.RXText}}<br><small data-stat="rate">{{.Stats.RateText}}</small></td><td>{{.Expires.Format "02.01.2006"}}</td><td><div class="user-actions"><form class="inline" method="post" action="{{$.Base}}users/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="disabled" value="{{if .Disabled}}false{{else}}true{{end}}"><button role="switch" aria-checked="{{if .Disabled}}false{{else}}true{{end}}" class="{{if .Disabled}}danger{{end}}">{{if .Disabled}}Включить{{else}}Выключить{{end}}</button></form>{{if $.CaptureAvailable}}<div class="user-capture" data-user="{{.ID}}" data-base="{{$.Base}}"><form class="capture-start inline" method="post" action="{{$.Base}}users/capture"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="action" value="start"><button title="Внутренний трафик выбранного пользователя">Внутренний захват</button></form><div class="capture-active" hidden><small class="capture-label">● Захват включён</small><form class="capture-owned inline" method="post" action="{{$.Base}}users/capture"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="action" value="link"><button>Ссылка capture-cli</button></form><form class="capture-owned inline" method="post" action="{{$.Base}}users/capture"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="action" value="stop"><button class="danger">Отключить захват</button></form></div></div>{{end}}<details class="export"><summary>QR / конфиг</summary><form class="inline" method="post" action="{{$.Base}}users/qr"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><label>Срок · часы<input name="ttl_hours" type="number" min="1" max="720" value="24"></label><label>Новых устройств<input name="max_devices" type="number" min="1" max="100" value="5"></label><button>QR QUIC Lab</button></form><form class="inline" method="post" action="{{$.Base}}users/config"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>Конфиг QUIC Lab</button></form>{{if .AWGEnabled}}<form class="inline" method="post" action="{{$.Base}}users/awg-qr"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>QR AmneziaWG</button></form><form class="inline" method="post" action="{{$.Base}}users/config"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="format" value="awg"><button>Скачать .conf</button></form>{{end}}</details><details class="rename user-settings"><summary>Настройки</summary><div class="settings-body"><form method="post" action="{{$.Base}}users/rename"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><label for="name-{{.ID}}">Название клиента</label><input id="name-{{.ID}}" name="name" value="{{.Name}}" maxlength="100" required><p><button>Сохранить</button></p></form><hr><strong>Доступные протоколы</strong><form method="post" action="{{$.Base}}users/protocols"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><span class="protocols"><label><input type="checkbox" name="protocol" value="quic" {{if .QUICEnabled}}checked{{end}}> QUIC</label><label><input type="checkbox" name="protocol" value="https" {{if .HTTPSEnabled}}checked{{end}}> HTTPS</label>{{if $.AWGAvailable}}<label><input type="checkbox" name="protocol" value="awg" {{if .AWGEnabled}}checked{{end}}> AmneziaWG</label>{{end}}</span><p><button>Сохранить доступ</button></p></form><hr><form class="inline" method="post" action="{{$.Base}}users/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="danger">Удалить и отключить</button></form></div></details></div></td></tr>{{else}}<tr><td colspan="6" class="muted">Пользователей пока нет.</td></tr>{{end}}</tbody></table></section>{{end}}<p class="muted">QUIC Lab · Echo / VPN / TLS</p></main></html>`))

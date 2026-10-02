@@ -111,7 +111,7 @@ go test ./mobile -run 'Echo|Exit' -count=1 -timeout=90s; Android: VpnEchoTest, C
 
 **Interfaces:** func (s *Store) CaptureEligible(deviceID string) error; error при наличии активной multiplexed сессии цели. Существующие capture handlers проверяют eligibility до начала и при смене режима; транспорт публикует признак multiplexed из B/D. Не делать исключение лишь по имени QUIC или HTTPS.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestCaptureRejectsBond; TestCaptureStopsWhenTargetEntersBond; existing capture tests. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestCaptureRejectsBond; TestCaptureStopsWhenTargetEntersBond; existing capture tests. Минимальные обязательные проверки:
 
 ```text
 assert activeBond.captureRequestRejectedClearly
@@ -121,17 +121,17 @@ assert innerHTTPSApplicationPayload.remainsEncrypted
 assert TLSSecretsNotWrittenToOrdinaryLogs
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Сохранить существующий внешний/внутренний capture и выдачу серверных TLS secrets администратору. При переходе захватываемой цели в bond остановить capture с явной причиной, не VPN. Общий захват не должен обходить запрет через другой UI endpoint; если невозможно отделить bond в общем захвате, отказать общему захвату до его остановки. Не добавлять захват карусели в эту фазу.
+- [x] **Step 3 — реализация:** Сохранить существующий внешний/внутренний capture и выдачу серверных TLS secrets администратору. При переходе захватываемой цели в bond остановить capture с явной причиной, не VPN. Общий захват не должен обходить запрет через другой UI endpoint; если невозможно отделить bond в общем захвате, отказать общему захвату до его остановки. Не добавлять захват карусели в эту фазу.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./internal/admin ./internal/gateway ./cmd/server -run 'Capture' -count=1 -timeout=120s
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "fix: enforce capture scope for non-multiplexed connections"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "fix: enforce capture scope for non-multiplexed connections"`. Не включать соседние незавершённые задачи.
 
 ### Task E4: Systemd, обновления и согласованная документация
 

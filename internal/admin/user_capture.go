@@ -51,6 +51,10 @@ func (w *Web) userCapture(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Unknown action", 400)
 		return
 	}
+	if e := w.Store.CaptureEligible(id); e != nil {
+		http.Error(rw, e.Error(), 409)
+		return
+	}
 	if s == nil {
 		if action == "link" {
 			http.Error(rw, "Capture expired; start a new one", 410)
@@ -66,7 +70,12 @@ func (w *Web) userCapture(rw http.ResponseWriter, r *http.Request) {
 			ip = user.AWG.Address
 		}
 		var e error
-		s, e = w.Capture.StartUser(owner.CSRF, id, iface, ip)
+		w.Store.ConfigureCapture(w.Capture)
+		e = w.Store.WithCaptureEligible(id, func() error {
+			var err error
+			s, err = w.Capture.StartUser(owner.CSRF, id, iface, ip)
+			return err
+		})
 		if e != nil {
 			http.Error(rw, e.Error(), 409)
 			return
