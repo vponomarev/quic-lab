@@ -16,6 +16,7 @@ public class ProbeActivity extends Activity {
  if(host==null||id==null||!id.matches("[a-zA-Z0-9_-]{1,64}")){finish();return;}
  new Thread(()->{JSONObject result=new JSONObject();try{
  result.put("id",id).put("kind",kind).put("uid",android.os.Process.myUid());
+ android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);android.net.NetworkCapabilities caps=cm.getNetworkCapabilities(cm.getActiveNetwork());result.put("vpn",caps!=null&&caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN));
  byte[] payload=("quic-lab-probe-"+id).getBytes(StandardCharsets.UTF_8);String reply;
  if("https-long".equals(kind)){try(SSLSocket s=(SSLSocket)SSLSocketFactory.getDefault().createSocket(host,port)){
  SSLParameters params=s.getSSLParameters();params.setEndpointIdentificationAlgorithm("HTTPS");s.setSSLParameters(params);s.setSoTimeout(10000);s.startHandshake();
@@ -34,6 +35,11 @@ public class ProbeActivity extends Activity {
  long end=android.os.SystemClock.elapsedRealtime()+45000,maxRtt=0;int count=0;
  while(android.os.SystemClock.elapsedRealtime()<end){long start=android.os.SystemClock.elapsedRealtime();s.getOutputStream().write(payload);byte[] response=readN(s.getInputStream(),payload.length);if(!java.util.Arrays.equals(payload,response))throw new IOException("TCP bytes differ");maxRtt=Math.max(maxRtt,android.os.SystemClock.elapsedRealtime()-start);count++;Thread.sleep(100);}
  result.put("exchanges",count).put("max_rtt_ms",maxRtt).put("connections",1);reply=new String(payload,StandardCharsets.UTF_8);
+ }}
+ else if("dns".equals(kind)){try(DatagramSocket s=new DatagramSocket()){
+ byte[] query=new byte[]{0x41,0x62,1,0,0,1,0,0,0,0,0,0,7,101,120,97,109,112,108,101,3,99,111,109,0,0,1,0,1};
+ s.setSoTimeout(10000);s.connect(InetAddress.getByName(host),port);s.send(new DatagramPacket(query,query.length));DatagramPacket answer=new DatagramPacket(new byte[4096],4096);s.receive(answer);byte[] data=answer.getData();
+ if(answer.getLength()<12||data[0]!=query[0]||data[1]!=query[1]||(data[2]&0x80)==0||(data[3]&15)!=0)throw new IOException("Invalid DNS response");reply=new String(payload,StandardCharsets.UTF_8);
  }}
  else if("udp".equals(kind)){try(DatagramSocket s=new DatagramSocket()){s.setSoTimeout(5000);s.connect(InetAddress.getByName(host),port);s.send(new DatagramPacket(payload,payload.length));byte[] buf=new byte[1024];DatagramPacket p=new DatagramPacket(buf,buf.length);s.receive(p);reply=new String(buf,0,p.getLength(),StandardCharsets.UTF_8);}}
  else if("https".equals(kind)){HttpsURLConnection c=(HttpsURLConnection)new URL("https://"+host+"/").openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);c.setRequestProperty("Connection","close");try(InputStream in=c.getInputStream()){reply=new String(readN(in,100),StandardCharsets.UTF_8);}finally{c.disconnect();}}

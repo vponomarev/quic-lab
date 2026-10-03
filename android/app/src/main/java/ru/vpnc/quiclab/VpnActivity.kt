@@ -50,12 +50,13 @@ class VpnActivity : Activity() {
     private var apps = mutableSetOf<String>()
     private val prefs by lazy { VpnProfiles.preferences(this) }
     private val transportTypes by lazy {
-        val fallback = if (prefs.getString("transport", "quic") == "awg") setOf("awg") else setOf("quic", "https")
+        val selected = prefs.getString("transport", "quic").orEmpty()
+        val fallback = if (selected in setOf("awg", "vless")) setOf(selected) else setOf("quic", "https")
         val available = prefs.getStringSet("available_transports", fallback) ?: fallback
-        listOf("quic", "https", "awg").filter { it in available }.ifEmpty { fallback.toList() }
+        listOf("quic", "https", "awg", "vless").filter { it in available }.ifEmpty { fallback.toList() }
     }
     private fun selectedTransport() = transportTypes[transport.selectedItemPosition]
-    private fun transportName(value: String) = when(value) { "quic" -> "QUIC"; "https" -> "HTTPS / WebSocket"; else -> "AmneziaWG" }
+    private fun transportName(value: String) = when(value) { "quic" -> "QUIC"; "https" -> "HTTPS / WebSocket"; "awg" -> "AmneziaWG"; "vless" -> "VLESS"; else -> value.uppercase() }
 
     private fun label(panel: LinearLayout, value: String): TextView =
         TextView(this).also {
@@ -331,7 +332,7 @@ class VpnActivity : Activity() {
                                         text =
                                             if (settings.getString("transport", "quic") == "quic")
                                                 "QUIC"
-                                            else if (settings.getString("transport", "quic") == "awg") "AmneziaWG" else "HTTPS / WebSocket"
+                                            else transportName(settings.getString("transport", "quic").orEmpty())
                                         textSize = 12f
                                         setTextColor(accent)
                                     }
@@ -389,6 +390,10 @@ class VpnActivity : Activity() {
             check(!LabVpnService.active) { "Сначала остановите VPN" }
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 14)
         }
+        button(panel, "Импортировать VLESS URI / JSON") {
+            try { VlessImport.prompt(this) { recreate() } }
+            catch (e: Exception) { error(e) }
+        }
         button(panel, "Обновить конфиг") { updateProfile(VpnProfiles.current(this).id) }
         state = label(panel, LabVpnService.status)
         state.setTextColor(accent)
@@ -402,8 +407,8 @@ class VpnActivity : Activity() {
             )
         endpoint = field(panel, "Сервер · домен:порт", "endpoint")
         hostname = field(panel, "Имя сервера в сертификате TLS", "hostname")
-        hostname.isEnabled = selectedTransport() != "awg"
-        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель; частота задаётся в диагностике. Доступные протоколы задаются при выдаче профиля.")
+        hostname.isEnabled = selectedTransport() !in setOf("awg", "vless")
+        label(panel, "AmneziaWG: импорт .conf или QR. RTT — ICMP ping endpoint через туннель; частота задаётся в диагностике. VLESS: отдельный импорт URI / JSON; TLS/REALITY и SNI задаются при импорте. Доступные протоколы задаются при выдаче профиля.")
         transport.onItemSelectedListener =
             object : android.widget.AdapterView.OnItemSelectedListener {
                 private var initial = true
@@ -416,7 +421,7 @@ class VpnActivity : Activity() {
                     position: Int,
                     id: Long,
                 ) {
-                    hostname.isEnabled = transportTypes[position] != "awg" && !prefs.getBoolean("managed_profile",false)
+                    hostname.isEnabled = transportTypes[position] !in setOf("awg", "vless") && !prefs.getBoolean("managed_profile",false)
                     if (initial) {
                         initial = false
                         return
@@ -476,9 +481,9 @@ class VpnActivity : Activity() {
             label(
                 panel,
                 try {
-                    VpnIdentity.load(this).let { keys -> listOfNotNull(if(keys.has("certificate")) "Клиентский сертификат установлен" else null, if(keys.has("awg_config")) "Ключи AmneziaWG импортированы" else null).joinToString("\n") }
+                    VpnIdentity.load(this).let { keys -> listOfNotNull(if(keys.has("certificate")) "Клиентский сертификат установлен" else null, if(keys.has("awg_config")) "Ключи AmneziaWG импортированы" else null, if(keys.has("vless_config")) "VLESS импортирован · данные доступа зашифрованы" else null).joinToString("\n") }
                 } catch (_: Exception) {
-                    "Клиентский сертификат не импортирован"
+                    "Данные доступа не импортированы"
                 },
             )
         val advanced =
@@ -494,7 +499,7 @@ class VpnActivity : Activity() {
         panel.addView(advanced)
         button(advanced, "Импортировать сертификат .p12") {
             require(!prefs.getBoolean("managed_profile",false)) {"Сертификат управляемого профиля задаёт сервер; создайте отдельный профиль"}
-            require(prefs.getString("transport", "quic") != "awg") { "Для сертификата создайте отдельный профиль QUIC/HTTPS" }
+            require(prefs.getString("transport", "quic") !in setOf("awg", "vless")) { "Для сертификата создайте отдельный профиль QUIC/HTTPS" }
             startActivityForResult(
                 Intent(Intent.ACTION_OPEN_DOCUMENT)
                     .setType("*/*")
@@ -503,6 +508,10 @@ class VpnActivity : Activity() {
             )
         }
         ca = field(advanced, "CA сервера PEM (пусто для публичного сертификата)", "ca")
+        if(selectedTransport() == "vless") {
+            endpoint.isEnabled = false; hostname.isEnabled = false; ca.isEnabled = false
+            label(panel, "VLESS: TLS/REALITY и SNI сохранены при импорте. Для изменения сервера импортируйте отдельный профиль.")
+        }
         if(prefs.getBoolean("managed_profile",false)) {
             label(panel,"Адреса, DNS и сертификат задаёт сервер. Используйте «Обновить конфиг». Маршруты, приложения и экономия остаются вашими.")
             endpoint.isEnabled=false;hostname.isEnabled=false;dns.isEnabled=false;ca.isEnabled=false
@@ -542,20 +551,20 @@ class VpnActivity : Activity() {
         val demux = android.widget.Switch(this).apply {
             text="Общая сессия QUIC / HTTPS"
             isChecked=prefs.getBoolean("demux_enabled",prefs.getBoolean("max_availability",false))
-            isEnabled=!LabVpnService.active && selectedTransport()!="awg"
+            isEnabled=!LabVpnService.active && selectedTransport() !in setOf("awg", "vless")
             setOnCheckedChangeListener { _, value -> prefs.edit().putBoolean("demux_enabled",value).apply() }
         }
         maximum.addView(demux)
         maximum.addView(android.widget.Switch(this).apply {
             text="Максимальная доступность · готовить LTE"
             isChecked=prefs.getBoolean("max_availability",false)
-            isEnabled=!LabVpnService.active && selectedTransport()!="awg"
+            isEnabled=!LabVpnService.active && selectedTransport() !in setOf("awg", "vless")
             setOnCheckedChangeListener { _, value ->
                 if(value) demux.isChecked=true
                 prefs.edit().putBoolean("max_availability",value).putBoolean("demux_enabled",demux.isChecked).apply()
             }
         })
-        label(maximum,"Общая сессия сохраняет TCP и UDP при смене QUIC/HTTPS одного сервера. В экономии рабочий Wi-Fi не готовит LTE. Максимальная доступность расходует больше LTE и батареи; готовый резерв требует пула от 2 соединений. Изменения применяются после перезапуска выхода. AWG работает самостоятельно.")
+        label(maximum,"Общая сессия сохраняет TCP и UDP при смене QUIC/HTTPS одного сервера. В экономии рабочий Wi-Fi не готовит LTE. Максимальная доступность расходует больше LTE и батареи; готовый резерв требует пула от 2 соединений. Изменения применяются после перезапуска выхода. AWG и VLESS работают самостоятельно; смена сети может прервать соединения.")
         for(kind in transportTypes.filter{it in listOf("quic","https")}) {
             val modes=listOf("auto","reserve","disabled")
             val profileMode=choice(maximum,"${kind.uppercase()} · участие",arrayOf("Автоматически","Только резерв","Не использовать"),modes.indexOf(prefs.getString("${kind}_mode","auto")).coerceAtLeast(0))
@@ -749,13 +758,13 @@ class VpnActivity : Activity() {
     private fun save() {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         require(endpoint.text.contains(':')) { "Укажите домен:порт" }
-        if (selectedTransport() != "awg") require(hostname.text.isNotBlank()) { "Укажите TLS hostname" }
+        if (selectedTransport() !in setOf("awg", "vless")) require(hostname.text.isNotBlank()) { "Укажите TLS hostname" }
         if (mode.selectedItemPosition == 1)
             require(apps.isNotEmpty()) { "Выберите хотя бы одно приложение" }
         if (mode.selectedItemPosition == 3) VpnRoutes.parse(routes.text.toString())
         else VpnRoutes.parse(dns.text.toString() + "/32")
         val keys = VpnIdentity.load(this)
-        require(if (selectedTransport() == "awg") keys.has("awg_config") else keys.has("certificate")) { "Для другого протокола импортируйте отдельный профиль" }
+        require(when(selectedTransport()) { "awg" -> keys.optString("awg_config").isNotBlank(); "vless" -> keys.optString("vless_config").isNotBlank(); else -> keys.has("certificate") }) { "Для другого протокола импортируйте отдельный профиль" }
         prefs
             .edit()
             .putString("transport", selectedTransport())
@@ -782,7 +791,7 @@ class VpnActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("Удалить ${VpnProfiles.current(this).name}?")
             .setMessage(
-                "Настройки и сертификат этого профиля будут удалены с телефона. Общий список приложений сохранится."
+                "Настройки и данные доступа этого профиля будут удалены с телефона. Общий список приложений сохранится."
             )
             .setNegativeButton("Отмена", null)
             .setPositiveButton("Удалить") { _, _ ->
@@ -851,15 +860,21 @@ class VpnActivity : Activity() {
                     require(count <= 32768) { "Конфиг слишком большой" }
                     String(bytes, 0, count, Charsets.UTF_8).also { bytes.fill(0) }
                 }
-                if (raw.trimStart().startsWith("{")) {
+                if (raw.trimStart().startsWith("vless://")) {
+                    VlessImport.review(this, raw, { recreate() })
+                } else if (raw.trimStart().startsWith("{")) {
                     val profile = org.json.JSONObject(raw)
+                    if (profile.optString("protocol") == "vless") {
+                        VlessImport.review(this, raw, { recreate() })
+                        return
+                    }
                     require(ProfileImport.validate(profile) == "vpn") { "Нужен VPN профиль" }
                     AlertDialog.Builder(this).setTitle("Импорт VPN профиля")
                         .setMessage("${profile.optString("name")} · ${profile.getString("hostname")}\n${ProfileImport.transports(profile).joinToString(" / ") { transportName(it) }}")
                         .setPositiveButton("Импортировать") { _, _ -> try { ProfileImport.save(this, profile); recreate() } catch(e: Exception) { error(e) } }
                         .setNegativeButton("Отмена", null).show()
                 } else AwgImport.review(this, raw, { recreate() })
-            } catch (e: Exception) { error(e) }
+            } catch (_: Exception) { error(IllegalArgumentException("Импорт не выполнен: проверьте формат и параметры профиля")) }
             return
         }
         if (requestCode == 13) {

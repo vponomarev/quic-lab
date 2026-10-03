@@ -20,6 +20,7 @@ import (
 	"github.com/xtls/xray-core/app/proxyman"
 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
 	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/buf"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
@@ -29,8 +30,10 @@ import (
 	account "github.com/xtls/xray-core/proxy/vless"
 	inbound "github.com/xtls/xray-core/proxy/vless/inbound"
 	outbound "github.com/xtls/xray-core/proxy/vless/outbound"
+	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	xtls "github.com/xtls/xray-core/transport/internet/tls"
+	"github.com/xtls/xray-core/transport/pipe"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -220,7 +223,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return newDeviceDispatcher(base.(routing.Dispatcher)), nil
+		return newDeviceDispatcher(&fixtureUDPDispatcher{base.(routing.Dispatcher)}), nil
 	}))
 }
 
@@ -266,5 +269,117 @@ func TestServerDispatchPreservesFinalResponse(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("response did not finish")
+	}
+}
+
+// UDP fixture terminates datagrams after real VLESS/TLS decoding. Client physical
+// sockets still go through the production TCP-only socket factory.
+type fixtureUDPDispatcher struct{ routing.Dispatcher }
+
+func (d *fixtureUDPDispatcher) Dispatch(ctx context.Context, dest xnet.Destination) (*transport.Link, error) {
+	if dest.Network != xnet.Network_UDP {
+		return d.Dispatcher.Dispatch(ctx, dest)
+	}
+	ur, uw := pipe.New()
+	dr, dw := pipe.New()
+	go func() { defer common.Close(dw); defer common.Interrupt(ur); buf.Copy(ur, dw) }()
+	return &transport.Link{Reader: dr, Writer: uw}, nil
+}
+func TestEngineTLSUDPDatagrams(t *testing.T) {
+	port, cert, _ := startTLSFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	e, err := newEngine(ctx, clientTLSFixture(port, cert, false), &net.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c, err := e.DialContext(ctx, "udp4", "127.0.0.1:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	for _, size := range []int{1, 2048, 8190} {
+		payload := bytes.Repeat([]byte{byte(size % 251)}, size)
+		if _, err = c.Write(payload); err != nil {
+			t.Fatal(err)
+		}
+		b := make([]byte, 65507)
+		n, err := c.Read(b)
+		if err != nil || !bytes.Equal(b[:n], payload) {
+			t.Fatalf("UDP size %d got %d: %v", size, n, err)
+		}
+	}
+}
+func TestEngineTLSLocalHalfClosePreservesResponse(t *testing.T) {
+	port, cert, _ := startTLSFixture(t)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		c, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		payload := make([]byte, 7)
+		io.ReadFull(c, payload)
+		c.Write(append([]byte("response:"), payload...))
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	e, err := newEngine(ctx, clientTLSFixture(port, cert, false), &net.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c, err := e.DialContext(ctx, "tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	c.Write([]byte("request"))
+	c.(interface{ CloseWrite() error }).CloseWrite()
+	b, err := io.ReadAll(c)
+	if err != nil || string(b) != "response:request" {
+		t.Fatalf("half-close response %q %v", b, err)
+	}
+}
+
+func (d *fixtureUDPDispatcher) DispatchLink(ctx context.Context, dest xnet.Destination, link *transport.Link) error {
+	if dest.Network != xnet.Network_UDP {
+		return d.Dispatcher.DispatchLink(ctx, dest, link)
+	}
+	defer common.Close(link.Writer)
+	return buf.Copy(link.Reader, link.Writer)
+}
+
+func TestEngineDialContextDoesNotOwnReturnedFlow(t *testing.T) {
+	port, cert, _ := startTLSFixture(t)
+	e, err := newEngine(context.Background(), clientTLSFixture(port, cert, false), &net.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	dialCtx, cancel := context.WithCancel(context.Background())
+	c, err := e.DialContext(dialCtx, "udp4", "127.0.0.1:53")
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	defer c.Close()
+	cancel() // net.Dialer contract: returned connections outlive the dial timeout.
+	c.SetDeadline(time.Now().Add(time.Second))
+	if _, err = c.Write([]byte("dns-query")); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 20)
+	n, err := c.Read(b)
+	if err != nil || string(b[:n]) != "dns-query" {
+		t.Fatalf("returned flow lost on dial cancellation: %d %v", n, err)
 	}
 }

@@ -93,8 +93,11 @@ func Validate(c Config) error {
 			return errors.New("profile references unknown exit")
 		}
 		owners[p.ExitID]++
-		if p.Transport != "quic" && p.Transport != "https" && p.Transport != "awg" {
+		if p.Transport != "quic" && p.Transport != "https" && p.Transport != "awg" && p.Transport != "vless" {
 			return errors.New("unsupported transport")
+		}
+		if e.Kind == "demux" && p.Transport == "vless" {
+			return errors.New("VLESS demux requires V3")
 		}
 		if e.Kind == "demux" && p.Transport == "awg" {
 			return errors.New("AWG underlay is not supported")

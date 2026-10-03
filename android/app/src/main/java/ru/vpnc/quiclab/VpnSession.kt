@@ -61,6 +61,8 @@ internal class VpnSession(
         }
     }
     private val isAWG = config.optString("transport") == "awg"
+    private val isVLESS = config.optString("transport") == "vless"
+    private var sourceEndpoint = config.optString("endpoint")
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val networks = mutableMapOf<Int, Network>()
     private val validated = mutableSetOf<Network>()
@@ -198,7 +200,7 @@ internal class VpnSession(
         val mode = VpnRttSettings.interval(context)
         if (mode == rttMode) return
         rttMode = mode
-        intervalMS = if (mode == 0L) 5000 else mode
+        intervalMS = if (isVLESS || mode == 0L) 5000 else mode
         client?.setRTT(mode > 0, intervalMS)
         demuxRuntime?.setRTT(mode > 0, intervalMS)
         // Allow the first scheduled health reply before evaluating a stall.
@@ -335,6 +337,7 @@ internal class VpnSession(
                     rttMode = -1L
                     refreshRTT()
                     selected(network, kind)
+                    sourceEndpoint = endpoint
                     val resolved = resolveEndpoint(endpoint, network)
                     config
                         .put("endpoint", resolved.address)
@@ -347,7 +350,7 @@ internal class VpnSession(
                     alive = true
                     reconnectRequired = false
                     lastReplyAt = now()
-                    if (service == null) intervalMS = if (isAWG) 1000 else interval
+                    if (service == null) intervalMS = if (isVLESS) 5000 else if (isAWG) 1000 else interval
                     lastEchoAt = now()
                     lastSwitchAt = now()
                     smoothedRTT = 100.0
@@ -434,7 +437,8 @@ internal class VpnSession(
             return
         }
         event("migration_started", "$reason → ${label(kind)}")
-        if (reconnectRequired) {
+        if (reconnectRequired || isVLESS) {
+            if (isVLESS) current.setEndpoint(resolveEndpoint(sourceEndpoint, network).address)
             event("reconnecting", "Новое соединение → ${label(kind)}")
             finishExitEcho("VPN-выход переподключён")
             current.reconnect(binder(network))
@@ -474,7 +478,7 @@ internal class VpnSession(
                         ?.let { kind to it }
                 }
                 .firstOrNull()
-                ?: if ((reconnectRequired || config.optString("transport") == "https" || isAWG) && failedNetwork != null)
+                ?: if ((reconnectRequired || config.optString("transport") == "https" || isAWG || isVLESS) && failedNetwork != null)
                     networks[activeKind]
                         ?.takeIf { (activeKind != CELLULAR || cellAllowed()) && (retryAt[it] ?: 0L) <= now() }
                         ?.let { activeKind to it }
@@ -565,7 +569,8 @@ internal class VpnSession(
         } else if (failedNetwork != null) {
             recover("Текущий путь недоступен")
         }
-        if (isAWG) {
+        if (isAWG || isVLESS) {
+            // VLESS reconnects; AWG rebinds. Neither uses QUIC standby paths.
             // A second socket to the same AWG peer would move its return endpoint.
             // Prefer a validated Wi-Fi only after dwell; no standby AWG traffic.
             val wifi = networks[WIFI]
@@ -573,7 +578,7 @@ internal class VpnSession(
                 readySince.putIfAbsent(wifi, time)
                 if ((retryAt[wifi] ?: 0L) <= time && policy.canPreferWifi(time - (readySince[wifi] ?: time), time - lastSwitchAt))
                     try { migrate(WIFI, wifi, "Wi-Fi устойчиво доступен") }
-                    catch (e: Exception) { penalize(wifi); event("auto_migration_failed", e.message ?: "AWG rebind failed") }
+                    catch (e: Exception) { penalize(wifi); event("auto_migration_failed", e.message ?: "Standalone network switch failed") }
             }
             return
         }

@@ -133,6 +133,12 @@ internal object VpnIdentity {
         save(context, JSONObject().put("awg_config", raw).put("subject", "AmneziaWG").toString().toByteArray())
     }
 
+    /** Canonical imported profile contains UUID/REALITY key; encrypted storage only. */
+    fun importVLESS(context: Context, raw: String) {
+        requireManualImport(context)
+        val canonical = mobile.Mobile.importVLESSConfig(raw)
+        save(context, JSONObject().put("vless_config", canonical).put("subject", "VLESS").toString().toByteArray(Charsets.UTF_8))
+    }
     @Synchronized fun load(context: Context, id: String = VpnProfiles.current(context).id): JSONObject {
         val bytes = android.util.AtomicFile(VpnProfiles.identityFile(context, id)).readFully()
         val cipher =

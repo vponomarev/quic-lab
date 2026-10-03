@@ -116,7 +116,7 @@ func TestNewRestrictedClient(t *testing.T) {
 	}
 }
 
-func TestEngineUnsupportedUDPDoesNotOpenSocket(t *testing.T) {
+func TestEngineUnsupportedNetworkDoesNotOpenSocket(t *testing.T) {
 	calls := 0
 	e, err := New(context.Background(), validConfig(), factoryFunc(func(context.Context, string, string) (net.Conn, error) {
 		calls++
@@ -126,7 +126,7 @@ func TestEngineUnsupportedUDPDoesNotOpenSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer e.Close()
-	if _, err = e.DialContext(context.Background(), "udp4", "127.0.0.1:53"); err == nil {
+	if _, err = e.DialContext(context.Background(), "unix", "127.0.0.1:53"); err == nil {
 		t.Fatal("unsupported UDP accepted")
 	}
 	if calls != 0 {

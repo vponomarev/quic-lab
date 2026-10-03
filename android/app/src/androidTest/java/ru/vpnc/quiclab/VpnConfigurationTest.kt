@@ -84,7 +84,7 @@ class VpnConfigurationTest {
   assertEquals(2,updated.getJSONObject("model").getJSONArray("profiles").length())
  }
  @Test fun ordinaryTransportsStayStandalone() = withContext { c ->
-  for (transport in listOf("quic","https","awg")) {
+  for (transport in listOf("quic","https","awg","vless")) {
    c.getSharedPreferences("vpn",0).edit().putString("transport",transport).putString("endpoint","vpn.example:443").commit()
    assertEquals("standalone",VpnConfiguration.load(c).getJSONObject("model").getJSONArray("exits").getJSONObject(0).getString("kind"))
   }

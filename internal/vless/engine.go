@@ -7,9 +7,11 @@ import (
 	"sync"
 
 	_ "github.com/xtls/xray-core/app/proxyman/outbound"
+	"github.com/xtls/xray-core/common"
 	xlog "github.com/xtls/xray-core/common/log"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport/internet"
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
 )
@@ -76,45 +78,61 @@ func (e *engine) Close() error {
 	})
 	return e.err
 }
+
+// CreateObject supplies the instance context through Xray's public extension
+// mechanism. No private context keys are reproduced by the adapter.
+type flowContextConfig struct{}
+
+func init() {
+	common.Must(common.RegisterConfig((*flowContextConfig)(nil), func(ctx context.Context, _ interface{}) (interface{}, error) { return ctx, nil }))
+}
 func (e *engine) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if err := e.ctx.Err(); err != nil {
 		return nil, err
 	}
-	if network != "tcp" && network != "tcp4" {
-		return nil, errors.New("VLESS network not yet supported")
-	}
-	dest, err := xnet.ParseDestination("tcp:" + address)
-	if err != nil {
-		return nil, errors.New("invalid VLESS flow destination")
-	}
-	call, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(e.ctx, cancel)
-	c, err := core.Dial(call, e.instance, dest)
-	if err != nil {
-		stop()
-		cancel()
-		return nil, errors.New("VLESS flow rejected")
-	}
-	if err = call.Err(); err != nil {
-		c.Close()
-		stop()
-		cancel()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &engineConn{Conn: c, cancel: cancel, stop: stop}, nil
-}
-
-type engineConn struct {
-	net.Conn
-	cancel context.CancelFunc
-	stop   func() bool
-	once   sync.Once
-	err    error
-}
-
-func (c *engineConn) Close() error {
-	c.once.Do(func() { c.stop(); c.cancel(); c.err = c.Conn.Close() })
-	return c.err
+	packet := network == "udp" || network == "udp4"
+	if network != "tcp" && network != "tcp4" && !packet {
+		return nil, errors.New("unsupported VLESS network")
+	}
+	protocol := "tcp:"
+	if packet {
+		protocol = "udp:"
+	}
+	dest, err := xnet.ParseDestination(protocol + address)
+	if err != nil || !dest.IsValid() {
+		return nil, errors.New("invalid VLESS flow destination")
+	}
+	if dest.Address.Family().IsIPv6() {
+		return nil, errors.New("IPv6 VLESS destination unsupported")
+	}
+	obj, err := core.CreateObject(e.instance, &flowContextConfig{})
+	if err != nil {
+		return nil, errors.New("VLESS flow context unavailable")
+	}
+	call, cancel := context.WithCancel(obj.(context.Context))
+	// Dial context controls establishment, not the returned connection's lifetime.
+	c, link := newFlowWithClose(call, packet, cancel)
+	dispatcher, ok := e.instance.GetFeature(routing.DispatcherType()).(routing.Dispatcher)
+	if !ok {
+		c.Close()
+		return nil, errors.New("VLESS dispatcher unavailable")
+	}
+	go func() {
+		if dispatchErr := dispatcher.DispatchLink(call, dest, link); dispatchErr != nil {
+			c.Close()
+			return
+		}
+		c.up.Interrupt()
+		c.down.Close()
+	}()
+	if err = ctx.Err(); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
 }
 
 // Client is a bounded Xray lifecycle; unsupported packet transports return errors.

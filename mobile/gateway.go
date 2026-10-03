@@ -21,9 +21,11 @@ import (
 	"quiclab/internal/gateway"
 	"quiclab/internal/protocol"
 	"quiclab/internal/servertls"
+	"quiclab/internal/vless"
 )
 
 type gatewayConfig struct {
+	VLESSConfig        string `json:"vless_config"`
 	ServerName         string `json:"server_name,omitempty"`
 	VerifyName         string `json:"verify_name,omitempty"`
 	ControlURL         string `json:"control_url,omitempty"`
@@ -48,6 +50,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	vless               vless.Client
 	exitEchoDialGate    diagnosticDialGate
 	runtimeBond         *runtimeGateway
 	muxOpenSlot         chan struct{}
@@ -114,6 +117,9 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	if g.cfg.MaxAvailability && g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
 		return errors.New("maximum availability requires QUIC or HTTPS")
 	}
+	if g.cfg.Transport == "vless" {
+		return g.startVLESSLocked(binder)
+	}
 	if g.cfg.Transport == "awg" {
 		c, e := awg.Parse(g.cfg.AWGConfig)
 		if e != nil {
@@ -144,7 +150,7 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 		return nil
 	}
 	if g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
-		return errors.New("choose quic or https")
+		return errors.New("choose quic, https, awg or vless")
 	}
 	host, _, e := net.SplitHostPort(g.cfg.Endpoint)
 	if e != nil || net.ParseIP(host).To4() == nil {
@@ -333,6 +339,10 @@ func (g *Gateway) open(ctx context.Context) (gateway.Stream, error) {
 }
 func (g *Gateway) PreparePath(key string, binder SocketBinder) error {
 	g.mu.Lock()
+	if g.cfg.Transport == "vless" {
+		g.mu.Unlock()
+		return errors.New("VLESS does not probe standby paths")
+	}
 	if g.awg != nil {
 		g.mu.Unlock()
 		return errors.New("AWG does not probe standby paths")
@@ -377,6 +387,10 @@ func (g *Gateway) PreparePath(key string, binder SocketBinder) error {
 func (g *Gateway) MigrateTo(key string, binder SocketBinder) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.cfg.Transport == "vless" {
+		g.closeVLESSLocked()
+		return g.startVLESSLocked(binder)
+	}
 	if g.awg != nil {
 		return g.awg.Migrate(binder)
 	}
@@ -405,7 +419,11 @@ func (g *Gateway) LocalAddress() string {
 	g.mu.Lock()
 	q := g.q
 	isAWG := g.awg != nil
+	isVLESS := g.vless != nil
 	g.mu.Unlock()
+	if isVLESS {
+		return "vless"
+	}
 	if isAWG {
 		return "awg"
 	}
@@ -417,6 +435,9 @@ func (g *Gateway) LocalAddress() string {
 func (g *Gateway) Stop() {
 	g.mu.Lock()
 	g.stopExitEchoLocked()
+	if g.vless != nil {
+		g.closeVLESSLocked()
+	}
 	g.terminateBondsLocked()
 	for _, old := range g.bondDraining {
 		old.Close()
@@ -459,6 +480,9 @@ func (g *Gateway) Stop() {
 func (g *Gateway) IsConnected() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.vless != nil {
+		return g.ctx != nil && g.ctx.Err() == nil
+	}
 	if g.bond != nil {
 		return g.bond.Context().Err() == nil
 	}
@@ -480,6 +504,10 @@ func (g *Gateway) Reconnect(binder SocketBinder) error {
 	defer g.mu.Unlock()
 	if g.cfg.MaxAvailability {
 		return errors.New("maximum availability requires RestartBond with path name")
+	}
+	if g.cfg.Transport == "vless" {
+		g.closeVLESSLocked()
+		return g.startVLESSLocked(binder)
 	}
 	if g.cfg.Transport == "awg" {
 		return errors.New("AWG uses path migration")

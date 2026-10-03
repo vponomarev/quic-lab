@@ -38,10 +38,17 @@ func (c tcpFlow) CloseWrite() error {
 func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.Stream, error) {
 	g.mu.Lock()
 	d := g.direct
+	if g.cfg.Transport == "vless" {
+		d = g.vless
+	}
 	if g.awg != nil {
 		d = g.awg
 	}
+	isVLESS := g.cfg.Transport == "vless"
 	g.mu.Unlock()
+	if isVLESS && d == nil {
+		return nil, errors.New("VLESS disconnected")
+	}
 	if d == nil {
 		return gateway.Open(ctx, g.open, kind, target)
 	}
@@ -57,6 +64,9 @@ func (g *Gateway) dialStream(ctx context.Context, kind, target string) (gateway.
 func (g *Gateway) datagramBackend() flowDialer {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.cfg.Transport == "vless" {
+		return g.vless
+	}
 	if g.bond != nil {
 		return bondUDP{g}
 	}

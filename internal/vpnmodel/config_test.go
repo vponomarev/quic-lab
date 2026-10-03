@@ -74,3 +74,23 @@ func TestDisabledDraftCanBeMigrated(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestVLESSStandaloneOnly(t *testing.T) {
+	var c Config
+	if err := json.Unmarshal([]byte(validConfig), &c); err != nil {
+		t.Fatal(err)
+	}
+	c.Profiles[0].Transport = "vless"
+	if err := Validate(c); err != nil {
+		t.Fatal(err)
+	}
+	c.Profiles[0].PoolSize = 2
+	if err := Validate(c); err == nil {
+		t.Fatal("VLESS carousel accepted")
+	}
+	c.Profiles[0].PoolSize = 1
+	c.Profiles[1].Transport = "vless"
+	if err := Validate(c); err == nil {
+		t.Fatal("VLESS demux accepted before V3")
+	}
+}

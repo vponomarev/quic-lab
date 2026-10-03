@@ -13,7 +13,7 @@ class ProfileScanActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(TextView(this).apply{text="Импорт профиля QUIC Lab…";setPadding(24,72,24,24)})
         if(savedInstanceState==null) IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-            .setPrompt("QR QUIC Lab или AmneziaWG").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
+            .setPrompt("QR QUIC Lab, AmneziaWG или VLESS").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
     }
     @Deprecated("Activity result compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
@@ -22,10 +22,17 @@ class ProfileScanActivity : Activity() {
         val raw=scan.contents ?: run{finish();return}
         try {
             require(raw.length<=8192){"QR слишком большой"}
-            if(raw.trimStart().startsWith("[Interface]")) {
+            if(raw.trimStart().startsWith("vless://")) {
+                VlessImport.review(this,raw,{setResult(RESULT_OK,Intent().putExtra("kind","vpn"));finish()},{finish()})
+            }
+            else if(raw.trimStart().startsWith("[Interface]")) {
                 AwgImport.review(this,raw,{setResult(RESULT_OK,Intent().putExtra("kind","vpn"));finish()},{finish()})
             }
-            else if(raw.trimStart().startsWith("{")) review(JSONObject(raw))
+            else if(raw.trimStart().startsWith("{")) {
+                val profile = JSONObject(raw)
+                if(profile.optString("protocol") == "vless") VlessImport.review(this,raw,{setResult(RESULT_OK,Intent().putExtra("kind","vpn"));finish()},{finish()})
+                else review(profile)
+            }
             else {val uri=ProfileImport.enrollment(raw)
                 enrollmentURL=raw
                 val debug = uri.path.endsWith("/capture/enroll")
@@ -35,7 +42,7 @@ class ProfileScanActivity : Activity() {
                         Thread{try{val p=ProfileImport.fetch(this,raw);runOnUiThread{if(!isFinishing)review(p)}}catch(e:Exception){runOnUiThread{fail(e)}}}.start()
                     }.show()
             }
-        }catch(e:Exception){fail(e)}
+        }catch(_:Exception){fail(IllegalArgumentException("Проверьте формат и параметры профиля"))}
     }
     private fun review(p:JSONObject){val kind=ProfileImport.validate(p)
         if(kind=="capture") {
@@ -49,7 +56,7 @@ class ProfileScanActivity : Activity() {
             .setMessage("$address\nTLS: ${p.getString("hostname")}\n${if(kind=="vpn") "Добавить новый VPN-профиль?" else "Заменить настройки echo?"}")
             .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Сохранить"){_,_->try{
                 val saved=ProfileImport.save(this,p);enrollmentURL?.let { ProfileImport.completeEnrollment(this,it) };setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
-            }catch(e:Exception){fail(e)}}.show()
+            }catch(_:Exception){fail(IllegalArgumentException("Проверьте формат и параметры профиля"))}}.show()
     }
     private fun fail(e:Exception){if(isFinishing)return;AlertDialog.Builder(this).setTitle("Импорт не выполнен").setMessage(e.message ?: "Ошибка профиля").setPositiveButton("OK"){_,_->finish()}.show()}
 }

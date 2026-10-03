@@ -342,6 +342,9 @@ class MainActivity : Activity() {
     private fun startExperiment() {
         if (LabVpnService.active) { android.widget.Toast.makeText(this,"Сначала остановите VPN",android.widget.Toast.LENGTH_SHORT).show(); return }
 
+        if (profileCompare.isChecked && VpnProfiles.preferences(this).getString("transport", "quic") == "vless") {
+            Toast.makeText(this, "Диагностика VLESS доступна после запуска VPN", Toast.LENGTH_LONG).show(); return
+        }
         val kind = if (QuicSession.WIFI in available) QuicSession.WIFI else QuicSession.CELLULAR
         if (kind !in available) { Toast.makeText(this, "Подключите Wi-Fi или мобильную сеть", Toast.LENGTH_SHORT).show(); return }
         if (!profileCompare.isChecked && compare.isChecked && hostname.text.isBlank()) { Toast.makeText(this, "Для HTTPS нужен публичный домен", Toast.LENGTH_SHORT).show(); return }
@@ -542,7 +545,7 @@ class MainActivity : Activity() {
             networksView.text = "Wi-Fi: ${if (QuicSession.WIFI in available) "доступен" else "нет"}    ·    Мобильная: ${if (QuicSession.CELLULAR in available) "доступна" else "нет"}"
             if(shortWifi.isNotBlank() && QuicSession.WIFI in available) networksView.append("\n$shortWifi")
             if(shortCell.isNotBlank() && QuicSession.CELLULAR in available) networksView.append("\n$shortCell")
-            profileCompare.text="Echo через VPN-профиль · ${VpnProfiles.current(this@MainActivity).name}"
+            profileCompare.text = if(VpnProfiles.preferences(this@MainActivity).getString("transport", "quic") == "vless") "VLESS: диагностика после запуска VPN" else "Echo через VPN-профиль · ${VpnProfiles.current(this@MainActivity).name}"
             if (running) {
                 banner.text = if (!q.active) "QUIC: ${q.state}" else if (q.silence(time) > 400) "Сеть меняется · ждём ответы" else "Эксперимент идёт · ${q.network.replace("LTE/Cellular", "мобильная сеть")}"
                 if(profileEcho!=null) banner.text="Сравнение: ${echoTransports.joinToString(" / ") { it.uppercase() }}"

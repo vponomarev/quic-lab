@@ -22,6 +22,7 @@ internal class ProfileEchoSession(c: Context, private val output: (String, JSONO
     init {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         val p = VpnProfiles.preferences(c)
+        require(p.getString("transport", "quic") != "vless") { "Диагностика VLESS доступна после запуска VPN; Echo профиля VLESS не поддерживается" }
         val identity = VpnIdentity.load(c)
         val allowed =
             p.getStringSet("available_transports", setOf("quic", "https", "awg")).orEmpty()
