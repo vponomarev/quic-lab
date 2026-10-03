@@ -7,3 +7,26 @@ dialog{width:min(640px,calc(100vw - 40px));max-height:90dvh;border-radius:14px;b
 @media(max-width:700px){main{padding:0 14px;margin:18px auto}nav{gap:12px;flex-wrap:wrap}nav>a:first-child{flex-basis:100%}dialog,dialog.user-dialog{width:100%;max-width:100%;height:100dvh;max-height:100dvh;margin:0;border-radius:0}.modal-header{padding:18px}.modal-body{padding:18px}.tabs{gap:2px}.tabs button{padding:9px 8px}.overview-grid{grid-template-columns:1fr}.table-tools{flex-wrap:wrap}.table-tools input[type=search]{flex:1;min-width:140px}.landing{grid-template-columns:1fr;gap:14px;margin-top:20px}.landing .card{padding:24px}.landing-qr img{width:180px}.welcome h2{font-size:27px}.visitor{padding:24px}.visitor dl{grid-template-columns:1fr}.visitor dl>div:nth-child(2){grid-column:auto;grid-row:auto}.form-grid{gap:12px}}
 
 .danger-actions{display:flex;justify-content:space-between;gap:12px;margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}.danger-actions button{background:#fff0f0;color:#a43e3e}.overview-item>div{white-space:pre-line}.visitor dl.tls-facts>div:nth-child(2){grid-column:auto;grid-row:auto}body:has(.landing) main{max-width:1080px}
+
+/* Stable user card, with content scrolling inside the selected section. */
+dialog.user-dialog{height:min(820px,90dvh);overflow:hidden}
+dialog.user-dialog[open]{display:flex;flex-direction:column}
+.user-dialog>.modal-header{flex:none;position:static}
+.user-dialog>.modal-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.user-dialog .client-name,.user-dialog .user-quick-actions,.user-dialog .tabs{flex:none}
+.user-dialog .tab-panel{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}
+.user-quick-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+.user-quick-actions button{padding:8px 12px;font-size:13px}
+.invitation-intro{padding-bottom:20px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.invitation-intro h3{margin-top:0}.invitation-intro>button{padding:10px 14px;font-size:14px}
+/* Full-width desktop portal: download above, visitor and TLS information side by side. */
+@media(min-width:1000px){
+ body:has(.landing) main{max-width:none;display:grid;grid-template-columns:1fr 1fr;gap:18px 24px;margin:20px auto}
+ body:has(.landing) main>nav,body:has(.landing) main>h1,body:has(.landing) main>.landing{grid-column:1/-1}
+ body:has(.landing) main>nav{margin-bottom:0}body:has(.landing) main>h1{margin:0}
+ .landing{max-width:none;width:100%;grid-template-columns:minmax(0,1fr) 280px;margin:0;gap:24px}
+ .landing .card{padding:22px 28px}.landing-qr img{width:164px}.landing-qr p{margin:8px 0 0}
+ .welcome h2{font-size:28px;margin-top:10px}.welcome p{margin:10px 0;max-width:none}
+ .visitor{max-width:none;margin:0;padding:22px 28px;min-width:0}.visitor dl{gap:16px 24px;margin-bottom:0}
+}
+@media(max-width:700px){dialog.user-dialog{height:100dvh;max-height:100dvh}.user-quick-actions{gap:6px;margin-bottom:12px}.user-quick-actions>span{flex-basis:100%}.user-quick-actions button{padding:7px 9px}.user-dialog .tabs{margin-bottom:12px}}

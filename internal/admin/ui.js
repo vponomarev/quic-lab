@@ -39,7 +39,7 @@
   dialog.addEventListener('qr-reset',()=>{generation++;result.replaceChildren();});
   form.addEventListener('submit',async e=>{
    e.preventDefault();const g=++generation,b=$('button',form);b.disabled=true;result.setAttribute('role','status');result.textContent='Готовим QR…';
-   try {const doc=await post(form),qr=$('.card.qr',doc);if(!qr)throw new Error('Сервер не вернул QR-код.');if(g===generation&&dialog.open){result.replaceChildren(document.importNode(qr,true));result.scrollIntoView({block:'nearest'});}}
+   try {const doc=await post(form),qr=$('.card.qr',doc);if(!qr)throw new Error('Сервер не вернул QR-код.');if(g===generation&&dialog.open){result.replaceChildren(document.importNode(qr,true));const image=$('img',result);if(image){const download=el('a','download','Сохранить QR');download.href=image.src;download.download='connection-qr.png';result.append(download);}result.scrollIntoView({block:'nearest'});}}
    catch(err){if(g===generation&&dialog.open){result.setAttribute('role','alert');result.textContent=err.message;}}
    finally{b.disabled=false;}
   });
@@ -74,7 +74,7 @@
   fields.forEach(([key,title])=>{const item=el('div','overview-item'),content=el('div');item.append(el('h3','',title),content);grid.append(item);overviewItems.set(key,content);const label=el('label'),input=el('input');input.type='checkbox';input.checked=stored[key]!==false;item.hidden=!input.checked;input.onchange=()=>{stored[key]=input.checked;save('overview',stored);item.hidden=!input.checked;};label.append(input,document.createTextNode(title));checks.append(label);});
   if(deviceDetails){$('summary',deviceDetails).remove();sections.panels.get('devices').append(...deviceDetails.childNodes);deviceDetails.remove();}
   if(!devices.length)sections.panels.get('devices').append(el('p','muted','Устройств пока нет.'));
-  if(enrollmentDetails){$('summary',enrollmentDetails).remove();[...enrollmentDetails.children].forEach(x=>x.classList.add('enrollment-item'));sections.panels.get('enrollments').append(...enrollmentDetails.childNodes);enrollmentDetails.remove();}else sections.panels.get('enrollments').append(el('p','muted','Приглашений пока нет. Создайте приглашение через «Подключить».'));
+  if(enrollmentDetails){$('summary',enrollmentDetails).remove();[...enrollmentDetails.children].forEach(x=>x.classList.add('enrollment-item'));sections.panels.get('enrollments').append(...enrollmentDetails.childNodes);enrollmentDetails.remove();}else sections.panels.get('enrollments').append(el('p','muted','Приглашений пока нет. Создайте новое приглашение кнопкой выше.'));
   const access=sections.panels.get('access');$('summary',settingsDetails).remove();access.append(...settingsDetails.childNodes);settingsDetails.remove();
   const toggle=$('form[action$="/toggle"]',actions);const accessState=toggle?.elements.disabled.value==='true'?'Доступ разрешён':'Доступ приостановлен';
   if(toggle){toggle.classList.add('subtle-danger');access.append(toggle);}
@@ -106,7 +106,15 @@
    const controls=el('div','form-actions');group.forEach(f=>controls.append(f));$('button',form).textContent='Показать QR';panel.append(controls);const result=el('div','qr-result');panel.append(result);qrForm(form,connect.dialog,result);
    $('select',panel).addEventListener('change',()=>result.replaceChildren());
   });
-  exportDetails.remove();const connectButton=button('Подключить','');connectButton.onclick=()=>{connect.body.querySelector('.client-name').textContent=openUser.textContent;connect.dialog.showModal();};
+  exportDetails.remove();
+  function openConnect(method='app'){connect.body.querySelector('.client-name').textContent=openUser.textContent;methods.select(method);connect.dialog.dispatchEvent(new Event('qr-reset'));connect.dialog.showModal();}
+  const connectButton=button('QR / подключение','');connectButton.onclick=()=>openConnect();
+  const quick=el('div','user-quick-actions'),quickTitle=el('span','muted','Подключить клиента:');quick.append(quickTitle);
+  [['app','QR QUIC Lab'],['vless','QR VLESS'],['awg','QR AmneziaWG']].forEach(([key,label])=>{if(!methods.panels.has(key))return;const b=button(label);b.onclick=()=>openConnect(key);quick.append(b);});
+  user.body.querySelector('.client-name').after(quick);
+  const invites=sections.panels.get('enrollments'),intro=el('div','invitation-intro');intro.append(el('h3','','Регистрация в QUIC Lab'),el('p','field-note','Эти приглашения добавляют устройства в приложение QUIC Lab. Для стороннего клиента используйте QR VLESS или QR AmneziaWG над вкладками.'),el('p','field-note','Старый QR повторно показать нельзя: сервер хранит только хеш его токена. Создайте новое приглашение и сохраните QR после создания. Старые приглашения продолжат действовать до истечения срока или отзыва.'));
+  const createInvite=button('Создать новое приглашение','');createInvite.onclick=()=>openConnect('app');intro.append(createInvite);invites.prepend(intro);
+
   actions.append(connectButton,settingsButton,more,user.dialog,connect.dialog);
   $$('form[action$="/vless-qr"]',user.dialog).forEach(f=>{const result=el('div','qr-result');f.after(result);qrForm(f,user.dialog,result);});
   $$('form',user.dialog).filter(f=>['disable','revoke','delete'].includes(formAction(f))||formAction(f)==='toggle').forEach(f=>f.addEventListener('submit',e=>{
