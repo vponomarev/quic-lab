@@ -13,3 +13,10 @@ VPN uses tun2socks core (MIT), gVisor netstack (Apache-2.0), smux (MIT), and cod
 QR generation uses skip2/go-qrcode (MIT). Android scanning uses JourneyApps ZXing Android Embedded and ZXing core (Apache-2.0). License texts are bundled in the APK.
 
 AmneziaWG client and server use amnezia-vpn/amneziawg-go (MIT), pinned in go.mod. Its license is included in the APK and server archives. The local netstack adapter retains its MIT license in internal/awg/netstack/LICENSE.
+
+VLESS uses unmodified Xray-core v26.3.27 (Go module v1.260327.0, MPL-2.0).
+Corresponding source: https://github.com/XTLS/Xray-core/tree/v26.3.27 .
+The application adapter lives in internal/vless; it does not modify upstream Xray files.
+Licenses for Xray, REALITY, uTLS and new transitive runtime dependencies are bundled
+in android/app/src/main/assets/licenses. The existing gVisor version is retained
+with an explicit module replacement for tun2socks compatibility.

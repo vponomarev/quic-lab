@@ -1,6 +1,6 @@
 # Android и Linux VLESS — план реализации
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Выпустить Android VLESS и управляемый Linux VLESS-вход, затем подключить внешние профили к общей demux-сессии.
 
@@ -10,7 +10,7 @@
 
 **Spec:** ../specs/2026-10-03-android-vless-design.md
 
-Статус: план для согласования. Версию Xray и окончательные внутренние API фиксируем результатом V0; V1–V5 — последовательность поставок, их пошаговые планы составляются после технического контроля. Не выполнять будущие задачи по непроверенным предположениям.
+Статус: выполнение согласовано владельцем; V0 технически проверен 2026-10-03 (см. docs/vless-compatibility.md). Версию Xray и окончательные внутренние API фиксируем результатом V0; V1–V5 — последовательность поставок, их пошаговые планы составляются после технического контроля. Не выполнять будущие задачи по непроверенным предположениям.
 
 ## Global Constraints
 
@@ -37,19 +37,22 @@
 **Interfaces proposed for the adapter:**
 - `SocketBinder interface { Bind(int64) error }` — защита и физическая сеть, ошибка закрывает сокет до connect.
 - `SocketFactory interface { DialContext(context.Context, string, string) (net.Conn, error) }` — физические TCP-соединения, обёртка существующего счётчика бюджета; пакетный путь требует отдельного контракта при подтверждении UDP.
-- `NewEngine(ctx context.Context, outboundJSON []byte, sockets SocketFactory) (*Engine, error)` — только предварительно проверенный одиночный outbound, без исполнения произвольного клиентского JSON.
-- `(*Engine).DialContext(context.Context, string, string) (net.Conn, error)` и `(*Engine).Close() error` — совпадают с потребностью `flowDialer`; TCP обязателен, UDP получает явный результат проверки возможностей.
+- `New(ctx context.Context, config Config, sockets SocketFactory) (Client, error)` — типизированный ограниченный конфиг вместо сырого JSON; это исключает исполнение произвольной конфигурации Xray.
+- `Client.DialContext(context.Context, string, string) (net.Conn, error)` и `Client.Close() error` — совпадают с потребностью `flowDialer`; TCP обязателен, UDP получает явный результат проверки возможностей.
 
 Это проверяемый контракт интеграции, а не утверждение, что upstream Xray предоставляет такую фабрику напрямую. Внутри адаптера допустима версия API Xray, подтверждённая исходниками. Нельзя подменять фабрику process-global сетевым переключателем.
 
-- [ ] Прочитать API текущего стабильного Xray, лицензию и минимальную версию Go; зафиксировать точную версию и зависимости. Проверить возможность инъекции соединений до добавления зависимости в приложение.
-- [ ] Написать `TestEngineBindsEveryOuterSocket`: две независимые фабрики, TCP и DNS; каждый connect получает правильную фабрику, отказ Bind не вызывает connect. `TestEngineCloseCancelsDial`: закрытие прерывает блокированный dial, повторный Close безопасен; `TestEngineBudgetBlocksOuterTraffic`: закрытый бюджет запрещает новые соединения и останавливает текущие.
-- [ ] На Linux запустить `go test ./internal/vless -run 'TestEngine' -count=1`, подтвердить исходное падение тестов отсутствующего адаптера. Реализовать минимальный адаптер и повторить команду, затем `go test -race ./internal/vless -count=1`.
-- [ ] Добавить синтетический локальный REALITY/TLS fixture и `TestEngineTCPRoundTrip`, `TestEngineWrongIdentityRejected`, `TestEngineNoLocalListener`. Они проверяют точные байты ответа, отказ неверной идентичности и отсутствие слушающего прокси. Ответы и ключи не печатать.
-- [ ] Проверить серверный механизм закрытия уже открытых потоков заданного устройства отдельным `TestServerRevokeClosesActiveFlows`; положительный контроль — другой пользователь продолжает работать. Не считать RemoveUser достаточным без этого опыта. Если требуется upstream patch, задокументировать размер и сопровождение до V2.
-- [ ] Собрать gomobile AAR и Android APK существующим `scripts/build-android.ps1 -BuildApk`. Проверить две одновременно используемые Android Network через `VlessEngineTest`: каждая передаёт трафик по своей сети, отключение одной не меняет привязку другой. На недоступном телефоне оставить шаг незавершённым.
-- [ ] Записать в `docs/vless-compatibility.md` версию, лицензию, рост APK, TLS/REALITY/Vision, результат UDP, привязки и отзыва. Отдельно перечислить нерешённые ограничения. Если контракт невозможен, остановить зависимые задачи и предложить конкретную корректировку дизайна.
-- [ ] Проверить diff без секретов, выполнить релевантные проверки и зафиксировать V0 отдельным коммитом. Технический результат не объявлять готовым VPN-клиентом.
+- [x] Прочитать API текущего стабильного Xray, лицензию и минимальную версию Go; зафиксировать точную версию и зависимости. Проверить возможность инъекции соединений до добавления зависимости в приложение.
+- [x] Написать `TestSocketRouterSeparatesInstances` / `TestVLESSSocketRefusesUnboundOrUnresolved`: две независимые фабрики; каждый TCP connect получает правильную фабрику, отказ Bind не вызывает connect. DNS выполняет Android Network до создания движка, неразрешённое имя фабрика отвергает. `TestEngineCloseCancelsRealCoreDial`: закрытие прерывает блокированный dial, повторный Close безопасен; `TestVLESSOuterBudgetStopsActiveAndNewSockets`: закрытый бюджет запрещает новые соединения и останавливает текущие.
+- [x] На Linux запустить `go test ./internal/vless -run 'TestEngine' -count=1`, подтвердить исходное падение тестов отсутствующего адаптера. Реализовать минимальный адаптер и повторить команду, затем `go test -race ./internal/vless -count=1`.
+- [x] Добавить синтетический TLS/VLESS fixture: `TestEngineTLSRoundTripAndWrongIdentity` проверяет точные байты и отказ неверного UUID; `TestBuildConfigRestrictsRuntime` запрещает inbound в конфигурации клиента. REALITY/Vision проверить аппаратным тестом с разрешённым внешним профилем. Ответы и ключи не печатать.
+- [x] Проверить серверный механизм закрытия уже открытых потоков заданного устройства отдельным `TestServerRevokeClosesActiveFlows`; положительный контроль — другой пользователь продолжает работать. Не считать RemoveUser достаточным без этого опыта. Если требуется upstream patch, задокументировать размер и сопровождение до V2.
+- [x] Собрать gomobile AAR и Android APK существующим `scripts/build-android.ps1 -BuildApk`. Проверить две одновременно используемые Android Network через `VlessEngineTest`: каждая передаёт трафик по своей сети, отключение одной не меняет привязку другой. На недоступном телефоне оставить шаг незавершённым.
+- [x] Записать в `docs/vless-compatibility.md` версию, лицензию, рост APK, TLS/REALITY/Vision, результат UDP, привязки и отзыва. Отдельно перечислить нерешённые ограничения. Если контракт невозможен, остановить зависимые задачи и предложить конкретную корректировку дизайна.
+- [x] Проверить diff без секретов, выполнить релевантные проверки и зафиксировать V0 отдельным коммитом. Технический результат не объявлять готовым VPN-клиентом.
+
+
+Результат V0: выбранная версия и лицензии зафиксированы; Linux full test/vet и targeted race PASS; Android build/lint и две физические сети PASS. Клиентский UDP пока явно отклоняется, deadline API требует адаптации до V1. Синтетический сервер проверен по TLS; REALITY/Vision — на разрешённом внешнем профиле. Серверный UDP revoke не объявляется проверенным. Полные результаты и изменения контрактов: [совместимость](../../vless-compatibility.md).
 
 ## Последующие поставки — после результата V0
 
@@ -57,7 +60,7 @@
 
 Файлы: новые `internal/vless/config.go`, `config_test.go`; существующие `internal/vpnmodel/config.go`, `mobile/gateway_backend.go`, `mobile/vpn_configuration.go`, Android `ProfileImport.kt`, `VpnProfiles.kt`, `LabVpnService.kt`; отдельные тесты импорта и VLESS gateway.
 
-- [ ] Уточнить пошаговый план на подтверждённом API V0; реализовать ограниченный URI/JSON импорт с отрицательными тестами chained/balancer/неизвестных полей, лимитов размера и редактирования профиля.
+- [ ] Уточнить пошаговый план на подтверждённом API V0, включая настоящий deadline-адаптер (upstream core.Dial игнорирует SetDeadline) и отдельный UDP backend; реализовать ограниченный URI/JSON импорт с отрицательными тестами chained/balancer/неизвестных полей, лимитов размера и редактирования профиля.
 - [ ] Подключить standalone к существующему выбору выхода, TUN, DNS и бюджету; проверить TCP, подтверждённый UDP, перезапуск, fail-closed и отсутствие регрессии QUIC/HTTPS/AWG.
 - [ ] Проверить один подходящий профиль из приватной подписки на Linux и Android небольшим объёмом трафика, без массового перебора. Отдельно отчитаться о скачивании и успешном соединении.
 
