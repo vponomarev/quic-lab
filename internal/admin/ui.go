@@ -12,3 +12,14 @@ func (w *Web) uiScript(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	rw.Write(uiJS)
 }
+
+//go:embed web.html
+var pageHTML string
+
+//go:embed ui.css
+var uiCSS []byte
+
+func (w *Web) uiStyle(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Content-Type", "text/css; charset=utf-8")
+	rw.Write(uiCSS)
+}

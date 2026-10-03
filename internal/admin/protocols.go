@@ -80,6 +80,12 @@ func (s *Store) provisionAWG(u *User) error {
 	return errors.New("AWG address pool exhausted")
 }
 func (s *Store) SetProtocols(id string, protocols []string, disabled bool) error {
+	return s.setUserAccess(id, protocols, &disabled, nil)
+}
+
+// setUserAccess persists the name and protocol selection together, then applies
+// revocations. A worker failure can mean the durable edit was only partly applied.
+func (s *Store) setUserAccess(id string, protocols []string, disabled *bool, name *string) error {
 	s.mu.Lock()
 	old, ok := s.state.Users[id]
 	if !ok {
@@ -88,7 +94,22 @@ func (s *Store) SetProtocols(id string, protocols []string, disabled bool) error
 	}
 	u := old
 	u.Protocols = append([]string{}, protocols...)
-	u.Disabled = disabled
+	if disabled != nil {
+		u.Disabled = *disabled
+	}
+	if name != nil {
+		if len(*name) == 0 || len(*name) > 100 {
+			s.mu.Unlock()
+			return errors.New("name must contain 1..100 bytes")
+		}
+		for otherID, other := range s.state.Users {
+			if otherID != id && other.Name == *name {
+				s.mu.Unlock()
+				return errors.New("name already exists")
+			}
+		}
+		u.Name = *name
+	}
 	previous := map[string]Device{}
 	for deviceID, d := range s.state.Devices {
 		if d.UserID == id {
@@ -132,7 +153,7 @@ func (s *Store) SetProtocols(id string, protocols []string, disabled bool) error
 	closers := []func(){}
 	for deviceID := range previous {
 		for token, close := range s.active[deviceID] {
-			if disabled || !u.Allows(s.sessionProtocols[token]) {
+			if u.Disabled || !u.Allows(s.sessionProtocols[token]) {
 				closers = append(closers, close)
 				delete(s.active[deviceID], token)
 				delete(s.sessionProtocols, token)

@@ -25,7 +25,7 @@ func TestDeviceAdminGroupingAndRevocation(t *testing.T) {
 	login := call(h, "POST", "/login", url.Values{"username": {c.Username}, "password": {c.Password}}.Encode(), nil)
 	cookie := login.Result().Cookies()[0]
 	page := call(h, "GET", "/users", "", cookie)
-	if !strings.Contains(page.Body.String(), "second phone") || !strings.Contains(page.Body.String(), "Legacy device") {
+	if !strings.Contains(page.Body.String(), "second phone") || !strings.Contains(page.Body.String(), "Общий профиль") {
 		t.Fatal("devices not grouped in admin")
 	}
 	if strings.Contains(page.Body.String(), d.Key) || strings.Contains(page.Body.String(), "PRIVATE KEY") {

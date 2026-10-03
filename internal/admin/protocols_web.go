@@ -161,13 +161,8 @@ func (w *Web) downloadProfile(rw http.ResponseWriter, r *http.Request) {
 	if _, ok := w.authorized(rw, r, true); !ok {
 		return
 	}
-	u, e := w.Store.Profile(r.Form.Get("id"))
-	if e != nil {
-		http.NotFound(rw, r)
-		return
-	}
 	if r.Form.Get("format") == "awg" {
-		raw, e := w.Store.AWGProfile(u.ID)
+		raw, e := w.Store.AWGProfile(r.Form.Get("id"))
 		if e != nil {
 			http.Error(rw, e.Error(), 400)
 			return
@@ -175,6 +170,11 @@ func (w *Web) downloadProfile(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		rw.Header().Set("Content-Disposition", `attachment; filename="quic-lab-awg.conf"`)
 		rw.Write([]byte(raw))
+		return
+	}
+	u, e := w.Store.Profile(r.Form.Get("id"))
+	if e != nil {
+		http.NotFound(rw, r)
 		return
 	}
 	p, e := w.profile(u)

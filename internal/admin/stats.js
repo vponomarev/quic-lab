@@ -25,13 +25,14 @@
         const row = rows.get(user.id);
         if (!row) { changed = true; return; }
         row.querySelector('[data-stat="name"]').textContent = user.name;
-        const editor = row.querySelector('.rename');
-        if (editor && !editor.querySelector('dialog')?.open) editor.querySelector('input[name="name"]').value = user.name;
+        const editor = row.querySelector('form[action$="/settings"]');
+        if (editor && !row.querySelector('dialog[open]')) editor.querySelector('input[name="name"]').value = user.name;
         const connections = row.querySelector('[data-stat="connections"]');
         lines(connections, user.connections.length ? 'Онлайн · ' + user.connections.length + '\n' + user.connections.join('\n\n') : 'Офлайн');
         connections.className = user.connections.length ? 'online' : 'muted';
         lines(row.querySelector('[data-stat="last"]'), user.last);
         lines(row.querySelector('[data-stat="traffic"]'), '↑ ' + user.tx + ' · ↓ ' + user.rx + (user.rate ? '\n' + user.rate : ''));
+        window.AdminUI?.update(row, user);
       });
       status.textContent = changed ? 'Список пользователей изменился — обновите страницу' : 'Онлайн · каждые 5 секунд · обновлено ' + new Date().toLocaleTimeString();
     };

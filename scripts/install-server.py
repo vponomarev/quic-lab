@@ -244,6 +244,11 @@ server {{
     }}
     location /lab/ {{
         proxy_pass http://127.0.0.1:8083/;
+        proxy_set_header X-Quic-Lab-Peer "$remote_addr:$remote_port";
+        proxy_set_header X-Portal-TLS-Version $ssl_protocol;
+        proxy_set_header X-Portal-TLS-Cipher $ssl_cipher;
+        proxy_set_header X-Portal-TLS-ALPN $ssl_alpn_protocol;
+        proxy_set_header X-Portal-TLS-SNI $ssl_server_name;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

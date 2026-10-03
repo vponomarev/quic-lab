@@ -43,8 +43,8 @@ func TestWebEnrollmentAndRevocation(t *testing.T) {
 	web := NewWeb(c, s)
 	h := web.Handler()
 	pub := call(h, "GET", "/", "", nil)
-	if pub.Code != 200 || !strings.Contains(pub.Body.String(), "data:image/png;base64,") || strings.Contains(pub.Body.String(), "PRIVATE KEY") {
-		t.Fatal("public echo page")
+	if pub.Code != 200 || !strings.Contains(pub.Body.String(), "Ваше подключение") || strings.Contains(pub.Body.String(), "PRIVATE KEY") {
+		t.Fatal("neutral public page")
 	}
 	if w := call(h, "GET", "/users", "", nil); w.Code != 303 {
 		t.Fatal("admin leaked")

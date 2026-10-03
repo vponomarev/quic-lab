@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestPublicAPKDownloadAndHiddenQR(t *testing.T) {
+func TestPublicAPKDownloadAndVisibleQR(t *testing.T) {
 	cfg := config(t)
 	cfg.APKPath = filepath.Join(t.TempDir(), "quic-lab.apk")
 	store, e := OpenStore(cfg.DataDir)
@@ -21,7 +21,7 @@ func TestPublicAPKDownloadAndHiddenQR(t *testing.T) {
 	if w := call(h, "GET", "/download/quic-lab.apk", "", nil); w.Code != 404 {
 		t.Fatal("missing APK", w.Code)
 	}
-	if w := call(h, "GET", "/", "", nil); strings.Contains(w.Body.String(), "Показать QR для скачивания") {
+	if w := call(h, "GET", "/", "", nil); strings.Contains(w.Body.String(), "data:image/png;base64,") {
 		t.Fatal("missing APK advertised")
 	}
 	payload := []byte("APK test content")
@@ -29,7 +29,7 @@ func TestPublicAPKDownloadAndHiddenQR(t *testing.T) {
 		t.Fatal(e)
 	}
 	page := call(h, "GET", "/", "", nil)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), `<details class="download-qr">`) || strings.Contains(page.Body.String(), `<details class="download-qr" open`) || strings.Count(page.Body.String(), "data:image/png;base64,") != 2 || !strings.Contains(page.Body.String(), `href="/admin/download/quic-lab.apk"`) {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), `class="card landing-qr"`) || strings.Count(page.Body.String(), "data:image/png;base64,") != 1 || !strings.Contains(page.Body.String(), `href="/admin/download/quic-lab.apk"`) {
 		t.Fatal("download UI", page.Body.String())
 	}
 	w := call(h, "GET", "/download/quic-lab.apk", "", nil)
