@@ -22,11 +22,16 @@ func main() {
 func run() error {
 	dir := flag.String("data-dir", "/var/lib/quic-lab/vless", "private VLESS worker directory")
 	admission := flag.String("admission-dir", "/var/lib/quic-lab", "private admission broker directory")
+	check := flag.String("check-config", "", "validate private typed configuration without starting services")
 	flag.Parse()
+	if *check != "" {
+		_, e := vlessserver.ReadConfig(*check)
+		return e
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	w, e := vlessserver.OpenWorker(ctx, *dir, func(ctx context.Context, id string) (time.Duration, error) {
-		return vlessserver.RequestAdmission(ctx, *admission, id)
+	w, e := vlessserver.OpenWorker(ctx, *dir, func(ctx context.Context, id, uuid string) (time.Duration, error) {
+		return vlessserver.RequestAdmission(ctx, *admission, id, uuid)
 	})
 	if e != nil {
 		return e

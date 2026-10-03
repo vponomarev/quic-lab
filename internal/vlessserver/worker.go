@@ -37,7 +37,7 @@ type managedServer interface {
 	Revoke(string)
 	Close() error
 }
-type AdmissionFunc func(context.Context, string) (time.Duration, error)
+type AdmissionFunc func(context.Context, string, string) (time.Duration, error)
 type Worker struct {
 	mu                  sync.Mutex
 	dir                 string
@@ -66,7 +66,7 @@ func normalizeSnapshot(s Snapshot) (Snapshot, error) {
 	if json.Unmarshal(raw, &s) != nil {
 		return Snapshot{}, errConfig
 	}
-	if s.Revision == 0 || len(s.Devices) > 30 || s.Config.Validate() != nil {
+	if s.Revision == 0 || len(s.Devices) > vless.MaxServerClients || s.Config.Validate() != nil {
 		return Snapshot{}, errConfig
 	}
 	ids, keys := map[string]bool{}, map[string]bool{}
@@ -177,7 +177,7 @@ func (w *Worker) authorize(ctx context.Context, uuid string) (time.Duration, err
 		if d.Disabled || !d.Expires.After(time.Now()) {
 			return 0, errApply
 		}
-		ttl, e := w.admission(ctx, d.ID)
+		ttl, e := w.admission(ctx, d.ID, d.UUID)
 		if e != nil || ttl <= 0 || ttl > 2*time.Second {
 			return 0, errApply
 		}

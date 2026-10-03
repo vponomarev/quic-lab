@@ -2,6 +2,7 @@ package vless
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -29,4 +30,15 @@ func TestServerUpdateClientsKeepsOtherDevice(t *testing.T) {
 		t.Fatal("removed UUID silently resurrected")
 	}
 	exchange(t, c)
+}
+
+func TestServerConfiguredCapacityAndUpdate(t *testing.T) {
+	s, _, _ := serverFixture(t, "standalone", "")
+	clients := []ServerClient{{UUID: serverID}, {UUID: otherServerID}}
+	for i := 0; i < 510; i++ {
+		clients = append(clients, ServerClient{UUID: fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+1)})
+	}
+	if e := s.SetClients(context.Background(), clients); e != nil {
+		t.Fatal("512 configured accounts rejected")
+	}
 }

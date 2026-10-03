@@ -29,7 +29,7 @@ func (s *Server) SetClients(ctx context.Context, clients []ServerClient) error {
 	if e := ctx.Err(); e != nil {
 		return e
 	}
-	if len(clients) > 30 {
+	if len(clients) > MaxServerClients {
 		return errors.New("too many VLESS devices")
 	}
 	desired := map[string]string{}

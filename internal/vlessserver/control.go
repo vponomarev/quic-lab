@@ -20,7 +20,8 @@ type controlResponse struct {
 	Applied  bool   `json:"applied"`
 }
 type admissionRequest struct {
-	ID string `json:"id"`
+	UUID string `json:"uuid"`
+	ID   string `json:"id"`
 }
 type admissionResponse struct {
 	Milliseconds int64 `json:"milliseconds"`
@@ -92,12 +93,12 @@ func (c *ControlClient) Apply(ctx context.Context, snapshot Snapshot) error {
 	}
 	return nil
 }
-func RequestAdmission(ctx context.Context, dir, id string) (time.Duration, error) {
-	if id == "" || len(id) > 128 {
+func RequestAdmission(ctx context.Context, dir, id, uuid string) (time.Duration, error) {
+	if id == "" || len(id) > 128 || len(uuid) != 36 {
 		return 0, errApply
 	}
 	var reply admissionResponse
-	if request(ctx, dir, "vless-admission.sock", 100*time.Millisecond, admissionRequest{ID: id}, &reply) != nil || reply.Milliseconds <= 0 || reply.Milliseconds > 2000 {
+	if request(ctx, dir, "vless-admission.sock", 100*time.Millisecond, admissionRequest{ID: id, UUID: uuid}, &reply) != nil || reply.Milliseconds <= 0 || reply.Milliseconds > 2000 {
 		return 0, errApply
 	}
 	return time.Duration(reply.Milliseconds) * time.Millisecond, nil
@@ -167,8 +168,8 @@ func ServeAdmission(ctx context.Context, dir string, renew AdmissionFunc) (func(
 	return serve(ctx, dir, "vless-admission.sock", 100*time.Millisecond, func(ctx context.Context, c net.Conn) {
 		var req admissionRequest
 		reply := admissionResponse{}
-		if readMessage(c, &req) == nil && req.ID != "" && len(req.ID) <= 128 {
-			if ttl, e := renew(ctx, req.ID); e == nil && ttl > 0 && ttl <= 2*time.Second {
+		if readMessage(c, &req) == nil && req.ID != "" && len(req.ID) <= 128 && len(req.UUID) == 36 {
+			if ttl, e := renew(ctx, req.ID, req.UUID); e == nil && ttl > 0 && ttl <= 2*time.Second {
 				reply.Milliseconds = ttl.Milliseconds()
 			}
 		}

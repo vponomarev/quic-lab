@@ -10,8 +10,17 @@ internal object ProfileImport {
         if (p.optInt("version") == 1) return listOf("quic", "https")
         val array = p.getJSONArray("transports")
         val items = (0 until array.length()).map { array.getString(it) }
-        require(items.isNotEmpty() && items.size <= 3 && items.distinct() == items && items.all { it in listOf("quic", "https", "awg") }) { "Некорректный список протоколов" }
+        require(items.isNotEmpty() && items.size <= 4 && items.distinct() == items && items.all { it in listOf("quic", "https", "awg", "vless") }) { "Некорректный список протоколов" }
         return items
+    }
+    /** Managed profiles carry exactly one URI; arbitrary outbound JSON stays in manual import. */
+    fun vlessConfig(p: JSONObject): String? {
+        if (!p.has("vless_uri")) return null
+        val raw = p.getString("vless_uri")
+        require(raw.startsWith("vless://") && !raw.contains('\n') && !raw.contains('\r')) { "Нужен один VLESS URI" }
+        val canonical = mobile.Mobile.importVLESSConfig(raw)
+        mobile.Mobile.validateVLESSConfig(raw)
+        return canonical
     }
     fun validate(p: JSONObject): String {
         require(p.getInt("version") in listOf(1, 2)) { "Неподдерживаемая версия профиля" }
@@ -40,6 +49,8 @@ internal object ProfileImport {
         } else {
             ServiceTransfer.validateMetadata(p)
             val allowed = transports(p)
+            require(p.has("vless_uri") == ("vless" in allowed)) { "VLESS URI должен соответствовать списку протоколов" }
+            if ("vless" in allowed) vlessConfig(p)
             if (p.optString("transit_endpoint").isNotBlank()) endpoint("transit_endpoint")
             if ("quic" in allowed) endpoint("quic")
             if ("https" in allowed) endpoint("https")
@@ -47,7 +58,7 @@ internal object ProfileImport {
             require(p.optInt("mode",0) in listOf(0,3)) { "Неподдерживаемый режим" }
             if(p.optInt("mode")==3) VpnRoutes.parse(p.getString("routes"))
             VpnRoutes.parse(p.optString("dns","1.1.1.1")+"/32")
-            if (allowed.any { it != "awg" }) require(p.getString("certificate").length<16000 && p.getString("key").length<8000) { "Слишком большой сертификат" }
+            if (allowed.any { it in listOf("quic", "https") }) require(p.getString("certificate").length<16000 && p.getString("key").length<8000) { "Слишком большой сертификат" }
         }
         return kind
     }
@@ -112,14 +123,16 @@ internal object ProfileImport {
             val allowed = transports(p)
             VpnIdentity.importBundle(context,p)
             val awg = if ("awg" in allowed) AwgImport.metadata(p.getString("awg_config")) else null
+            val vless = if ("vless" in allowed) VlessImport.metadata(p.getString("vless_uri")) else null
             val selected = allowed.first()
-            val address = if (selected == "awg") awg!!.getString("endpoint") else p.getString(selected)
+            val address = when (selected) { "awg" -> awg!!.getString("endpoint"); "vless" -> vless!!.getString("endpoint"); else -> p.getString(selected) }
             check(VpnProfiles.preferences(context).edit()
                 .putBoolean("managed_profile",p.optString("config_url").isNotEmpty())
                 .putString("transit_endpoint",p.optString("transit_endpoint"))
                 .putString("transport",selected).putString("endpoint",address)
                 .putStringSet("available_transports",allowed.toSet())
                 .putString("awg_endpoint",awg?.optString("endpoint") ?: "")
+                .putString("vless_endpoint",vless?.optString("endpoint") ?: "")
                 .putString("quic_endpoint",p.optString("quic")).putString("https_endpoint",p.optString("https"))
                 .putString("hostname",p.getString("hostname")).putString("ca",p.optString("ca"))
                 .putString("server_name",p.optString("server_name"))

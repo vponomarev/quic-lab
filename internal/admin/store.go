@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"quiclab/internal/awgserver"
+	"quiclab/internal/vlessserver"
 	"sort"
 	"sync"
 	"time"
@@ -40,31 +42,39 @@ type User struct {
 	Key           string          `json:"key,omitempty"`
 }
 type diskState struct {
-	Enrollments map[string]Enrollment `json:"enrollments,omitempty"`
-	AWG         *awgserver.Identity   `json:"awg,omitempty"`
-	Version     int                   `json:"version"`
-	CA          string                `json:"ca"`
-	Key         string                `json:"ca_key"`
-	Users       map[string]User       `json:"users"`
-	Devices     map[string]Device     `json:"devices"`
+	VLESS         *vlessserver.Config   `json:"vless,omitempty"`
+	VLESSRevision uint64                `json:"vless_revision,omitempty"`
+	VLESSDigest   string                `json:"vless_digest,omitempty"`
+	Enrollments   map[string]Enrollment `json:"enrollments,omitempty"`
+	AWG           *awgserver.Identity   `json:"awg,omitempty"`
+	Version       int                   `json:"version"`
+	CA            string                `json:"ca"`
+	Key           string                `json:"ca_key"`
+	Users         map[string]User       `json:"users"`
+	Devices       map[string]Device     `json:"devices"`
 }
 type Store struct {
-	capture          *captureState
-	admission        *Admission
-	awgConfig        *awgserver.Config
-	awgPrevious      map[string]awgserver.PeerStatus
-	awgUpdated       time.Time
-	awgStarted       time.Time
-	sessionProtocols map[string]string
-	stats            map[string]*userTraffic
-	mu               sync.Mutex
-	path             string
-	state            diskState
-	ca               *x509.Certificate
-	key              *ecdsa.PrivateKey
-	active           map[string]map[string]func()
-	awgReload        func() error
-	syncDir          func(string) error
+	vlessSyncMu       sync.Mutex
+	vlessClient       *vlessserver.ControlClient
+	vlessApplied      *vlessserver.Snapshot
+	vlessError        bool
+	vlessWritePending bool
+	capture           *captureState
+	admission         *Admission
+	awgConfig         *awgserver.Config
+	awgPrevious       map[string]awgserver.PeerStatus
+	awgUpdated        time.Time
+	awgStarted        time.Time
+	sessionProtocols  map[string]string
+	stats             map[string]*userTraffic
+	mu                sync.Mutex
+	path              string
+	state             diskState
+	ca                *x509.Certificate
+	key               *ecdsa.PrivateKey
+	active            map[string]map[string]func()
+	awgReload         func() error
+	syncDir           func(string) error
 }
 
 func randomID() string {
@@ -110,7 +120,9 @@ func OpenStore(dir string) (*Store, error) {
 		if s.state.Version == 1 {
 			s.state.Devices = make(map[string]Device)
 			for _, u := range s.state.Users {
-				s.state.Devices[u.ID] = legacyDevice(u)
+				legacy := legacyDevice(u)
+
+				s.state.Devices[u.ID] = legacy
 			}
 			s.state.Version = 2
 			if e = s.save(); e != nil {
@@ -262,7 +274,12 @@ func (s *Store) CreateWithProtocols(name string, protocols []string) (User, erro
 	u.Certificate = encode("CERTIFICATE", der) + s.state.CA
 	u.Key = encode("PRIVATE KEY", kb)
 	s.state.Users[u.ID] = u
-	s.state.Devices[u.ID] = legacyDevice(u)
+	legacy := legacyDevice(u)
+	if e := s.provisionVLESS(&legacy, u); e != nil {
+		delete(s.state.Users, u.ID)
+		return User{}, e
+	}
+	s.state.Devices[u.ID] = legacy
 	if e = s.save(); e != nil {
 		if !statePublished(e) {
 			delete(s.state.Users, u.ID)
@@ -365,6 +382,7 @@ func (s *Store) Delete(id string) error {
 	reload := s.awgReload
 	s.mu.Unlock()
 	closeAll(closers)
+	saveErr = errors.Join(saveErr, s.SyncVLESS(context.Background()))
 	if needsAWG {
 		return errors.Join(saveErr, reloadAWG(reload))
 	}

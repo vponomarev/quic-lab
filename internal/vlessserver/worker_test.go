@@ -3,6 +3,7 @@ package vlessserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"quiclab/internal/vless"
@@ -26,7 +27,7 @@ func workerFixture(t *testing.T) (*Worker, *[]*fakeManagedServer) {
 	t.Helper()
 	dir := t.TempDir()
 	os.Chmod(dir, 0700)
-	w, e := OpenWorker(context.Background(), dir, func(context.Context, string) (time.Duration, error) { return time.Second, nil })
+	w, e := OpenWorker(context.Background(), dir, func(context.Context, string, string) (time.Duration, error) { return time.Second, nil })
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -88,7 +89,7 @@ func TestWorkerRevokeSurvivesApplyFailureAndRestart(t *testing.T) {
 		t.Fatal("bind failure acknowledged")
 	}
 	w.Close()
-	next, e := OpenWorker(ctx, w.dir, func(context.Context, string) (time.Duration, error) { return time.Second, nil })
+	next, e := OpenWorker(ctx, w.dir, func(context.Context, string, string) (time.Duration, error) { return time.Second, nil })
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -136,5 +137,32 @@ func TestWorkerInvalidConfigPreservesCurrent(t *testing.T) {
 	}
 	if len(*list) != 1 || (*list)[0].closed {
 		t.Fatal("invalid revision changed runtime")
+	}
+}
+func TestWorkerConfiguredDeviceLimit(t *testing.T) {
+	w, _ := workerFixture(t)
+	s := sampleSnapshot()
+	s.Devices = nil
+	for i := 0; i < 512; i++ {
+		s.Devices = append(s.Devices, Device{ID: fmt.Sprintf("device-%d", i), UUID: fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+1), Expires: time.Now().Add(time.Hour)})
+	}
+	if e := w.Apply(context.Background(), s); e != nil {
+		t.Fatal(e)
+	}
+	s.Revision++
+	s.Devices = append(s.Devices, Device{ID: "overflow", UUID: "00000fff-1111-4111-8111-111111111111", Expires: time.Now().Add(time.Hour)})
+	if e := w.Apply(context.Background(), s); e == nil {
+		t.Fatal("accepted more than 512 configured devices")
+	}
+}
+func TestWorkerInactiveRecordsDoNotConsumeAdmissionLimit(t *testing.T) {
+	w, _ := workerFixture(t)
+	s := sampleSnapshot()
+	s.Devices = nil
+	for i := 0; i < 40; i++ {
+		s.Devices = append(s.Devices, Device{ID: fmt.Sprintf("device-%d", i), UUID: fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+1), Expires: time.Now().Add(time.Hour), Disabled: true})
+	}
+	if e := w.Apply(context.Background(), s); e != nil {
+		t.Fatal("inactive records treated as active slots")
 	}
 }

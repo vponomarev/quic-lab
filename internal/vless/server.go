@@ -27,6 +27,9 @@ import (
 	"time"
 )
 
+// MaxServerClients bounds configured credentials, independently of shared active admission.
+const MaxServerClients = 512
+
 type ServerClient struct{ UUID, Flow string }
 type ServerOptions struct {
 	Listen, Security, Mode, DemuxEndpoint string
@@ -73,7 +76,7 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 	} else if o.DemuxEndpoint != "" {
 		return nil, fail
 	}
-	if len(o.Clients) > 30 {
+	if len(o.Clients) > MaxServerClients {
 		return nil, fail
 	}
 	clients := make([]*protocol.User, 0, len(o.Clients))

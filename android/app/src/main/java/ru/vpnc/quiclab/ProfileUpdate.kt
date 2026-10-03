@@ -18,7 +18,7 @@ internal class VpnProfileUpdateRuntime(val dnsExitId:String,val budget:mobile.Tr
 internal object ProfileUpdate {
  private val localFields=setOf("routes","mode","apps","global_apps","transport","max_availability",
   "bond_copy_budget","bond_cell_budget","bond_copy_kib","cell_mib","priority","enabled")
- private val privateFields=setOf("key","certificate","awg_config","update_token")
+ private val privateFields=setOf("key","certificate","awg_config","vless_uri","vless_config","update_token")
  fun fetch(context:Context,exitId:String):JSONObject=fetch(context,exitId,false)
  fun fetch(context:Context,exitId:String,allowOverBudget:Boolean):JSONObject {
   val file=File(context.cacheDir,"update-config-${UUID.randomUUID()}.json")
@@ -80,9 +80,11 @@ internal object ProfileUpdate {
   require(!LabVpnService.isActiveDnsExit(context,exitId) || server.optString("dns","1.1.1.1")==currentDNS) {
    "Для изменения DNS остановите VPN и повторите обновление"
   }
-  validateKeys(server)
+  val vless=validateKeys(server)
   val updated=JSONObject(existing.toString())
   for(k in listOf("certificate","key","awg_config")) {updated.remove(k);if(server.has(k)) updated.put(k,server.get(k))}
+  updated.remove("vless_config")
+  if(vless!=null) updated.put("vless_config",vless)
   updated.put("server_config",JSONObject(server.toString())).put("update_envelope",JSONObject(incoming.toString()))
   for(k in listOf("config_url","apk_url")) {if(server.has(k)) updated.put(k,server.getString(k))}
   val caps=incoming.getJSONObject("capabilities")
@@ -91,9 +93,10 @@ internal object ProfileUpdate {
   VpnIdentity.writeBundle(context,exitId,updated)
   LabVpnService.restartUpdatedExit(context,exitId)
  }
- private fun validateKeys(server:JSONObject) {
+ private fun validateKeys(server:JSONObject):String? {
+  val vless=ProfileImport.vlessConfig(server)
   if(server.has("awg_config")) mobile.Mobile.validateAWGConfig(server.getString("awg_config"))
-  if(!server.has("certificate")) {require(server.has("awg_config"));return}
+  if(!server.has("certificate")) {require(server.has("awg_config") || vless!=null);return vless}
   val cert=java.security.cert.CertificateFactory.getInstance("X.509")
    .generateCertificate(server.getString("certificate").byteInputStream()) as java.security.cert.X509Certificate
   cert.checkValidity();require(cert.extendedKeyUsage?.contains("1.3.6.1.5.5.7.3.2")==true) {"Нужен клиентский сертификат TLS"}
@@ -103,6 +106,7 @@ internal object ProfileUpdate {
   val signature=java.security.Signature.getInstance("SHA256withECDSA")
   signature.initSign(key);signature.update(challenge);val signed=signature.sign()
   signature.initVerify(cert.publicKey);signature.update(challenge);require(signature.verify(signed)) {"Ключ не соответствует сертификату"}
+  return vless
  }
  fun validateApkMetadata(expectedHash:String,actualHash:String,actualPackage:String,expectedPackage:String,actualSigners:Set<String>,expectedSigners:Set<String>) {
   require(expectedHash.matches(Regex("[a-fA-F0-9]{64}")) && expectedHash.equals(actualHash,true)) {"APK hash не совпадает"}

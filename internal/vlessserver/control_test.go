@@ -57,7 +57,7 @@ func TestControlRejectsForeignSocketFile(t *testing.T) {
 func TestAdmissionBrokerProtocol(t *testing.T) {
 	dir := t.TempDir()
 	os.Chmod(dir, 0700)
-	stop, e := ServeAdmission(context.Background(), dir, func(_ context.Context, id string) (time.Duration, error) {
+	stop, e := ServeAdmission(context.Background(), dir, func(_ context.Context, id, uuid string) (time.Duration, error) {
 		if id != "device-one" {
 			return 0, errApply
 		}
@@ -67,10 +67,10 @@ func TestAdmissionBrokerProtocol(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer stop()
-	if ttl, e := RequestAdmission(context.Background(), dir, "device-one"); e != nil || ttl != time.Second {
+	if ttl, e := RequestAdmission(context.Background(), dir, "device-one", "11111111-1111-4111-8111-111111111111"); e != nil || ttl != time.Second {
 		t.Fatal("valid device denied")
 	}
-	if _, e := RequestAdmission(context.Background(), dir, "device-two"); e == nil {
+	if _, e := RequestAdmission(context.Background(), dir, "device-two", "11111111-1111-4111-8111-111111111111"); e == nil {
 		t.Fatal("unknown device admitted")
 	}
 }

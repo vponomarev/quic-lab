@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-const DefaultDeviceLimit = 30
+const DefaultDeviceLimit = 15
+const MaxDeviceLimit = 512
 
 type Admission struct {
 	mu      sync.Mutex
@@ -20,6 +21,9 @@ type Admission struct {
 func NewAdmission(limit int) *Admission {
 	if limit <= 0 {
 		limit = DefaultDeviceLimit
+	}
+	if limit > MaxDeviceLimit {
+		limit = MaxDeviceLimit
 	}
 	return &Admission{limit: limit, devices: map[string]int{}, leases: map[string]time.Time{}, now: time.Now}
 }
@@ -98,4 +102,11 @@ func (a *Admission) Count() int {
 		}
 	}
 	return out
+}
+
+// ConfigureDeviceLimit is called once before transports/admission listeners start.
+func (s *Store) ConfigureDeviceLimit(limit int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.admission = NewAdmission(limit)
 }

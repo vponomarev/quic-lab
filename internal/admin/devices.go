@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -19,6 +20,8 @@ import (
 // Device owns credentials. Legacy means all clients sharing the original user
 // key are indistinguishable and are revoked together.
 type Device struct {
+	VLESSUUID           string          `json:"vless_uuid,omitempty"`
+	VLESSRevoked        bool            `json:"vless_revoked,omitempty"`
 	UpdateTokenHash     string          `json:"update_token_hash,omitempty"`
 	UpdateTokenOutbox   string          `json:"update_token_outbox,omitempty"`
 	UpdateOutboxExpires time.Time       `json:"update_outbox_expires,omitempty"`
@@ -52,6 +55,7 @@ func (s *Store) devicesLocked(userID string) []Device {
 		if d.UserID != userID {
 			continue
 		}
+		d.VLESSUUID = ""
 		d.UpdateTokenHash = ""
 		d.UpdateTokenOutbox = ""
 		d.ConfigDigest = ""
@@ -138,6 +142,9 @@ func (s *Store) createDeviceLocked(userID, name string, persist bool) (Device, e
 		return Device{}, e
 	}
 	d.AWG = candidate.AWG
+	if e = s.provisionVLESS(&d, u); e != nil {
+		return Device{}, e
+	}
 	leaf := &x509.Certificate{SerialNumber: sn, Subject: pkix.Name{CommonName: d.ID}, NotBefore: now.Add(-time.Minute), NotAfter: d.Expires, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, BasicConstraintsValid: true}
 	der, e := x509.CreateCertificate(rand.Reader, leaf, s.ca, &key.PublicKey, s.key)
 	if e != nil {
@@ -200,6 +207,9 @@ func (s *Store) DisableDevice(id string) error {
 	}
 	d := old
 	d.Disabled = true
+	if d.VLESSUUID != "" {
+		d.VLESSRevoked = true
+	}
 	s.state.Devices[id] = d
 	saveErr := s.save()
 	if e := saveErr; e != nil && !statePublished(e) {
@@ -212,6 +222,7 @@ func (s *Store) DisableDevice(id string) error {
 	needsAWG := d.AWG != nil
 	s.mu.Unlock()
 	closeAll(closers)
+	saveErr = errors.Join(saveErr, s.SyncVLESS(context.Background()))
 	if needsAWG {
 		return errors.Join(saveErr, reloadAWG(reload))
 	}

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"net/netip"
@@ -39,12 +40,12 @@ func (s *Store) ConfigureAWG(c *awgserver.Config) error {
 }
 func (s *Store) provisionAWG(u *User) error {
 	if u.Protocols != nil {
-		if len(u.Protocols) == 0 || len(u.Protocols) > 3 {
+		if len(u.Protocols) == 0 || len(u.Protocols) > 4 {
 			return errors.New("choose at least one protocol")
 		}
 		seen := map[string]bool{}
 		for _, p := range u.Protocols {
-			if seen[p] || (p != "quic" && p != "https" && p != "awg") {
+			if seen[p] || (p != "quic" && p != "https" && p != "awg" && p != "vless") {
 				return errors.New("invalid protocol selection")
 			}
 			seen[p] = true
@@ -110,6 +111,11 @@ func (s *Store) SetProtocols(id string, protocols []string, disabled bool) error
 			return e
 		}
 		d.AWG = candidate.AWG
+		if e := s.provisionVLESS(&d, u); e != nil {
+			rollback()
+			s.mu.Unlock()
+			return e
+		}
 		s.state.Devices[deviceID] = d
 		needsAWG = needsAWG || d.AWG != nil
 	}
@@ -139,6 +145,7 @@ func (s *Store) SetProtocols(id string, protocols []string, disabled bool) error
 	reload := s.awgReload
 	s.mu.Unlock()
 	closeAll(closers)
+	saveErr = errors.Join(saveErr, s.SyncVLESS(context.Background()))
 	if needsAWG {
 		return errors.Join(saveErr, reloadAWG(reload))
 	}

@@ -10,11 +10,13 @@ import (
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/protocol"
 	"quiclab/internal/transit"
+	"quiclab/internal/vlessserver"
 	"strconv"
 	"strings"
 )
 
 type Profile struct {
+	VLESSURI        string   `json:"vless_uri,omitempty"`
 	ServerName      string   `json:"server_name,omitempty"`
 	VerifyName      string   `json:"verify_name,omitempty"`
 	ControlURL      string   `json:"control_url,omitempty"`
@@ -39,6 +41,8 @@ type Profile struct {
 	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
+	VLESS        *vlessserver.Config   `json:"vless,omitempty"`
+	DeviceLimit  int                   `json:"device_limit,omitempty"`
 	Capabilities protocol.Capabilities `json:"capabilities,omitempty"`
 	Capture      *debugcapture.Config  `json:"capture,omitempty"`
 	EchoAWG      string                `json:"echo_awg,omitempty"`
@@ -66,6 +70,14 @@ func ReadConfig(file string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.DeviceLimit < 0 || c.DeviceLimit > MaxDeviceLimit {
+		return errors.New("device_limit must be 1..512 or omitted")
+	}
+	if c.VLESS != nil {
+		if e := c.VLESS.Validate(); e != nil {
+			return e
+		}
+	}
 	if c.Capture != nil {
 		if e := c.Capture.Validate(); e != nil {
 			return e

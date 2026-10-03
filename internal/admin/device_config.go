@@ -163,6 +163,9 @@ func (w *Web) deviceConfig(rw http.ResponseWriter, r *http.Request) {
 	if caps.ControlVersion == 0 {
 		caps = protocol.DefaultCapabilities()
 	}
+	if p.VLESSURI != "" {
+		caps.MinAndroidVersionCode = max(caps.MinAndroidVersionCode, 26)
+	}
 	if caps.APKURL != "" {
 		server["apk_url"] = caps.APKURL
 	}

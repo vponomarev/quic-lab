@@ -85,6 +85,12 @@ internal object VpnIdentity {
     }
     fun importProfile(context: Context, profile: JSONObject): String {
         requireManualImport(context)
+        val content = certificateBundle(profile)
+        save(context, content.toString().toByteArray(Charsets.UTF_8))
+        return content.getString("subject")
+    }
+
+    private fun certificateBundle(profile: JSONObject): JSONObject {
         val certificate = profile.getString("certificate")
         val privateKey = profile.getString("key")
         val cert = java.security.cert.CertificateFactory.getInstance("X.509")
@@ -98,19 +104,16 @@ internal object VpnIdentity {
         signer.initSign(key); signer.update(challenge); val signature = signer.sign()
         signer.initVerify(cert.publicKey); signer.update(challenge)
         require(signer.verify(signature)) { "Ключ не соответствует сертификату" }
-        val content = JSONObject().put("certificate",certificate).put("key",privateKey)
-            .put("subject",cert.subjectX500Principal.name).toString().toByteArray()
-        save(context,content)
-        return cert.subjectX500Principal.name
+        return JSONObject().put("certificate",certificate).put("key",privateKey)
+            .put("subject",cert.subjectX500Principal.name)
     }
 
     fun importBundle(context: Context, profile: JSONObject) {
         requireManualImport(context)
-        ServiceTransfer.validateMetadata(profile)
-        val content = if (profile.has("certificate")) {
-            importProfile(context, profile)
-            load(context)
-        } else JSONObject().put("subject", "AmneziaWG")
+        require(ProfileImport.validate(profile) == "vpn") { "Нужен профиль VPN" }
+        val content = if (profile.has("certificate")) certificateBundle(profile)
+            else JSONObject().put("subject", if (profile.has("vless_uri")) "VLESS" else "AmneziaWG")
+        ProfileImport.vlessConfig(profile)?.let { content.put("vless_config", it) }
         if (profile.has("awg_config")) {
             val raw = profile.getString("awg_config")
             mobile.Mobile.validateAWGConfig(raw)
@@ -123,7 +126,7 @@ internal object VpnIdentity {
  val server=JSONObject(profile.toString());for(k in listOf("update_token","device_id","mode","routes")) server.remove(k)
  content.put("server_config",server)
  }
- require(content.has("certificate") || content.has("awg_config")) { "В профиле нет ключей" }
+ require(content.has("certificate") || content.has("awg_config") || content.has("vless_config")) { "В профиле нет ключей" }
         save(context, content.toString().toByteArray())
     }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"path/filepath"
 	"quiclab/internal/admin"
 	"quiclab/internal/awgserver"
 	"quiclab/internal/bond"
@@ -26,6 +27,7 @@ import (
 	"quiclab/internal/protocol"
 	"quiclab/internal/servertls"
 	"quiclab/internal/transit"
+	"quiclab/internal/vlessserver"
 )
 
 func main() {
@@ -114,6 +116,19 @@ func main() {
 		if e != nil {
 			log.Error("admin_store", "error", e)
 			os.Exit(1)
+		}
+		managed.ConfigureDeviceLimit(cfg.DeviceLimit)
+		if cfg.VLESS != nil {
+			stopVLESSAdmission, err := managed.StartVLESSAdmission(ctx)
+			if err != nil {
+				log.Error("vless_admission_unavailable")
+				os.Exit(1)
+			}
+			defer stopVLESSAdmission()
+			if err := managed.ConfigureVLESS(cfg.VLESS, &vlessserver.ControlClient{Dir: filepath.Join(cfg.DataDir, "vless")}); err != nil {
+				log.Warn("vless_application_pending")
+			}
+			go managed.WatchVLESS(ctx)
 		}
 		if e = managed.ConfigureAWG(cfg.AWG); e != nil {
 			log.Error("awg_config", "error", e)

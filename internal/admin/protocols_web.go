@@ -131,6 +131,13 @@ func (w *Web) profile(u User) (Profile, error) {
 		}
 		p.AWGConfig = raw
 	}
+	if u.Allows("vless") {
+		raw, e := w.Store.VLESSProfile(u.ID)
+		if e != nil {
+			return Profile{}, e
+		}
+		p.VLESSURI = raw
+	}
 	return p, nil
 }
 func (w *Web) awgQR(rw http.ResponseWriter, r *http.Request) {

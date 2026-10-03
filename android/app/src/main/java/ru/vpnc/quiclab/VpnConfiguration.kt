@@ -41,12 +41,17 @@ internal object VpnConfiguration {
         values["https_endpoint"]=server.optString("https")
         val awg=if("awg" in allowed) AwgImport.metadata(server.getString("awg_config")) else null
         values["awg_endpoint"]=awg?.optString("endpoint") ?: ""
-        values["endpoint"]=when(selected) {"awg"->values["awg_endpoint"];"https"->values["https_endpoint"];else->values["quic_endpoint"]}
+        val vless=if("vless" in allowed) VlessImport.metadata(server.getString("vless_uri")) else null
+        values["vless_endpoint"]=vless?.optString("endpoint") ?: ""
+        values["endpoint"]=when(selected) {"awg"->values["awg_endpoint"];"vless"->values["vless_endpoint"];"https"->values["https_endpoint"];else->values["quic_endpoint"]}
+        // V2 VLESS is standalone. Keep the user's demux preference for a later QUIC/HTTPS selection.
+        if(selected=="vless") values["demux_enabled"]=false
         return object:android.content.SharedPreferences by local {
             override fun getAll():MutableMap<String,*> = (local.all.toMutableMap().apply {putAll(values)})
             override fun contains(key:String)=key in values || local.contains(key)
             override fun getString(key:String,defValue:String?):String?=if(key in values) values[key] as? String else local.getString(key,defValue)
             override fun getInt(key:String,defValue:Int)=if(key in values) values[key] as? Int ?: defValue else local.getInt(key,defValue)
+            override fun getBoolean(key:String,defValue:Boolean)=if(key in values) values[key] as? Boolean ?: defValue else local.getBoolean(key,defValue)
             @Suppress("UNCHECKED_CAST") override fun getStringSet(key:String,defValues:MutableSet<String>?):MutableSet<String>? =
                 if(key in values) (values[key] as? Set<String>)?.toMutableSet() else local.getStringSet(key,defValues)
         }

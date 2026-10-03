@@ -62,7 +62,7 @@ func TestWorkerProcessRevokeAdmissionLossAndSIGTERM(t *testing.T) {
 	s.Config.Fingerprint = ""
 	s.Config.TLSCertificateFile = filepath.Join(dir, "tls.crt")
 	s.Config.TLSKeyFile = filepath.Join(dir, "tls.key")
-	broker, e := ServeAdmission(context.Background(), brokerDir, func(context.Context, string) (time.Duration, error) { return 200 * time.Millisecond, nil })
+	broker, e := ServeAdmission(context.Background(), brokerDir, func(context.Context, string, string) (time.Duration, error) { return 200 * time.Millisecond, nil })
 	if e != nil {
 		t.Fatal(e)
 	}
