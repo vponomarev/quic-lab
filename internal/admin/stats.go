@@ -75,7 +75,7 @@ func (u *userTraffic) add(now time.Time, tx, rx int) {
 
 // snapshot is called with Store.mu held. Peers report the transport's current path.
 func (s *Store) snapshot(id string, now time.Time) UserStats {
-	out := UserStats{}
+	out := UserStats{Connections: s.vlessPeerStatsLocked(id, now)}
 	u := s.stats[id]
 	if u == nil {
 		return out

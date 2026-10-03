@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"quiclab/internal/vless"
 	"quiclab/internal/vlessserver"
 	"syscall"
 	"time"
@@ -36,7 +37,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	w, e := vlessserver.OpenWorker(ctx, *dir, func(ctx context.Context, id, uuid string) (time.Duration, error) {
-		return vlessserver.RequestAdmission(ctx, *admission, id, uuid)
+		return vlessserver.RequestAdmission(ctx, *admission, id, uuid, vless.AuthenticatedPeer(ctx))
 	})
 	if e != nil {
 		return e

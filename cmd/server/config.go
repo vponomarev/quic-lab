@@ -15,6 +15,7 @@ import (
 )
 
 type serverConfig struct {
+	TLSRoutes                  []sniRoute            `json:"tls_routes,omitempty"`
 	VPNSNINames                []string              `json:"vpn_sni_names,omitempty"`
 	Capabilities               protocol.Capabilities `json:"capabilities,omitempty"`
 	BondDisconnectGraceSeconds int                   `json:"bond_disconnect_grace_seconds,omitempty"`
@@ -125,6 +126,19 @@ func validateAddress(value string, backend bool) error {
 }
 
 func (c serverConfig) validate() error {
+	if len(c.TLSRoutes) > 0 {
+		if c.HTTPSListen == "" {
+			return errors.New("tls_routes requires https_listen")
+		}
+		if _, err := validateSNIRoutes(c.TLSHost, c.VPNSNINames, c.TLSRoutes); err != nil {
+			return err
+		}
+		for _, route := range c.TLSRoutes {
+			if routeTargetsListener(route.Target, c.HTTPSListen) {
+				return errors.New("TLS route targets public listener")
+			}
+		}
+	}
 	if len(c.VPNSNINames) > 0 && (c.TLSHost == "" || strings.ContainsAny(c.TLSHost, "/ :*\x5c\r\n\t")) {
 		return errors.New("vpn_sni_names requires real tls_host")
 	}

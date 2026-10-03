@@ -189,6 +189,7 @@ func (s *Store) StartVLESSAdmission(ctx context.Context) (func(), error) {
 		if e := s.admission.Renew(id, ttl); e != nil {
 			return 0, e
 		}
+		s.observeVLESSPeerLocked(d.UserID, id, vlessserver.AdmissionSource(ctx), now, ttl)
 		return ttl, nil
 	})
 	if e != nil {

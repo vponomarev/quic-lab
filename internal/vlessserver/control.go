@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"sync"
 	"time"
@@ -24,8 +25,9 @@ type controlResponse struct {
 	Applied  bool   `json:"applied"`
 }
 type admissionRequest struct {
-	UUID string `json:"uuid"`
-	ID   string `json:"id"`
+	Source string `json:"source,omitempty"`
+	UUID   string `json:"uuid"`
+	ID     string `json:"id"`
 }
 type admissionResponse struct {
 	Milliseconds int64 `json:"milliseconds"`
@@ -97,12 +99,36 @@ func (c *ControlClient) Apply(ctx context.Context, snapshot Snapshot) error {
 	}
 	return nil
 }
-func RequestAdmission(ctx context.Context, dir, id, uuid string) (time.Duration, error) {
+
+type admissionSourceKey struct{}
+
+func AdmissionSource(ctx context.Context) string {
+	source, _ := ctx.Value(admissionSourceKey{}).(string)
+	return source
+}
+func validAdmissionSource(source string) bool {
+	if source == "" {
+		return true
+	}
+	addr, err := netip.ParseAddrPort(source)
+	return err == nil && addr.Port() != 0 && addr.Addr().Zone() == "" && !addr.Addr().IsUnspecified() && !addr.Addr().IsMulticast()
+}
+func RequestAdmission(ctx context.Context, dir, id, uuid string, sources ...string) (time.Duration, error) {
+	source := ""
+	if len(sources) > 1 {
+		return 0, errApply
+	}
+	if len(sources) == 1 {
+		source = sources[0]
+	}
+	if !validAdmissionSource(source) {
+		return 0, errApply
+	}
 	if id == "" || len(id) > 128 || len(uuid) != 36 {
 		return 0, errApply
 	}
 	var reply admissionResponse
-	if request(ctx, dir, "vless-admission.sock", 100*time.Millisecond, admissionRequest{ID: id, UUID: uuid}, &reply) != nil || reply.Milliseconds <= 0 || reply.Milliseconds > 2000 {
+	if request(ctx, dir, "vless-admission.sock", 100*time.Millisecond, admissionRequest{ID: id, UUID: uuid, Source: source}, &reply) != nil || reply.Milliseconds <= 0 || reply.Milliseconds > 2000 {
 		return 0, errApply
 	}
 	return time.Duration(reply.Milliseconds) * time.Millisecond, nil
@@ -178,8 +204,8 @@ func ServeAdmission(ctx context.Context, dir string, renew AdmissionFunc) (func(
 	return serve(ctx, dir, "vless-admission.sock", 100*time.Millisecond, func(ctx context.Context, c net.Conn) {
 		var req admissionRequest
 		reply := admissionResponse{}
-		if readMessage(c, &req) == nil && req.ID != "" && len(req.ID) <= 128 && len(req.UUID) == 36 {
-			if ttl, e := renew(ctx, req.ID, req.UUID); e == nil && ttl > 0 && ttl <= 2*time.Second {
+		if readMessage(c, &req) == nil && req.ID != "" && len(req.ID) <= 128 && len(req.UUID) == 36 && validAdmissionSource(req.Source) {
+			if ttl, e := renew(context.WithValue(ctx, admissionSourceKey{}, req.Source), req.ID, req.UUID); e == nil && ttl > 0 && ttl <= 2*time.Second {
 				reply.Milliseconds = ttl.Milliseconds()
 			}
 		}

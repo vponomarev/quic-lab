@@ -54,6 +54,7 @@ type diskState struct {
 	Devices       map[string]Device     `json:"devices"`
 }
 type Store struct {
+	vlessPeers        map[vlessPeerKey]vlessPeer
 	vlessSyncMu       sync.Mutex
 	vlessClient       *vlessserver.ControlClient
 	vlessApplied      *vlessserver.Snapshot

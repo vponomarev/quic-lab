@@ -15,20 +15,21 @@ import (
 )
 
 type Config struct {
-	Listen             string   `json:"listen"`
-	Endpoint           string   `json:"endpoint"`
-	Security           string   `json:"security"`
-	ServerName         string   `json:"server_name"`
-	Fingerprint        string   `json:"fingerprint,omitempty"`
-	Flow               string   `json:"flow,omitempty"`
-	TLSCertificateFile string   `json:"tls_certificate_file,omitempty"`
-	TLSKeyFile         string   `json:"tls_key_file,omitempty"`
-	RealityTarget      string   `json:"reality_target,omitempty"`
-	RealityServerNames []string `json:"reality_server_names,omitempty"`
-	RealityPrivateKey  string   `json:"reality_private_key,omitempty"`
-	RealityShortIDs    []string `json:"reality_short_ids,omitempty"`
-	Mode               string   `json:"mode"`
-	DemuxEndpoint      string   `json:"demux_endpoint,omitempty"`
+	AcceptProxyProtocol bool     `json:"accept_proxy_protocol,omitempty"`
+	Listen              string   `json:"listen"`
+	Endpoint            string   `json:"endpoint"`
+	Security            string   `json:"security"`
+	ServerName          string   `json:"server_name"`
+	Fingerprint         string   `json:"fingerprint,omitempty"`
+	Flow                string   `json:"flow,omitempty"`
+	TLSCertificateFile  string   `json:"tls_certificate_file,omitempty"`
+	TLSKeyFile          string   `json:"tls_key_file,omitempty"`
+	RealityTarget       string   `json:"reality_target,omitempty"`
+	RealityServerNames  []string `json:"reality_server_names,omitempty"`
+	RealityPrivateKey   string   `json:"reality_private_key,omitempty"`
+	RealityShortIDs     []string `json:"reality_short_ids,omitempty"`
+	Mode                string   `json:"mode"`
+	DemuxEndpoint       string   `json:"demux_endpoint,omitempty"`
 }
 
 var errConfig = errors.New("invalid VLESS server configuration")
@@ -76,6 +77,12 @@ func (c Config) publicKey() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(k.PublicKey().Bytes()), nil
 }
 func (c Config) Validate() error {
+	if c.AcceptProxyProtocol {
+		addr, err := netip.ParseAddrPort(c.Listen)
+		if err != nil || !addr.Addr().IsLoopback() {
+			return errConfig
+		}
+	}
 	if !endpoint(c.Listen, true) || !endpoint(c.Endpoint, false) {
 		return errConfig
 	}

@@ -127,3 +127,14 @@ func (d *deviceDispatcher) Close() error {
 	})
 	return d.err
 }
+
+// AuthenticatedPeer returns diagnostic source metadata inside an admission
+// callback. It is not an authorization identity; VLESS authentication and the
+// device UUID remain authoritative. The original TLS/REALITY conn is untouched.
+func AuthenticatedPeer(ctx context.Context) string {
+	in := session.InboundFromContext(ctx)
+	if in == nil || in.Name != "vless" || in.User == nil || in.Conn == nil || in.Conn.RemoteAddr() == nil {
+		return ""
+	}
+	return in.Conn.RemoteAddr().String()
+}

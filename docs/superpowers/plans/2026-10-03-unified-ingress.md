@@ -1,0 +1,14 @@
+# Unified ingress implementation plan
+
+Spec: ../specs/2026-10-03-unified-ingress-design.md
+Base: 14f666e. Worktree: phase1-vpn; branch: codex/phase1-vpn.
+
+- [x] 1. Add typed SNI routes, strict validation and PROXY v2 forwarding. First add failing routing/source tests; implement; run cmd/server tests on Linux. Contract: server JSON tls_routes array with server_names (exact strings), target (host:port), proxy_protocol (boolean). PROXY routes require numeric loopback targets. Existing tls_fallback remains supported.
+- [x] 2. Add opt-in accept_proxy_protocol to managed VLESS config and Xray socket settings. Reject non-loopback listeners. Verify TLS and REALITY authentication/revocation and original source metadata; expose bounded source information in admin diagnostics.
+- [x] 3. Share QUIC listener by ALPN while requiring mTLS for VPN/bond. Introduce a small Accept interface for echo/gateway, test auth separation and shutdown, integrate startup and retain split ports.
+- [ ] 4. Update installer: unified fresh defaults, explicit upgrade migration, private VLESS backend and SNI route generation, configurable split ports, ACME SAN issuance/renewal and manual certificates. Extend installer tests before implementation; retain recovery/admission safety.
+- [ ] 5. Update operator docs, exported profiles, version and release notes. Verify all Go tests/vet, focused races, installer suite, Android build/lint and available phone integration. Review whole change and resolve important findings.
+- [ ] 6. Build final assets, deploy with backups and rollback instructions, issue certificate for both names, verify all live protocols, publish APK, install test phone, push Git/tag and publish GitHub release. Verify public downloads and record final status.
+
+Tests and test binaries execute on root@192.168.5.214, never on Windows. Production SSH uses llm-user with sudo. No credentials in logs, documentation or commits. This plan does not add subscriptions or VLESS transit multiplexing; those retain their roadmap positions.
+

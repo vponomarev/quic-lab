@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	proxyproto "github.com/pires/go-proxyproto"
 	"io"
 	"net"
 	"strings"
@@ -64,8 +65,25 @@ type sniRouter struct {
 }
 
 func newSNIRouter(parent context.Context, ln net.Listener, host, fallback string, allowedNames ...string) (net.Listener, error) {
-	if err := validateAddress(fallback, true); err != nil {
+	return newSNIRouterWithRoutes(parent, ln, host, fallback, nil, allowedNames...)
+}
+func newSNIRouterWithRoutes(parent context.Context, ln net.Listener, host, fallback string, routes []sniRoute, allowedNames ...string) (net.Listener, error) {
+	targets, err := validateSNIRoutes(host, allowedNames, routes)
+	if err != nil {
 		return nil, err
+	}
+	if fallback != "" {
+		if err := validateAddress(fallback, true); err != nil {
+			return nil, err
+		}
+	}
+	for _, route := range targets {
+		if routeTargetsListener(route.Target, ln.Addr().String()) {
+			return nil, errors.New("TLS route targets its listener")
+		}
+	}
+	if fallback != "" && routeTargetsListener(fallback, ln.Addr().String()) {
+		return nil, errors.New("TLS fallback targets its listener")
 	}
 	if host == "" || strings.ContainsAny(host, "/ :") {
 		return nil, errors.New("invalid TLS host")
@@ -80,7 +98,7 @@ func newSNIRouter(parent context.Context, ln net.Listener, host, fallback string
 	ctx, cancel := context.WithCancel(parent)
 	r := &sniRouter{Listener: ln, ctx: ctx, cancel: cancel, local: make(chan net.Conn)}
 	go func() { <-ctx.Done(); r.Close() }()
-	go r.route(names, fallback)
+	go r.route(names, fallback, targets)
 	return r, nil
 }
 func (r *sniRouter) Close() error {
@@ -96,7 +114,7 @@ func (r *sniRouter) Accept() (net.Conn, error) {
 		return nil, net.ErrClosed
 	}
 }
-func (r *sniRouter) route(names map[string]bool, fallback string) {
+func (r *sniRouter) route(names map[string]bool, fallback string, targets map[string]sniRoute) {
 	slots := make(chan struct{}, 1024)
 	for {
 		c, e := r.Listener.Accept()
@@ -131,13 +149,31 @@ func (r *sniRouter) route(names map[string]bool, fallback string) {
 			}
 			defer stop()
 			defer c.Close()
-			backend, e := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(r.ctx, "tcp", fallback)
+			target := sniRoute{Target: fallback}
+			if explicit, ok := targets[name]; ok {
+				target = explicit
+			}
+			if target.Target == "" {
+				return
+			}
+			backend, e := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(r.ctx, "tcp", target.Target)
 			if e != nil {
 				return
 			}
 			defer backend.Close()
 			stopBackend := context.AfterFunc(r.ctx, func() { backend.Close() })
 			defer stopBackend()
+			if target.ProxyProtocol {
+				_ = backend.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				header := proxyproto.HeaderProxyFromAddrs(2, c.RemoteAddr(), c.LocalAddr())
+				if header.Command != proxyproto.PROXY {
+					return
+				}
+				if _, err := header.WriteTo(backend); err != nil {
+					return
+				}
+				_ = backend.SetWriteDeadline(time.Time{})
+			}
 			done := make(chan struct{})
 			go func() {
 				io.Copy(backend, replay)

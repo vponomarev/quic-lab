@@ -32,6 +32,7 @@ const MaxServerClients = 512
 
 type ServerClient struct{ UUID, Flow string }
 type ServerOptions struct {
+	AcceptProxyProtocol                   bool
 	Listen, Security, Mode, DemuxEndpoint string
 	Certificate, Key                      []byte
 	RealityTarget                         string
@@ -63,6 +64,9 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 	fail := errors.New("invalid VLESS server options")
 	addr, e := netip.ParseAddrPort(o.Listen)
 	if e != nil || !addr.Addr().Is4() || addr.Addr().IsMulticast() || addr.Port() == 0 {
+		return nil, fail
+	}
+	if o.AcceptProxyProtocol && !addr.Addr().IsLoopback() {
 		return nil, fail
 	}
 	if o.Mode != "standalone" && o.Mode != "demux-only" {
@@ -136,7 +140,7 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 	sc := &serverContext{gate: gate, mode: o.Mode, target: o.DemuxEndpoint}
 	ctx = context.WithValue(ctx, serverContextKey{}, sc)
 	cfg := &core.Config{App: []*serial.TypedMessage{serial.ToTypedMessage(&ServerDispatcherConfig{}), serial.ToTypedMessage(&proxyman.OutboundConfig{}), serial.ToTypedMessage(&proxyman.InboundConfig{})},
-		Inbound:  []*core.InboundHandlerConfig{{Tag: "vless-managed", ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{Listen: xnet.NewIPOrDomain(xnet.IPAddress(addr.Addr().AsSlice())), PortList: &xnet.PortList{Range: []*xnet.PortRange{{From: uint32(addr.Port()), To: uint32(addr.Port())}}}, StreamSettings: &internet.StreamConfig{ProtocolName: "tcp", SecurityType: sec.Type, SecuritySettings: []*serial.TypedMessage{sec}}}), ProxySettings: serial.ToTypedMessage(&ServerInboundConfig{VlessConfig: inner})}},
+		Inbound:  []*core.InboundHandlerConfig{{Tag: "vless-managed", ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{Listen: xnet.NewIPOrDomain(xnet.IPAddress(addr.Addr().AsSlice())), PortList: &xnet.PortList{Range: []*xnet.PortRange{{From: uint32(addr.Port()), To: uint32(addr.Port())}}}, StreamSettings: &internet.StreamConfig{ProtocolName: "tcp", SocketSettings: &internet.SocketConfig{AcceptProxyProtocol: o.AcceptProxyProtocol}, SecurityType: sec.Type, SecuritySettings: []*serial.TypedMessage{sec}}}), ProxySettings: serial.ToTypedMessage(&ServerInboundConfig{VlessConfig: inner})}},
 		Outbound: []*core.OutboundHandlerConfig{{ProxySettings: serial.ToTypedMessage(&freedom.Config{})}}}
 	eng, e := newEngine(ctx, cfg, &serverSockets{net.Dialer{Timeout: 5 * time.Second}})
 	if e != nil {

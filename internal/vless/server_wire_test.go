@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	realitylib "github.com/xtls/reality"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/mux"
 	xnet "github.com/xtls/xray-core/common/net"
@@ -121,7 +122,10 @@ func TestServerWrongIdentity(t *testing.T) {
 		t.Fatal("wrong UUID accepted")
 	}
 }
-func TestServerRealityVision(t *testing.T) {
+func TestServerRealityVision(t *testing.T)      { testServerRealityVision(t, false) }
+func TestServerRealityVisionProxy(t *testing.T) { testServerRealityVision(t, true) }
+func testServerRealityVision(t *testing.T, proxy bool) {
+
 	cert, key := fixtureCertificate(t)
 	pair, e := tls.X509KeyPair(cert, key)
 	if e != nil {
@@ -151,17 +155,33 @@ func TestServerRealityVision(t *testing.T) {
 	}
 	addr := port.Addr().String()
 	port.Close()
-	s, e := StartServer(context.Background(), ServerOptions{Listen: addr, Mode: "standalone", Security: "reality", RealityTarget: camouflage.Addr().String(), RealityServerNames: []string{"fixture.invalid"}, RealityPrivateKey: k.Bytes(), RealityShortIDs: []string{"aabb"}, Clients: []ServerClient{{UUID: serverID, Flow: "xtls-rprx-vision"}}})
+	s, e := StartServer(context.Background(), ServerOptions{AcceptProxyProtocol: proxy, Listen: addr, Mode: "standalone", Security: "reality", RealityTarget: camouflage.Addr().String(), RealityServerNames: []string{"fixture.invalid"}, RealityPrivateKey: k.Bytes(), RealityShortIDs: []string{"aabb"}, Clients: []ServerClient{{UUID: serverID, Flow: "xtls-rprx-vision"}}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	a, e := New(context.Background(), Config{Endpoint: addr, UUID: serverID, Security: "reality", ServerName: "fixture.invalid", Fingerprint: "chrome", Flow: "xtls-rprx-vision", RealityPublicKey: base64.RawURLEncoding.EncodeToString(k.PublicKey().Bytes()), ShortID: "aabb"}, &net.Dialer{})
+	// REALITY probes the camouflage server asynchronously at startup. Its
+	// upstream cold-cache path sleeps five seconds; wait for fixture readiness
+	// instead of racing that probe with the two-second payload deadline.
+	deadline := time.Now().Add(time.Second)
+	for {
+		value, ok := realitylib.GlobalPostHandshakeRecordsLens.Load(camouflage.Addr().String() + " fixture.invalid 2")
+		if _, ready := value.([]int); ok && ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("REALITY fixture probe not ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	dialer := &proxyOptionalDialer{proxy: proxy}
+	a, e := New(context.Background(), Config{Endpoint: addr, UUID: serverID, Security: "reality", ServerName: "fixture.invalid", Fingerprint: "chrome", Flow: "xtls-rprx-vision", RealityPublicKey: base64.RawURLEncoding.EncodeToString(k.PublicKey().Bytes()), ShortID: "aabb"}, dialer)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer a.Close()
 	for _, network := range []string{"tcp4", "udp4"} {
+
 		target := tcpEcho(t)
 		if network == "udp4" {
 			target = udpEcho(t)

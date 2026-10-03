@@ -35,7 +35,7 @@ func (c Config) serverOptions(ctx context.Context, clients []vless.ServerClient,
 	if e := c.Validate(); e != nil {
 		return o, e
 	}
-	o = vless.ServerOptions{Listen: c.Listen, Security: c.Security, Mode: c.Mode, Clients: append([]vless.ServerClient(nil), clients...), RealityTarget: c.RealityTarget, RealityServerNames: append([]string(nil), c.RealityServerNames...), RealityShortIDs: append([]string(nil), c.RealityShortIDs...)}
+	o = vless.ServerOptions{AcceptProxyProtocol: c.AcceptProxyProtocol, Listen: c.Listen, Security: c.Security, Mode: c.Mode, Clients: append([]vless.ServerClient(nil), clients...), RealityTarget: c.RealityTarget, RealityServerNames: append([]string(nil), c.RealityServerNames...), RealityShortIDs: append([]string(nil), c.RealityShortIDs...)}
 	var e error
 	if c.Security == "tls" {
 		o.Certificate, e = readMaterial(c.TLSCertificateFile, false)

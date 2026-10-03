@@ -14,8 +14,13 @@ import (
 	"quiclab/internal/protocol"
 )
 
+// Listener accepts completed QUIC handshakes from a socket or protocol dispatcher.
+type Listener interface {
+	Accept(context.Context) (*quic.Conn, error)
+}
+
 // Serve keeps one identity per accepted connection, never per client-provided session.
-func Serve(ctx context.Context, ln *quic.Listener, log *slog.Logger, probes ...func(context.Context) error) error {
+func Serve(ctx context.Context, ln Listener, log *slog.Logger, probes ...func(context.Context) error) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for {

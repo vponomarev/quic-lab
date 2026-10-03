@@ -87,7 +87,13 @@ func TLS(cert tls.Certificate, caFile string) (*tls.Config, error) {
 	return &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13, NextProtos: []string{ALPN, BondALPN}}, nil
 }
 func identity() string { var b [16]byte; rand.Read(b[:]); return hex.EncodeToString(b[:]) }
-func (s *Server) ServeQUIC(ctx context.Context, ln *quic.Listener) error {
+
+// QUICListener accepts completed handshakes from a socket or protocol dispatcher.
+type QUICListener interface {
+	Accept(context.Context) (*quic.Conn, error)
+}
+
+func (s *Server) ServeQUIC(ctx context.Context, ln QUICListener) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for {
