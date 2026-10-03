@@ -5,6 +5,14 @@ import java.net.URI
 import javax.net.ssl.HttpsURLConnection
 
 internal object ProfileImport {
+    fun reviewAddress(p:JSONObject):String = transports(p).joinToString("\n") { protocol ->
+        when(protocol) {
+            "awg" -> "AmneziaWG: ${AwgImport.metadata(p.getString("awg_config")).getString("endpoint")}"
+            "vless" -> "VLESS: ${VlessImport.metadata(p.getString("vless_uri")).getString("endpoint")}"
+            else -> "${protocol.uppercase()}: ${p.getString(protocol)}"
+        }
+    }
+
     const val REQUEST = 4020
     fun transports(p: JSONObject): List<String> {
         if (p.optInt("version") == 1) return listOf("quic", "https")

@@ -13,6 +13,17 @@ import org.junit.Assume.assumeFalse
 import org.junit.Test
 
 class ManagedVlessProfileTest {
+    @Test fun qrReviewShowsMixedEndpointsWithoutVlessCredentials() {
+        val p=profile(true).put("quic","vpn.example:443").put("https","vpn.example:443")
+        p.put("transports",JSONArray().put("quic").put("https").put("vless").put("awg"))
+        val review=ProfileImport.reviewAddress(p)
+        assertTrue(review.contains("QUIC: vpn.example:443"))
+        assertTrue(review.contains("HTTPS: vpn.example:443"))
+        assertTrue(review.contains("VLESS: vless.example:443"))
+        assertTrue(review.contains("AmneziaWG: awg.example:52000"))
+        assertFalse(review.contains(uuid))
+        assertFalse(review.contains("vless://"))
+    }
     private val device = "22222222-2222-4222-8222-222222222222"
     private val uuid = "11111111-1111-4111-8111-111111111111"
     private fun uri(host: String = "vless.example", id: String = uuid) =

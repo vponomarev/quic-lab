@@ -39,7 +39,7 @@ class ProfileScanActivity : Activity() {
                 AlertDialog.Builder(this).setTitle(if(debug) "Получить настройки отладки?" else "Получить VPN-профиль?")
                     .setMessage(if(debug) "Сервер: ${uri.host}\nБудут получены настройки учебного захвата. Экспорт TLS secrets включается отдельным подтверждением." else "Сервер: ${uri.host}\nБудут получены настройки, клиентский сертификат и закрытый ключ.")
                     .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Получить"){_,_->
-                        Thread{try{val p=ProfileImport.fetch(this,raw);runOnUiThread{if(!isFinishing)review(p)}}catch(e:Exception){runOnUiThread{fail(e)}}}.start()
+                        Thread{try{val p=ProfileImport.fetch(this,raw);runOnUiThread{if(!isFinishing)try{review(p)}catch(_:Exception){fail(IllegalArgumentException("Проверьте формат и параметры профиля"))}}}catch(e:Exception){runOnUiThread{fail(e)}}}.start()
                     }.show()
             }
         }catch(_:Exception){fail(IllegalArgumentException("Проверьте формат и параметры профиля"))}
@@ -51,7 +51,7 @@ class ProfileScanActivity : Activity() {
                 .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Включить"){_,_->try { ProfileImport.save(this,p);setResult(RESULT_OK,Intent().putExtra("kind","capture"));finish() }catch(e:Exception){fail(e)}}.show()
             return
         }
-        val address=if(kind=="echo")p.getString("endpoint") else ProfileImport.transports(p).joinToString("\n") { protocol -> if(protocol == "awg") "AmneziaWG: ${AwgImport.metadata(p.getString("awg_config")).getString("endpoint")}" else "${protocol.uppercase()}: ${p.getString(protocol)}" }
+        val address=if(kind=="echo")p.getString("endpoint") else ProfileImport.reviewAddress(p)
         AlertDialog.Builder(this).setTitle(if(kind=="echo")"Настройки echo" else "VPN: ${p.optString("name")}")
             .setMessage("$address\nTLS: ${p.getString("hostname")}\n${if(kind=="vpn") "Добавить новый VPN-профиль?" else "Заменить настройки echo?"}")
             .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Сохранить"){_,_->try{
