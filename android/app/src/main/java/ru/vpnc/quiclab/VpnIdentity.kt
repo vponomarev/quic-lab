@@ -48,6 +48,12 @@ internal object VpnIdentity {
     }
     fun import(context: Context, bytes: ByteArray, password: CharArray): String {
         requireManualImport(context)
+        val bundle = parsePkcs12(bytes, password)
+        writeBundle(context, VpnProfiles.current(context).id, bundle)
+        return bundle.getString("subject")
+    }
+
+    fun parsePkcs12(bytes: ByteArray, password: CharArray): JSONObject = try {
         val store = KeyStore.getInstance("PKCS12").apply { load(bytes.inputStream(), password) }
         val aliases = store.aliases().toList().filter { store.isKeyEntry(it) }
         require(aliases.size == 1) { "PKCS#12 должен содержать ровно один ключ" }
@@ -62,10 +68,8 @@ internal object VpnIdentity {
                 .put("subject", cert.subjectX500Principal.name)
                 .toString()
                 .toByteArray()
-        save(context, content)
-        password.fill('\u0000')
-        return cert.subjectX500Principal.name
-    }
+        JSONObject(String(content, Charsets.UTF_8)).also { content.fill(0) }
+        } finally { password.fill('\u0000') }
 
     private fun save(context: Context, content: ByteArray) {
         try { writeBundle(context, VpnProfiles.current(context).id, JSONObject(String(content))) }

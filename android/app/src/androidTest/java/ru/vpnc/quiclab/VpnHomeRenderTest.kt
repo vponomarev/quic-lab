@@ -16,21 +16,8 @@ class VpnHomeRenderTest {
     @Test fun vpnHomeHasExitDashboardAndSeparateEchoWithoutStartingVpn() {
         val inst = InstrumentationRegistry.getInstrumentation()
         val wasActive = LabVpnService.active
-        inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity --ez standalone_echo true").use {
+        inst.uiAutomation.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ru.vpnc.quiclab/.MainActivity").use {
             ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
-        }
-        var main: MainActivity? = null
-        val mainDeadline = System.currentTimeMillis() + 10_000
-        while (main == null && System.currentTimeMillis() < mainDeadline) {
-            inst.runOnMainSync {
-                main = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
-            }
-            if (main == null) Thread.sleep(100)
-        }
-        assertNotNull("Foreground MainActivity must resume before internal navigation", main)
-        inst.runOnMainSync {
-            val foreground = requireNotNull(main)
-            foreground.startActivity(Intent(foreground, VpnActivity::class.java))
         }
         var activity: VpnActivity? = null
         val deadline = System.currentTimeMillis() + 10_000
@@ -45,8 +32,9 @@ class VpnHomeRenderTest {
             (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
         inst.runOnMainSync {
             val all = views(requireNotNull(activity).window.decorView)
-            assertTrue("VPN home exposes per-exit dashboard", all.filterIsInstance<TextView>().any { it.text == "АКТИВНЫЕ ВЫХОДЫ" })
-            assertTrue("Echo remains a separate screen", all.filterIsInstance<Button>().any { it.text == "Echo · диагностика сетей ›" })
+            assertTrue("VPN home exposes per-exit dashboard", all.filterIsInstance<TextView>().any { it.text == "Подключения и трафик" })
+            all.filterIsInstance<Button>().first { it.text == "Диагностика" }.performClick()
+            assertTrue("Echo remains a separate screen", views(requireNotNull(activity).window.decorView).filterIsInstance<Button>().any { it.text == "Echo · диагностика сетей" })
             assertEquals("Opening home must not start VPN", wasActive, LabVpnService.active)
         }
     }

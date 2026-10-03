@@ -60,7 +60,7 @@ class AppSelectionActivity : Activity() {
         )
         panel.addView(
             TextView(this).apply {
-                text = "Выбор применяется в режимах Only selected apps и Exclude selected apps."
+                text = "Выбор применяется в режимах «Выбранные приложения» и «Кроме выбранных приложений»."
                 setPadding(0, dp(8), 0, dp(8))
             }
         )

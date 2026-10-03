@@ -166,3 +166,15 @@ Verification: full Go suite and vet PASS; final full mobile race PASS 53.942s, t
 Formal completion is 17/20. B4 physical Wi-Fi/LTE failover and E2 standalone live ComparisonTest still require a test endpoint reachable over cellular; the private LAN fixture is insufficient. E5 load/fault/8-hour soak and battery acceptance remain unrun. No new release, push or production deployment is included in this checkpoint.
 
 Post-integration Android regressions also PASS: ProfileUpdateTest, ServiceTransferTest, DnsRoutingTest and TrafficBudgetTest, 19 tests in 9.060s. Together with the 25 new/configuration tests, 44 non-live Android checks passed, plus the final live two-exit scenario.
+
+
+## 2026-10-04 — Android UI, pre.8
+
+- Главный экран без кнопки «Назад», одна кнопка подключения/отключения.
+- Четыре раздела: VPN, подключения, диагностика, настройки. Выбор профиля и раздела не пересоздаёт Activity.
+- Просмотр/редактирование профиля не меняет выбранный профиль. Отдельные группы параметров и черновики; сохранение оставляет экран открытым, выход с изменениями предлагает сохранить/отменить. Поля восстанавливаются после пересоздания экрана.
+- Общие DNS, LTE-бюджет, резервные сети и RTT вынесены из профиля. Изменение активных параметров с перезапуском требует явного согласия и сообщает о разрыве всех выходов.
+- Импорт QR, текста VLESS/JSON, файла и PKCS12 сохранён. PKCS12 подготовляется в памяти и записывается в редактируемый профиль только при сохранении.
+- Под заголовком «Подключения и трафик» компактный радио-блок: WiFi — SSID/BSSID/сигнал; GSM — технология/MCC/MNC/сигнал/возраст, затем CI/TAC/PCI/частота. GSM другого цвета, сигнал жирный. Доступен без запуска VPN.
+- На Redmi Note 9 Pro: 21 UI/model instrumentation test прошёл, включая редактор после recreation, сохранение без закрытия, выбор приложений, радио-формат и метрики. Живая проверка текущего AWG: подключение кнопкой, Wi-Fi, RTT/jitter и exit IPv4 получены; отключение кнопкой.
+- Изменение UI не меняет транспортный код; длительные испытания переключений Wi-Fi/LTE в рамках этого изменения не повторялись. Публичная публикация APK — отдельный шаг после просмотра интерфейса.

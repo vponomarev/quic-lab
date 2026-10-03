@@ -42,7 +42,8 @@ internal object VpnDashboardText {
             append("За запуск: ↓ ${bytes(exit.rxTotalBytes)}    ↑ ${bytes(exit.txTotalBytes)}\n")
             append("Активный путь: $active\nRTT: ${latency(path, now, interval)}\n")
             append("Jitter max · 15 с: ${if (interval == 0L) "выключен" else jitter?.let { "${number(it)} мс" } ?: "Недоступно"}\n")
-            append("Exit IPv4: ${exit.exitIpv4 ?: "Недоступен"}\nРадио: $radio")
+            append("Exit IPv4: ${exit.exitIpv4 ?: "Недоступен"}")
+            if (radio.isNotBlank()) append("\nРадио: $radio")
             if (alternatives.isNotBlank()) append("\nАльтернативы:\n$alternatives")
         }
     }

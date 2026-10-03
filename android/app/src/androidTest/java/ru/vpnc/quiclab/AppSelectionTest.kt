@@ -13,7 +13,7 @@ import org.junit.Test
 class AppSelectionTest {
  @Test fun searchAndKeepSelectionAcrossFilters() {
   val inst=InstrumentationRegistry.getInstrumentation()
-  inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity").use { ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
+  inst.uiAutomation.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ru.vpnc.quiclab/.MainActivity").use { ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
   fun views(v:View):List<View> = listOf(v)+(if(v is ViewGroup)(0 until v.childCount).flatMap{views(v.getChildAt(it))}else emptyList())
   fun button(title:String) {
    inst.runOnMainSync {
@@ -22,8 +22,10 @@ class AppSelectionTest {
    }
   }
   Thread.sleep(2500)
-  button("VPN / Exit node")
+  button("Подключения")
+  button("Настроить")
   Thread.sleep(1000)
+  button("Маршруты")
   button("Выбрать приложения")
   var picker:AppSelectionActivity?=null
   val deadline=System.currentTimeMillis()+15000
@@ -56,7 +58,7 @@ class AppSelectionTest {
   button("Отмена")
   Thread.sleep(500)
   inst.runOnMainSync {
-   assertTrue(ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).any{it is VpnActivity})
+   assertTrue(ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).any{it is ProfileEditorActivity})
   }
  }
 }

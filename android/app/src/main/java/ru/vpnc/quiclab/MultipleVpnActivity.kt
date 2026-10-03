@@ -53,7 +53,7 @@ class MultipleVpnActivity : Activity() {
         text("Несколько VPN одновременно").textSize = 24f
         root.addView(
             Switch(this).apply {
-                text = "Режим multiple"
+                text = "Использовать несколько подключений"
                 isChecked = VpnProfiles.multiple(this@MultipleVpnActivity)
                 isEnabled = !LabVpnService.active
                 setOnCheckedChangeListener { _, v ->
@@ -114,8 +114,7 @@ class MultipleVpnActivity : Activity() {
             control("↑") { VpnProfiles.move(this, p.id, -1) }
             control("↓") { VpnProfiles.move(this, p.id, 1) }
             control("Настроить") {
-                VpnProfiles.select(this, p.id)
-                startActivity(Intent(this, VpnActivity::class.java))
+                startActivity(Intent(this, ProfileEditorActivity::class.java).putExtra("profile_id",p.id))
             }
             if (LabVpnService.active && LabVpnService.multipleMode && p.id in enabled)
                 button("Остановить / возобновить ${p.name}") {
@@ -147,7 +146,7 @@ class MultipleVpnActivity : Activity() {
         text(
             "DNS: ${VpnProfiles.list(this).firstOrNull{it.id==dnsId}?.name ?: "не выбран"}. DNS TCP/UDP на порт 53 направляется через этот профиль. Split DNS и Fake IP отложены; Private DNS/DoH не распределяются по приложениям через обычный DNS."
         )
-        button(if (LabVpnService.active) "Остановить VPN" else "Запустить multiple") {
+        button(if (LabVpnService.active) "Остановить VPN" else "Подключить выбранные выходы") {
             if (LabVpnService.active) {
                 startService(Intent(this, LabVpnService::class.java).setAction("stop"))
                 return@button

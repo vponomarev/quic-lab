@@ -43,7 +43,7 @@ internal object VpnProfiles {
         write(c,profiles+p,p.id);return p
     }
     @Synchronized fun select(c:Context,id:String){editable();require(list(c).any{it.id==id});check(meta(c).edit().putString("current",id).commit())}
-    @Synchronized fun rename(c:Context,title:String){editable();val id=current(c).id;val n=name(title);write(c,list(c).map{if(it.id==id)it.copy(name=n)else it},id)}
+    @Synchronized fun rename(c:Context,title:String,id:String=current(c).id){editable();require(list(c).any{it.id==id});val n=name(title);write(c,list(c).map{if(it.id==id)it.copy(name=n)else it},current(c).id)}
     @Synchronized fun delete(c:Context,id:String=current(c).id){
         editable();val profiles=list(c);require(profiles.size>1){"Нельзя удалить последний профиль"}
         val rest=profiles.filter{it.id!=id};require(rest.size<profiles.size)
