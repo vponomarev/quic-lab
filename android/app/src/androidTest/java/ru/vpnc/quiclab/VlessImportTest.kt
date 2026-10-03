@@ -1,6 +1,9 @@
 package ru.vpnc.quiclab
 
 import androidx.test.platform.app.InstrumentationRegistry
+import com.google.zxing.*
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeWriter
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Assume.assumeFalse
@@ -18,7 +21,13 @@ class VlessImportTest {
             val info = VlessImport.metadata(fixture)
             assertEquals("outer.invalid:443", info.getString("endpoint"))
             assertFalse(info.toString().contains("11111111"))
-            VlessImport.save(c, fixture)
+            // Exercise the scanner's actual QR codec before the same import/save path.
+            val size = 512
+            val bits = QRCodeWriter().encode(fixture, BarcodeFormat.QR_CODE, size, size)
+            val pixels = IntArray(size * size) { i -> if (bits[i % size, i / size]) 0xff000000.toInt() else 0xffffffff.toInt() }
+            val decoded = MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(size, size, pixels)))).text
+            assertEquals(fixture, decoded)
+            VlessImport.save(c, decoded)
             val profile = VpnProfiles.current(c)
             assertFalse(before.contains(profile.id))
             val prefs = VpnProfiles.preferences(c)
