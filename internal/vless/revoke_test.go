@@ -97,3 +97,16 @@ func TestServerRejectsUnauthenticatedDispatcher(t *testing.T) {
 		t.Fatal("anonymous admission")
 	}
 }
+func TestServerRevokeCanonicalIdentity(t *testing.T) {
+	base := &blockingDispatcher{entered: make(chan string, 1)}
+	g := newDeviceDispatcher(base)
+	defer g.Close()
+	g.Revoke("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")
+	c, p := net.Pipe()
+	defer p.Close()
+	ctx, cancel := context.WithTimeout(authenticatedContext(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", c), 100*time.Millisecond)
+	defer cancel()
+	if e := g.DispatchLink(ctx, xnet.TCPDestination(xnet.LocalHostIP, 80), nil); !errors.Is(e, ErrDeviceRevoked) {
+		t.Fatal("non-canonical revoke bypassed")
+	}
+}

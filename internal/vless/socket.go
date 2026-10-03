@@ -78,8 +78,8 @@ func (r *socketRouter) unregister(i *core.Instance) {
 }
 func (r *socketRouter) Dial(ctx context.Context, source xnet.Address, dest xnet.Destination, opts *internet.SocketConfig) (net.Conn, error) {
 	// Advanced Xray DNS/dialerProxy strategies use package globals and are not
-	// permitted at this boundary. UDP underlay is a separate, unimplemented contract.
-	if dest.Network != xnet.Network_TCP || opts != nil || source != nil {
+	// permitted at this boundary. Only the server-owned factory may open UDP sockets.
+	if (dest.Network != xnet.Network_TCP && dest.Network != xnet.Network_UDP) || opts != nil || source != nil {
 		return nil, ErrUnsupportedSocket
 	}
 	i := core.FromContext(ctx)
@@ -89,6 +89,13 @@ func (r *socketRouter) Dial(ctx context.Context, source xnet.Address, dest xnet.
 	if o == nil {
 		return nil, ErrUnknownEngine
 	}
+	network := "tcp4"
+	if dest.Network == xnet.Network_UDP {
+		if _, ok := o.factory.(*serverSockets); !ok {
+			return nil, ErrUnsupportedSocket
+		}
+		network = "udp4"
+	}
 	dialCtx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(o.ctx, cancel)
 	defer cancel()
@@ -96,7 +103,7 @@ func (r *socketRouter) Dial(ctx context.Context, source xnet.Address, dest xnet.
 	if err := o.ctx.Err(); err != nil {
 		return nil, err
 	}
-	conn, err := o.factory.DialContext(dialCtx, "tcp4", dest.NetAddr())
+	conn, err := o.factory.DialContext(dialCtx, network, dest.NetAddr())
 	if err != nil {
 		if conn != nil {
 			conn.Close()

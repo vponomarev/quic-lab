@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 
 	xnet "github.com/xtls/xray-core/common/net"
@@ -44,6 +45,9 @@ func (d *deviceDispatcher) Dispatch(context.Context, xnet.Destination) (*transpo
 	return nil, ErrDeviceRevoked
 }
 func (d *deviceDispatcher) DispatchLink(ctx context.Context, dest xnet.Destination, link *transport.Link) error {
+	return d.dispatchVia(ctx, dest, link, d.base)
+}
+func (d *deviceDispatcher) dispatchVia(ctx context.Context, dest xnet.Destination, link *transport.Link, next routing.Dispatcher) error {
 	in := session.InboundFromContext(ctx)
 	if in == nil || in.Name != "vless" || in.User == nil || in.Conn == nil {
 		return ErrDeviceRevoked
@@ -77,9 +81,13 @@ func (d *deviceDispatcher) DispatchLink(ctx context.Context, dest xnet.Destinati
 		}
 		d.mu.Unlock()
 	}()
-	return d.base.DispatchLink(call, dest, link)
+	return next.DispatchLink(call, dest, link)
 }
 func (d *deviceDispatcher) Revoke(id string) {
+	if !validUUID(id) {
+		return
+	}
+	id = strings.ToLower(id)
 	d.mu.Lock()
 	d.revoked[id] = true
 	list := make([]*deviceFlow, 0, len(d.flows[id]))
@@ -105,7 +113,9 @@ func (d *deviceDispatcher) Close() error {
 		for _, f := range list {
 			f.close()
 		}
-		d.err = d.base.Close()
+		if d.base != nil {
+			d.err = d.base.Close()
+		}
 	})
 	return d.err
 }

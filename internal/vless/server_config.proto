@@ -1,0 +1,6 @@
+syntax = "proto3";
+package quiclab.vless;
+option go_package = "quiclab/internal/vless";
+// Private typed extension points, never decoded from imported client JSON.
+message ServerDispatcherConfig {}
+message ServerInboundConfig { bytes vless_config = 1; }
