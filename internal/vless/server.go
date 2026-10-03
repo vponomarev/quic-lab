@@ -11,6 +11,7 @@ import (
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/proxy/freedom"
 	account "github.com/xtls/xray-core/proxy/vless"
 	inbound "github.com/xtls/xray-core/proxy/vless/inbound"
@@ -35,17 +36,23 @@ type ServerOptions struct {
 	RealityPrivateKey                     []byte
 	RealityShortIDs                       []string
 	Clients                               []ServerClient
+	Admission                             func(context.Context, string) (time.Duration, error)
 }
 type serverContextKey struct{}
 type admittedContextKey struct{}
 type serverContext struct {
 	gate         *deviceDispatcher
 	mode, target string
+	users        proxy.UserManager
 }
 type Server struct {
-	engine *engine
-	gate   *deviceDispatcher
-	once   sync.Once
+	engine  *engine
+	gate    *deviceDispatcher
+	once    sync.Once
+	mu      sync.Mutex
+	users   proxy.UserManager
+	clients map[string]string
+	err     error
 }
 type serverSockets struct{ net.Dialer }
 
@@ -66,7 +73,7 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 	} else if o.DemuxEndpoint != "" {
 		return nil, fail
 	}
-	if len(o.Clients) == 0 || len(o.Clients) > 30 {
+	if len(o.Clients) > 30 {
 		return nil, fail
 	}
 	clients := make([]*protocol.User, 0, len(o.Clients))
@@ -122,6 +129,7 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 		return nil, fail
 	}
 	gate := newDeviceDispatcher(nil)
+	gate.admission = o.Admission
 	sc := &serverContext{gate: gate, mode: o.Mode, target: o.DemuxEndpoint}
 	ctx = context.WithValue(ctx, serverContextKey{}, sc)
 	cfg := &core.Config{App: []*serial.TypedMessage{serial.ToTypedMessage(&ServerDispatcherConfig{}), serial.ToTypedMessage(&proxyman.OutboundConfig{}), serial.ToTypedMessage(&proxyman.InboundConfig{})},
@@ -132,11 +140,18 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 		gate.Close()
 		return nil, e
 	}
-	return &Server{engine: eng, gate: gate}, nil
+	known := map[string]string{}
+	for _, c := range o.Clients {
+		known[strings.ToLower(c.UUID)] = c.Flow
+	}
+	return &Server{engine: eng, gate: gate, users: sc.users, clients: known}, nil
 }
-func (s *Server) Revoke(id string) { s.gate.Revoke(id) }
+func (s *Server) Revoke(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.revokeLocked(strings.ToLower(id))
+}
 func (s *Server) Close() error {
-	var err error
-	s.once.Do(func() { s.gate.Close(); err = s.engine.Close() })
-	return err
+	s.once.Do(func() { s.mu.Lock(); defer s.mu.Unlock(); s.gate.Close(); s.err = s.engine.Close() })
+	return s.err
 }

@@ -41,6 +41,7 @@ func init() {
 		if e != nil {
 			return nil, e
 		}
+		sc.users = p.(proxy.UserManager)
 		return &serverInbound{Inbound: p.(proxy.Inbound), server: sc}, nil
 	}))
 }

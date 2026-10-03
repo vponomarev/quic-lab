@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
@@ -27,13 +28,14 @@ func (f *deviceFlow) close() { f.once.Do(func() { f.cancel(); f.conn.Close() }) 
 // deviceDispatcher is a server-only gate after VLESS authentication. It closes
 // the original TLS/REALITY connection; wrapping that connection would break Vision.
 type deviceDispatcher struct {
-	base    routing.Dispatcher
-	mu      sync.Mutex
-	closed  bool
-	revoked map[string]bool
-	flows   map[string]map[*deviceFlow]struct{}
-	once    sync.Once
-	err     error
+	base      routing.Dispatcher
+	admission func(context.Context, string) (time.Duration, error)
+	mu        sync.Mutex
+	closed    bool
+	revoked   map[string]bool
+	flows     map[string]map[*deviceFlow]struct{}
+	once      sync.Once
+	err       error
 }
 
 func newDeviceDispatcher(base routing.Dispatcher) *deviceDispatcher {
@@ -61,6 +63,12 @@ func (d *deviceDispatcher) dispatchVia(ctx context.Context, dest xnet.Destinatio
 	id := uid.String()
 	call, cancel := context.WithCancel(ctx)
 	f := &deviceFlow{conn: in.Conn, cancel: cancel}
+	if d.admission != nil {
+		if err := d.startLease(call, id, f); err != nil {
+			f.close()
+			return ErrDeviceRevoked
+		}
+	}
 	d.mu.Lock()
 	if d.closed || d.revoked[id] || ctx.Err() != nil {
 		d.mu.Unlock()
