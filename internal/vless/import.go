@@ -71,12 +71,16 @@ func parseImportURI(raw string) (ImportedProfile, error) {
 			return p, invalid
 		}
 		switch key {
-		case "encryption", "security", "type", "sni", "fp", "flow", "pbk", "sid":
+		case "encryption", "security", "type", "sni", "fp", "flow", "pbk", "sid", "spx":
 		default:
 			return p, invalid
 		}
 	}
 	if (q.Has("type") && q.Get("type") != "tcp" && q.Get("type") != "raw") || (q.Has("encryption") && q.Get("encryption") != "none") {
+		return p, invalid
+	}
+	// The adapter already uses SpiderX="/". Accept this explicit default only; do not silently discard a different crawl path.
+	if q.Has("spx") && (q.Get("security") != "reality" || q.Get("spx") != "/") {
 		return p, invalid
 	}
 	// Explicit REALITY query fields under TLS are rejected even when empty.

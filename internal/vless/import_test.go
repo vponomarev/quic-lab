@@ -68,3 +68,25 @@ func TestParseImportRAWAlias(t *testing.T) {
 		}
 	}
 }
+
+func TestParseImportRealityDefaultSpiderX(t *testing.T) {
+	base := "vless://11111111-1111-4111-8111-111111111111@outer.invalid:443?security=reality&type=tcp&sni=server.invalid&fp=chrome&pbk=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&sid=aabb"
+	want, err := ParseImport(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"/", "%2F"} {
+		got, err := ParseImport(base + "&spx=" + value)
+		if err != nil {
+			t.Fatalf("default spiderX rejected: %v", err)
+		}
+		if got.Config.Endpoint != want.Config.Endpoint || got.Config.RealityPublicKey != want.Config.RealityPublicKey || got.Config.Flow != want.Config.Flow {
+			t.Fatal("profile changed")
+		}
+	}
+	for _, raw := range []string{base + "&spx=", base + "&spx=/custom", base + "&spx=/&spx=/", strings.Replace(importURI, "#Fixture", "&spx=/#Fixture", 1)} {
+		if _, err := ParseImport(raw); err == nil {
+			t.Fatal("unsupported spiderX accepted")
+		}
+	}
+}

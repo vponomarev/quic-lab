@@ -10,7 +10,7 @@ import org.junit.Assume.assumeFalse
 import org.junit.Test
 
 class VlessImportTest {
-    private val fixture = "vless://11111111-1111-4111-8111-111111111111@outer.invalid:443?security=tls&sni=server.invalid#Fixture"
+    private val fixture = "vless://11111111-1111-4111-8111-111111111111@outer.invalid:443?security=reality&type=tcp&sni=server.invalid&fp=chrome&pbk=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&sid=aabb&spx=%2F#Fixture"
 
     @Test fun importStoresCredentialsOnlyInEncryptedBundle() {
         val c = InstrumentationRegistry.getInstrumentation().targetContext
