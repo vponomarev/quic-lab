@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"quiclab/internal/protocol"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -118,5 +119,97 @@ func TestConfiguredSNIRoutesRejectPublicLoops(t *testing.T) {
 	c.HTTPSListen = ""
 	if c.validate() == nil {
 		t.Fatal("accepted routes without listener")
+	}
+}
+
+func TestSNIRouterRejectsUnroutedAndSpoofedProxy(t *testing.T) {
+	for _, spoof := range []bool{false, true} {
+		raw, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		front, err := newSNIRouterWithRoutes(context.Background(), raw, "local.test", "", nil)
+		if err != nil {
+			raw.Close()
+			t.Fatal(err)
+		}
+		c, err := net.Dial("tcp", raw.Addr().String())
+		if err != nil {
+			front.Close()
+			t.Fatal(err)
+		}
+		c.SetDeadline(time.Now().Add(time.Second))
+		if spoof {
+			h := proxyproto.HeaderProxyFromAddrs(2, c.LocalAddr(), c.RemoteAddr())
+			if _, err = h.WriteTo(c); err != nil {
+				c.Close()
+				front.Close()
+				t.Fatal(err)
+			}
+		}
+		tc := tls.Client(c, &tls.Config{ServerName: "unrouted.test", InsecureSkipVerify: true})
+		err = tc.Handshake()
+		c.Close()
+		front.Close()
+		if err == nil {
+			t.Fatalf("unrouted/spoofed connection admitted (spoof=%v)", spoof)
+		}
+		if n, ok := err.(net.Error); ok && n.Timeout() {
+			t.Fatalf("reject relied on client timeout (spoof=%v)", spoof)
+		}
+	}
+}
+
+func TestSNIRoutesPreserveRemoteHTTPSBackends(t *testing.T) {
+	for _, target := range []string{"192.0.2.77:443", "backend.example:443"} {
+		if routeTargetsListener(target, "0.0.0.0:443") {
+			t.Fatalf("remote backend mistaken for local loop: %s", target)
+		}
+	}
+	if !routeTargetsListener("127.0.0.1:443", "0.0.0.0:443") {
+		t.Fatal("local loop allowed")
+	}
+}
+
+type countedListener struct {
+	net.Listener
+	accepted atomic.Int64
+}
+
+func (l *countedListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil {
+		l.accepted.Add(1)
+	}
+	return c, err
+}
+func TestSNIFallbackRejectsResolvedSelfLoop(t *testing.T) {
+	raw, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := &countedListener{Listener: raw}
+	_, port, _ := net.SplitHostPort(raw.Addr().String())
+	front, err := newSNIRouter(context.Background(), counted, "local.test", net.JoinHostPort("localhost", port))
+	if err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	defer front.Close()
+	c, err := net.Dial("tcp4", raw.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(time.Second))
+	err = tls.Client(c, &tls.Config{ServerName: "other.test", InsecureSkipVerify: true}).Handshake()
+	if err == nil {
+		t.Fatal("recursive fallback admitted")
+	}
+	if n, ok := err.(net.Error); ok && n.Timeout() {
+		t.Fatal("self-loop not rejected promptly")
+	}
+	if counted.accepted.Load() > 2 {
+		t.Fatal("ClientHello was replayed recursively")
 	}
 }

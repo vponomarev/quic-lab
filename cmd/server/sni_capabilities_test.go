@@ -45,7 +45,7 @@ func TestSharedPublicSNIOnlyRestrictsTunnel(t *testing.T) {
 		want       int
 	}{{"real.test", "/tunnel", 204}, {"cover.test", "/tunnel", 204}, {"foreign.test", "/tunnel", 403}, {"foreign.test", "/api/v1/capabilities", 200}} {
 		request := httptest.NewRequest("GET", test.path, nil)
-		request.TLS = &tls.ConnectionState{ServerName: test.name, VerifiedChains: [][]*x509.Certificate{{{}}}}
+		request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, ServerName: test.name, VerifiedChains: [][]*x509.Certificate{{{}}}}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != test.want {

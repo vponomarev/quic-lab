@@ -161,6 +161,10 @@ func (r *sniRouter) route(names map[string]bool, fallback string, targets map[st
 				return
 			}
 			defer backend.Close()
+			// Check the resolved peer before replay, including DNS aliases/rebinding.
+			if routeTargetsListener(backend.RemoteAddr().String(), r.Listener.Addr().String()) {
+				return
+			}
 			stopBackend := context.AfterFunc(r.ctx, func() { backend.Close() })
 			defer stopBackend()
 			if target.ProxyProtocol {

@@ -156,8 +156,8 @@ func (c serverConfig) validate() error {
 	if _, err := publicTLSMinimum(c.PublicTLSMin); err != nil {
 		return err
 	}
-	if c.PublicTLSMin != "" && c.PublicTLSMin != "1.3" && (c.HTTPSListen == "" || c.HTTPSListen == c.GatewayHTTPS) {
-		return errors.New("public_tls_min below 1.3 requires a separate public HTTPS listener (not the mTLS VPN listener)")
+	if c.PublicTLSMin != "" && c.PublicTLSMin != "1.3" && c.HTTPSListen == "" {
+		return errors.New("public_tls_min below 1.3 requires a public HTTPS listener")
 	}
 	for name, addr := range map[string]string{"listen": c.Listen, "https_listen": c.HTTPSListen, "web_listen": c.WebListen, "gateway_quic": c.GatewayQUIC, "gateway_https": c.GatewayHTTPS, "demo_listen": c.DemoListen} {
 		if addr != "" {
@@ -183,7 +183,7 @@ func (c serverConfig) validate() error {
 		if err := validateAddress(c.TLSFallback, true); err != nil {
 			return fmt.Errorf("tls_fallback: %w", err)
 		}
-		if c.TLSFallback == c.HTTPSListen {
+		if routeTargetsListener(c.TLSFallback, c.HTTPSListen) {
 			return errors.New("tls_fallback points to the public listener")
 		}
 	}

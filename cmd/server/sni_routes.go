@@ -78,10 +78,23 @@ func routeTargetsListener(target, listen string) bool {
 		return true
 	}
 	tip, lip := net.ParseIP(th), net.ParseIP(lh)
-	// A wildcard listener also owns loopback addresses. Reject even a DNS target
-	// on this port: resolving it once would not prevent a later DNS routing loop.
+	// Wildcard sockets own local interfaces, not every remote host on this port.
 	if lh == "" || lip != nil && lip.IsUnspecified() {
-		return true
+		if strings.EqualFold(th, "localhost") || tip != nil && tip.IsLoopback() {
+			return true
+		}
+		if tip != nil {
+			addresses, err := net.InterfaceAddrs()
+			if err == nil {
+				for _, address := range addresses {
+					ip, _, parseErr := net.ParseCIDR(address.String())
+					if parseErr == nil && ip.Equal(tip) {
+						return true
+					}
+				}
+			}
+		}
+		return false
 	}
 	return tip != nil && lip != nil && tip.Equal(lip)
 }

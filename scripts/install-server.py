@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import socket
 import stat
 import shutil
 import subprocess
@@ -120,6 +121,7 @@ def certificate_path(value):
 
 
 DEFAULT_PORTS = dict(echo_quic_port=4433, vpn_quic_port=4434, mtls_port=8443)
+UNIFIED_PORTS = dict(echo_quic_port=443, vpn_quic_port=443, mtls_port=443)
 
 
 def port_number(value):
@@ -138,27 +140,58 @@ def resolve_frontend(state=None, cfg=None):
     elif cfg:
         mode = "nginx"  # legacy installations used nginx
     else:
-        mode = "nginx" if shutil.which("nginx") else "direct"
+        mode = "direct"  # fresh installations use the Go-owned unified frontend
     if mode not in ("nginx", "direct"):
         raise ValueError("frontend must be nginx or direct in install.json")
     return mode
 
 
+def resolve_ingress(args, state=None, cfg=None, frontend="direct"):
+    requested = getattr(args, "ingress", None)
+    migrate = getattr(args, "migrate_unified", False)
+    if migrate:
+        if requested == "split" or getattr(args, "frontend", None) == "nginx":
+            raise ValueError("--migrate-unified requires unified ingress with the direct frontend")
+        return "unified"
+    existing = bool(state or cfg)
+    saved = (state or {}).get("ingress")
+    if saved not in (None, "unified", "split"):
+        raise ValueError("Invalid saved ingress mode")
+    if saved is None and existing:
+        p = (state or {}).get("ports", {})
+        if cfg:
+            p = {name: port_number(cfg[section][field].rsplit(":", 1)[1]) for name, section, field in
+                 (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https"))} | p
+        saved = "unified" if frontend == "direct" and p == UNIFIED_PORTS else "split"
+    if existing and requested == "unified" and saved != "unified":
+        raise ValueError("Existing split installation requires --migrate-unified")
+    # Explicit custom ports retain the traditional split configuration.
+    custom_split = any(getattr(args, name, None) is not None and getattr(args, name) != 443 for name in DEFAULT_PORTS)
+    mode = requested or saved or ("split" if frontend == "nginx" or custom_split else "unified")
+    if mode == "unified" and frontend != "direct":
+        raise ValueError("Unified ingress requires --frontend direct; existing nginx is never moved automatically")
+    return mode
+
+
 def resolve_ports(args, state=None, cfg=None, frontend="nginx"):
-    ports = dict(DEFAULT_PORTS)
-    if frontend == "direct":
+    mode = resolve_ingress(args, state, cfg, frontend)
+    change_layout = getattr(args, "change_layout", False) or getattr(args, "migrate_unified", False) or (getattr(args, "ingress", None) == "split" and (state or {}).get("ingress") == "unified")
+    ports = dict(UNIFIED_PORTS if mode == "unified" else DEFAULT_PORTS)
+    if frontend == "direct" and mode == "split" and getattr(args, "ingress", None) != "split":
         ports["mtls_port"] = 443
-    # Older installations did not record ports in install.json.
-    if cfg:
+    if cfg and not change_layout:
         for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
             ports[name] = port_number(cfg[section][field].rsplit(":", 1)[1])
-    ports.update((state or {}).get("ports", {}))
+    if not change_layout:
+        ports.update((state or {}).get("ports", {}))
     for name in DEFAULT_PORTS:
         if getattr(args, name, None) is not None:
             ports[name] = getattr(args, name)
         ports[name] = port_number(ports[name])
-    if ports["echo_quic_port"] == ports["vpn_quic_port"]:
-        raise ValueError("Echo QUIC and VPN QUIC must use different UDP ports")
+    if mode == "unified" and ports != UNIFIED_PORTS:
+        raise ValueError("Unified ingress uses TCP/443 and UDP/443; choose --ingress split for custom ports")
+    if mode == "split" and ports["echo_quic_port"] == ports["vpn_quic_port"]:
+        raise ValueError("Split ingress requires different echo and VPN UDP ports")
     if ports["mtls_port"] in ((80, 443, 8081, 8082, 8083) if frontend == "nginx" else (80, 8081, 8082, 8083)):
         raise ValueError("mTLS TCP port conflicts with nginx or a loopback backend (80, 443, 8081-8083)")
     return ports
@@ -173,12 +206,13 @@ def admin_config(domain, ports=None):
                 vpn=dict(quic=f"{domain}:{ports['vpn_quic_port']}", https=f"{domain}:{ports['mtls_port']}", hostname=domain, dns="1.1.1.1", mode=0))
 
 
-def nginx_config(domain, cert=None, key=None):
+def nginx_config(domain, cert=None, key=None, names=None):
+    challenge_names = ' '.join(names or [domain])
     http = f"""{MARKER}
 server {{
     listen 80;
     listen [::]:80;
-    server_name {domain};
+    server_name {challenge_names};
     root {WEBROOT};
     location /.well-known/acme-challenge/ {{ try_files $uri =404; }}
     location / {{ return 301 https://{domain}$request_uri; }}
@@ -190,7 +224,7 @@ server {{
 server {{
     listen 443 ssl;
     listen [::]:443 ssl;
-    server_name {domain};
+    server_name {challenge_names};
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_certificate {cert};
     ssl_certificate_key {key};
@@ -251,15 +285,18 @@ def server_config(ports, frontend, domain, allow="0.0.0.0/0", previous=None, arg
                       https_listen="0.0.0.0:443" if frontend == "direct" else "",
                       tls_host=domain if frontend == "direct" else "", tls_fallback="")
     for option, field in (("echo_quic_port", "listen"), ("vpn_quic_port", "gateway_quic"), ("mtls_port", "gateway_https")):
-        if args and getattr(args, option, None) is not None:
+        if args and (getattr(args, option, None) is not None or getattr(args, "migrate_unified", False) or getattr(args, "change_layout", False)):
             host = result.get(field, "0.0.0.0:0").rsplit(":", 1)[0]
             result[field] = f"{host}:{ports[option]}"
-    if args and getattr(args, "frontend", None) is not None:
+    if args and (getattr(args, "frontend", None) is not None or getattr(args, "migrate_unified", False)):
         result["https_listen"] = "0.0.0.0:443" if frontend == "direct" else ""
         if frontend == "direct": result["tls_host"] = domain
     if args and getattr(args, "tls_fallback", None) is not None:
         result["tls_fallback"] = args.tls_fallback
         result["tls_host"] = domain
+    if args and getattr(args, "migrate_unified", False):
+        result["gateway_quic"] = result["listen"]
+        result["gateway_https"] = result["https_listen"]
     return result
 
 
@@ -307,11 +344,13 @@ WantedBy=multi-user.target
 
 
 def vless_settings(args, cfg, data, ports, frontend, domain):
-    """Durable UI configuration takes precedence over first-enable provisioning."""
+    """UI settings remain authoritative except for explicit offline migration."""
     initial = (cfg or {}).get("vless")
     saved = {}
     identity = data / "identities.json"
-    if identity.is_file() and not identity.is_symlink():
+    if identity.is_symlink():
+        raise RuntimeError("Refusing symlinked identity state")
+    if identity.is_file():
         try:
             saved = json.loads(identity.read_text())
         except (ValueError, UnicodeError):
@@ -321,24 +360,96 @@ def vless_settings(args, cfg, data, ports, frontend, domain):
             saved = {}
     managed = bool(initial or saved.get("vless") or saved.get("vless_revision") or
                    (data / "vless").exists() or getattr(args, "enable_vless", False))
-    # A saved disable is authoritative, including when --enable-vless is repeated.
-    desired = saved.get("vless") if saved.get("vless_revision") or "vless" in saved else initial
-    if not desired and not saved.get("vless_revision") and getattr(args, "enable_vless", False):
+    durable = bool(saved.get("vless_revision") or "vless" in saved)
+    desired = saved.get("vless") if durable else initial
+    args.vless_previous = json.loads(json.dumps(saved.get("vless")))
+    unified = getattr(args, "migrate_unified", False) or getattr(args, "ingress", None) == "unified"
+    provision = not desired and not durable and getattr(args, "enable_vless", False)
+    if provision:
         occupied = {80, 443, 8081, 8082, 8083, ports["mtls_port"]}
         chosen = getattr(args, "vless_port", None)
-        port = port_number(chosen if chosen is not None else next(p for p in (8443, 9443, 10443) if p not in occupied))
+        choices = (9444, 10444, 11444) if unified else (8443, 9443, 10443)
+        port = port_number(chosen if chosen is not None else next(p for p in choices if p not in occupied))
         desired = dict(listen=f"0.0.0.0:{port}", endpoint=f"{domain}:{port}", security="tls",
                        server_name=domain, fingerprint="chrome", flow="", mode="standalone",
                        tls_certificate_file="/run/credentials/quic-lab-vless.service/cert.pem",
                        tls_key_file="/run/credentials/quic-lab-vless.service/key.pem")
-    elif desired and getattr(args, "vless_port", None) is not None:
-        if port_number(desired["listen"].rsplit(":", 1)[1]) != args.vless_port:
-            raise ValueError("VLESS already configured; change its listener in the administrator UI")
+    migrate = getattr(args, "migrate_unified", False)
+    if desired and (provision or migrate):
+        desired = dict(desired)
+        requested_name = getattr(args, "vless_server_name", None)
+        if unified:
+            name = requested_name or (desired.get("server_name") if desired.get("server_name") != domain else "vless." + domain)
+            name = domain_name(name)
+            if desired.get("security") == "reality" and name not in desired.get("reality_server_names", []):
+                raise ValueError("Migration SNI is not allowed by existing REALITY authentication; retain its allowed name")
+            port = port_number(getattr(args, "vless_port", None) or 9444)
+            desired.update(listen=f"127.0.0.1:{port}", endpoint=f"{name}:443", server_name=name, accept_proxy_protocol=True)
+        elif requested_name:
+            desired["server_name"] = requested_name
+            desired["endpoint"] = f"{requested_name}:{port_number(desired['listen'].rsplit(':', 1)[1])}"
+    elif desired:
+        if getattr(args, "vless_port", None) is not None and port_number(desired["listen"].rsplit(":", 1)[1]) != args.vless_port:
+            raise ValueError("VLESS already configured; use --migrate-unified or change its listener in the administrator UI")
+        if getattr(args, "vless_server_name", None) and args.vless_server_name != desired.get("server_name"):
+            raise ValueError("VLESS already configured; changing SNI requires --migrate-unified or the administrator UI")
     if desired:
         port = port_number(desired["listen"].rsplit(":", 1)[1])
         if port in {80, 443, 8081, 8082, 8083, ports["mtls_port"]}:
             raise ValueError("VLESS TCP listener conflicts with the frontend or another backend")
     return desired, managed
+
+
+def configure_vless_route(server, config):
+    name = domain_name(config["server_name"])
+    local_names = [server.get("tls_host", "")] + server.get("vpn_sni_names", [])
+    if name in [n.lower().rstrip(".") for n in local_names]:
+        raise ValueError("VLESS SNI collides with a local HTTPS/VPN name")
+    host = config["listen"].rsplit(":", 1)[0]
+    try:
+        private = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        private = False
+    if not private or not config.get("accept_proxy_protocol"):
+        raise ValueError("Routed VLESS requires a numeric loopback listener with PROXY protocol enabled")
+    if config["listen"] == server.get("tls_fallback"):
+        raise ValueError("VLESS backend conflicts with the TLS fallback")
+    routes = list(server.get("tls_routes", []))
+    matching = [r for r in routes if name in [n.lower().rstrip(".") for n in r.get("server_names", [])]]
+    if matching:
+        if len(matching) != 1 or matching[0].get("target") != config["listen"] or not matching[0].get("proxy_protocol"):
+            raise ValueError("VLESS SNI conflicts with an existing manual TLS route")
+    else:
+        routes.append(dict(server_names=[name], target=config["listen"], proxy_protocol=True))
+    server["tls_routes"] = routes
+
+
+def migrate_vless_identity(data, desired, expected=None):
+    """Called only after both services stop and the identity snapshot is durable."""
+    path = data / "identities.json"
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError("Refusing nonregular identity state during VLESS migration")
+    saved = json.loads(path.read_text())
+    if not isinstance(saved, dict):
+        raise RuntimeError("Invalid identity state during VLESS migration")
+    if expected is not None and saved.get("vless") != expected['config']:
+        raise RuntimeError('VLESS settings changed during installation preflight; retry migration with the current configuration')
+    if saved.get("vless") == desired:
+        return
+    # A durable disable must never be reversed by installer provisioning.
+    if (saved.get("vless_revision") or "vless" in saved) and not saved.get("vless"):
+        if desired is not None:
+            raise RuntimeError("Saved VLESS disable is authoritative")
+        return
+    saved["vless"] = desired
+    saved.pop("vless_digest", None)  # Go reconciliation advances the current revision.
+    atomic(path, json.dumps(saved, indent=2) + "\n", stat.S_IMODE(metadata.st_mode))
+    os.chown(path, metadata.st_uid, metadata.st_gid)
+    sync_directory(data)
 
 
 def vless_applied(binary, data):
@@ -447,15 +558,115 @@ def missing_packages(custom_cert, frontend="nginx"):
     return packages
 
 
+def preflight_direct_listener(previous, old_frontend):
+    # An already configured direct listener is released by stopping our own unit.
+    if old_frontend == "direct" and previous and any(
+            previous.get(field, "").rsplit(":", 1)[-1] == "443"
+            for field in ("https_listen", "gateway_https")):
+        return
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as public:
+            public.bind(("0.0.0.0", 443))
+    except OSError:
+        raise RuntimeError("Direct ingress requires free TCP/443. Move the existing frontend to a private backend manually before --migrate-unified; unrelated nginx services are never changed") from None
+
+
+def certificate_usable(cert):
+    try:
+        result = subprocess.run(["openssl", "x509", "-in", str(cert), "-noout", "-checkend", "0"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def certificate_names(cert):
+    result = run("openssl", "x509", "-in", str(cert), "-noout", "-ext", "subjectAltName", capture_output=True, text=True)
+    return {name.lower().rstrip(".") for name in re.findall(r"DNS:([^,\s]+)", result.stdout)}
+
+
+def certificate_covers(names, domain):
+    if domain in names:
+        return True
+    return any(name.startswith("*.") and domain.endswith(name[1:]) and domain.count(".") == name.count(".") for name in names)
+
+
+def validate_certificate_names(cert, required):
+    names = certificate_names(cert)
+    if any(not certificate_covers(names, name) for name in required):
+        raise RuntimeError("Certificate SAN does not cover all configured TLS names; provide a SAN certificate or use --acme")
+
+
+def validate_acme_dns(names):
+    common = None
+    for name in names:
+        try:
+            addresses = {entry[4][0] for entry in socket.getaddrinfo(name, 80, family=socket.AF_INET, type=socket.SOCK_STREAM)}
+        except socket.gaierror:
+            raise RuntimeError(f"ACME name has no usable IPv4 DNS record: {name}") from None
+        if not addresses:
+            raise RuntimeError(f"ACME name has no usable IPv4 DNS record: {name}")
+        common = addresses if common is None else common & addresses
+    if not common:
+        raise RuntimeError("ACME names must resolve to a common IPv4 address of this server")
+
+
+def obtain_certificate(args, cert, key, names, frontend):
+    existing = certificate_names(cert) if Path(cert).is_file() else set()
+    if Path(key).is_file() and set(names).issubset(existing) and certificate_usable(cert):
+        return
+    validate_acme_dns(names)
+    # Preserve any additional names in the owned lineage when expanding its SAN.
+    requested = list(dict.fromkeys(names + sorted(existing - set(names))))
+    if any(name.startswith("*.") for name in requested):
+        raise RuntimeError("Wildcard ACME lineages require DNS challenges; keep manual certificate management")
+    webroot = getattr(args, "acme_webroot", None)
+    if webroot:
+        webroot = certificate_path(str(webroot))
+        if not Path(webroot).is_dir():
+            raise RuntimeError("ACME webroot must be an existing directory served on HTTP/80 for every configured name")
+    elif frontend == "nginx":
+        webroot = WEBROOT
+        apply_nginx(nginx_config(args.domain, names=names))
+    else:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as challenge:
+                challenge.bind(("0.0.0.0", 80))
+        except OSError:
+            raise RuntimeError("HTTP/80 is occupied; configure the existing HTTP server's challenge path and pass --acme-webroot PATH") from None
+    method = ["--webroot", "-w", webroot] if webroot else ["--standalone", "--preferred-challenges", "http"]
+    email = ["--email", args.email] if args.email else ["--register-unsafely-without-email"]
+    domains = [item for name in requested for item in ("-d", name)]
+    print("Obtaining the configured SAN certificate with unattended ACME validation.", flush=True)
+    run("certbot", "certonly", *method, "--cert-name", args.domain, *domains,
+        "--expand", "--non-interactive", "--agree-tos", *email)
+
+
+def renewal_hook(domain, frontend):
+    reload_nginx = "nginx -t\nsystemctl reload nginx\n" if frontend == "nginx" else ""
+    return f"""#!/bin/sh
+{MARKER}
+set -eu
+[ "${{RENEWED_LINEAGE:-}}" = "/etc/letsencrypt/live/{domain}" ] || exit 0
+{reload_nginx}if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
+if systemctl is-active --quiet quic-lab-vless; then systemctl restart quic-lab-vless; fi
+"""
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, epilog="Example: sudo ./install-server.py quic.example.org --vpn-quic-port 443 --mtls-port 9443. Omitted ports retain saved settings on updates.")
+    parser = argparse.ArgumentParser(description=__doc__, epilog="Example: sudo ./install-server.py quic.example.org --enable-vless --vless-server-name vless.quic.example.org. Existing installations retain saved settings; use --migrate-unified explicitly.")
     parser.add_argument("domain", type=domain_name)
+    parser.add_argument("--ingress", choices=("unified", "split"), help="Fresh default: unified TCP/443 and UDP/443. Existing installations retain their layout")
+    parser.add_argument("--migrate-unified", action="store_true", help="Explicitly migrate an existing installation and its exported profiles to unified ingress")
+    parser.add_argument("--vless-server-name", type=domain_name, help="Exact VLESS SNI; unified default: vless.DOMAIN (must differ from local HTTPS/VPN names)")
+    parser.add_argument("--acme", action="store_true", help="Switch saved manual certificates to the managed Let's Encrypt SAN lineage")
+    parser.add_argument("--acme-webroot", type=Path, help="Existing HTTP/80 challenge webroot for every TLS hostname; nginx is not changed in direct mode")
     parser.add_argument("--frontend", choices=("nginx", "direct"), help="Explicit frontend; direct requires TCP/443 to be available (nginx is never moved automatically)")
     parser.add_argument("--tls-fallback", help="Direct frontend: pass other TLS SNI names to this host:port, including remote hosts")
     parser.add_argument("--email", help="Optional Let's Encrypt account email")
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-server")
-    parser.add_argument("--enable-vless", action="store_true", help="Provision optional managed VLESS with TLS on a dedicated TCP port")
-    parser.add_argument("--vless-port", type=port_number, help="Initial VLESS TCP port: first available of 8443, 9443, 10443; requires --enable-vless")
+    parser.add_argument("--enable-vless", action="store_true", help="Provision optional managed VLESS: exact-SNI TCP/443 routing in unified mode, dedicated TCP in split mode")
+    parser.add_argument("--vless-port", type=port_number, help="VLESS backend port: unified default 9444 on loopback; split chooses 8443/9443/10443")
     parser.add_argument("--vless-binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-vless")
     parser.add_argument("--enable-awg", action="store_true", help="Enable optional AmneziaWG worker (dedicated UDP port and firewall chains)")
     parser.add_argument("--awg-address", help="Initial AWG server IPv4/prefix, e.g. 10.77.0.1/24")
@@ -464,19 +675,21 @@ def main():
     parser.add_argument("--gateway-allow", type=cidrs, help="Initial allowed IPv4 CIDRs; default 0.0.0.0/0. Existing policy is preserved.")
     parser.add_argument("--cert", help="Existing server PEM chain; use together with --key")
     parser.add_argument("--key", help="Existing server PEM key; skips certificate issuance")
-    parser.add_argument("--echo-quic-port", type=port_number, help="Echo UDP port (initial default: 4433)")
-    parser.add_argument("--vpn-quic-port", type=port_number, help="VPN QUIC UDP port (initial default: 4434)")
-    parser.add_argument("--mtls-port", type=port_number, help="VPN HTTPS/mTLS TCP port (initial default: 443 without nginx, 8443 with nginx)")
+    parser.add_argument("--echo-quic-port", type=port_number, help="Echo UDP port (unified: 443; split: 4433)")
+    parser.add_argument("--vpn-quic-port", type=port_number, help="VPN QUIC UDP port (unified: 443; split: 4434)")
+    parser.add_argument("--mtls-port", type=port_number, help="VPN HTTPS/mTLS TCP port (unified: 443; split default: 8443)")
     if len(sys.argv) == 1:
         parser.print_help()
         return
     args = parser.parse_args()
     if (args.awg_port or args.awg_address) and not args.enable_awg:
         parser.error("--awg-port/--awg-address require --enable-awg")
-    if args.vless_port and not args.enable_vless:
-        parser.error("--vless-port requires --enable-vless")
+    if args.vless_port and not (args.enable_vless or args.migrate_unified):
+        parser.error("--vless-port requires --enable-vless or --migrate-unified")
     if os.geteuid() != 0:
         parser.error("Run with sudo/root.")
+    if args.acme and (args.cert or args.key):
+        parser.error('--acme cannot be combined with --cert/--key')
     if bool(args.cert) != bool(args.key):
         parser.error("--cert and --key must be used together")
     if not args.binary.is_file():
@@ -502,6 +715,12 @@ def install(args):
     cert = certificate_path(args.cert or (state or {}).get("cert") or f"/etc/letsencrypt/live/{args.domain}/fullchain.pem")
     key = certificate_path(args.key or (state or {}).get("key") or f"/etc/letsencrypt/live/{args.domain}/privkey.pem")
     custom_cert = bool(args.cert) if args.cert else (state or {}).get("custom_cert", False)
+    if getattr(args, "acme", False):
+        custom_cert = False
+        cert = f"/etc/letsencrypt/live/{args.domain}/fullchain.pem"
+        key = f"/etc/letsencrypt/live/{args.domain}/privkey.pem"
+    if getattr(args, "acme_webroot", None) is None and (state or {}).get("acme_webroot"):
+        args.acme_webroot = Path(state["acme_webroot"])
     if custom_cert and (not Path(cert).is_file() or not Path(key).is_file()):
         raise RuntimeError("Existing certificate/key not found")
     if args.apk:
@@ -521,7 +740,12 @@ def install(args):
     server_file = CONFIG / "server.json"
     old_server = server_file.read_bytes() if server_file.exists() else None
     previous_server = json.loads(old_server) if old_server is not None else None
-    frontend = getattr(args, "frontend", None) or resolve_frontend(state, cfg)
+    frontend = "direct" if getattr(args, "migrate_unified", False) else (getattr(args, "frontend", None) or resolve_frontend(state, cfg))
+    prior_ingress = resolve_ingress(argparse.Namespace(), state, cfg, resolve_frontend(state, cfg)) if state or cfg else None
+    args.ingress = resolve_ingress(args, state, cfg, frontend)
+    args.change_layout = bool(prior_ingress and args.ingress != prior_ingress)
+    if frontend == "direct" and (old_config is None or getattr(args, "migrate_unified", False) or getattr(args, "frontend", None) == "direct"):
+        preflight_direct_listener(previous_server, resolve_frontend(state, cfg))
     if getattr(args, "tls_fallback", None) and frontend != "direct":
         raise RuntimeError("--tls-fallback requires --frontend direct")
     # Do not silently override a customized legacy ExecStart with a new base unit.
@@ -536,7 +760,7 @@ def install(args):
             if not ENABLED.is_symlink() or ENABLED.resolve() != SITE:
                 raise RuntimeError(f"Unmanaged nginx site: {ENABLED}")
     ports = resolve_ports(args, state, cfg, frontend)
-    if previous_server:
+    if previous_server and not getattr(args, "migrate_unified", False) and not args.change_layout:
         for option, field in (("echo_quic_port", "listen"), ("vpn_quic_port", "gateway_quic"), ("mtls_port", "gateway_https")):
             if getattr(args, option, None) is None and previous_server.get(field):
                 ports[option] = port_number(previous_server[field].rsplit(":", 1)[1])
@@ -551,8 +775,24 @@ def install(args):
         owned(VLESS_UNIT)
         for dropin in VLESS_UNIT.with_name(VLESS_UNIT.name + ".d").glob("*.conf"):
             raise RuntimeError("VLESS unit has local overrides; review and migrate them before updating")
-        validate_vless(vless_binary_source, desired_vless)
+
     desired_server = server_config(ports, frontend, args.domain, args.gateway_allow or legacy_policy(env_file), previous_server, args)
+    if getattr(args, "acme", False):
+        desired_server.update(cert="${CREDENTIALS_DIRECTORY}/cert.pem", key="${CREDENTIALS_DIRECTORY}/key.pem")
+        if desired_vless and desired_vless.get("security") == "tls":
+            desired_vless.update(tls_certificate_file="/run/credentials/quic-lab-vless.service/cert.pem", tls_key_file="/run/credentials/quic-lab-vless.service/key.pem")
+    if vless_managed:
+        validate_vless(vless_binary_source, desired_vless)
+    if args.ingress == "unified" and desired_vless:
+        configure_vless_route(desired_server, desired_vless)
+    certificate_domains = [args.domain]
+    if desired_vless and desired_vless.get("security") == "tls":
+        certificate_domains = list(dict.fromkeys(certificate_domains + [domain_name(desired_vless["server_name"])]))
+    if custom_cert:
+        validate_certificate_names(cert, certificate_domains)
+    install_state = dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend, ingress=args.ingress)
+    if getattr(args, "acme_webroot", None):
+        install_state["acme_webroot"] = certificate_path(str(args.acme_webroot))
     # Validate before changing packages, configs, nginx or a running service.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as pending:
         json.dump(desired_server, pending); pending.flush()
@@ -594,36 +834,22 @@ def install(args):
     if old_config is None:
         # Keep initial mode after a failed ACME attempt, even though admin.json
         # already exists when the user retries installation.
-        atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend), indent=2) + "\n", 0o600)
+        atomic(state_file, json.dumps(install_state, indent=2) + "\n", 0o600)
         # Preserve a restricted ACL if ACME fails and installation is retried.
         atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
     if frontend == "nginx":
         Path(WEBROOT).mkdir(mode=0o755, parents=True, exist_ok=True)
     if not custom_cert:
-        if not Path(cert).exists() or not Path(key).exists():
-            if frontend == "nginx":
-                apply_nginx(nginx_config(args.domain))
-            print("Obtaining Let's Encrypt certificate; installation accepts the ACME subscriber agreement.", flush=True)
-            email = ["--email", args.email] if args.email else ["--register-unsafely-without-email"]
-            method = ["--webroot", "-w", WEBROOT] if frontend == "nginx" else ["--standalone", "--preferred-challenges", "http"]
-            run("certbot", "certonly", *method, "--cert-name", args.domain, "-d", args.domain,
-                "--non-interactive", "--agree-tos", *email)
-        reload_nginx = "nginx -t\nsystemctl reload nginx\n" if frontend == "nginx" else ""
-        atomic(HOOK, f"""#!/bin/sh
-{MARKER}
-set -eu
-[ "${{RENEWED_LINEAGE:-}}" = "/etc/letsencrypt/live/{args.domain}" ] || exit 0
-{reload_nginx}if systemctl is-active --quiet quic-lab-vless; then systemctl restart quic-lab-vless; fi
-if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
-""", 0o755)
+        obtain_certificate(args, cert, key, certificate_domains, frontend)
+        validate_certificate_names(cert, certificate_domains)
+        atomic(HOOK, renewal_hook(args.domain, frontend), 0o755)
         run("systemctl", "enable", "--now", "certbot.timer")
-    run("openssl", "x509", "-in", cert, "-noout", "-checkhost", args.domain)
     run("openssl", "x509", "-in", cert, "-noout", "-checkend", "0")
     # Validate the pair before replacing the binary/unit, also without nginx.
     import ssl
     ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
     if frontend == "nginx":
-        apply_nginx(nginx_config(args.domain, cert, key))
+        apply_nginx(nginx_config(args.domain, cert, key, names=certificate_domains))
     binary = OPT / "quic-lab-server"
     old_binary = binary.read_bytes() if binary.exists() else None
     old_unit = UNIT.read_bytes() if UNIT.exists() else None
@@ -656,15 +882,20 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
                 atomic(OPT / "quic-lab-vless.previous", old_worker_binary, 0o755)
             atomic(worker_binary, vless_binary_source.read_bytes(), 0o755)
             atomic(VLESS_UNIT, vless_unit_config(cert, key, desired_vless))
+        if vless_managed and (getattr(args, "migrate_unified", False) or getattr(args, "acme", False)):
+            migrate_vless_identity(DATA, desired_vless, expected=dict(config=args.vless_previous))
         atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
         if old_config is not None:
             for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
                 # Keep custom hostnames, account, routing and all other settings.
                 host = cfg[section][field].rsplit(":", 1)[0]
                 cfg[section][field] = f"{host}:{ports[name]}"
-            if desired_vless and not cfg.get("vless"): cfg["vless"] = desired_vless
+            if desired_vless:
+                cfg["vless"] = desired_vless
+            elif vless_managed:
+                cfg.pop("vless", None)
             atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
-        atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend), indent=2) + "\n", 0o600)
+        atomic(state_file, json.dumps(install_state, indent=2) + "\n", 0o600)
         run("systemctl", "daemon-reload")
         run("systemctl", "enable", "quic-lab")
         new_started = True  # Even a failing restart can briefly accept mutations.
@@ -751,7 +982,7 @@ if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
             command += ["--address", args.awg_address]
         run(*command)
     exposed_tcp = {80, 443, ports["mtls_port"]}
-    if desired_vless: exposed_tcp.add(port_number(desired_vless["listen"].rsplit(":", 1)[1]))
+    if desired_vless and not desired_vless.get("accept_proxy_protocol"): exposed_tcp.add(port_number(desired_vless["listen"].rsplit(":", 1)[1]))
     tcp_ports = ",".join(str(p) for p in sorted(exposed_tcp))
     print(f"Frontend: {frontend}\nReady: https://{args.domain}/lab/\nConfig: /etc/quic-lab/server.json and admin.json\n"
           "Credentials: /etc/quic-lab/admin-credentials.txt (first installation)\n"

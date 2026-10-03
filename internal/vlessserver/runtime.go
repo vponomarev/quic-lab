@@ -21,7 +21,7 @@ func readMaterial(path string, private bool) ([]byte, error) {
 	}
 	defer f.Close()
 	st, e := f.Stat()
-	if e != nil || !st.Mode().IsRegular() || st.Size() > 1024*1024 || (private && st.Mode().Perm()&0077 != 0) {
+	if e != nil || !st.Mode().IsRegular() || st.Size() > 1024*1024 || (private && st.Mode().Perm()&0077 != 0 && !systemdPrivateCredential(path, st)) {
 		return nil, errConfig
 	}
 	b, e := io.ReadAll(io.LimitReader(f, 1024*1024+1))

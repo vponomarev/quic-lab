@@ -16,7 +16,9 @@ import (
 
 func reloadPath(dir string) string { return filepath.Join(dir, "awg-reload.sock") }
 func privateDirectory(dir string) error {
-	info, e := os.Lstat(dir)
+	// systemd DynamicUser exposes StateDirectory through a root-owned symlink.
+	// Validate the target ownership and privacy, as the socket paths do.
+	info, e := os.Stat(dir)
 	if e != nil {
 		return e
 	}

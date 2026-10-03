@@ -40,7 +40,9 @@ func TestSharedHTTPSPublicAndMTLS(t *testing.T) {
 	gw.Register = store.Register
 	cfg := admin.Config{PublicURL: "https://example.test/lab/", Username: "admin", Password: "test-password-long", Echo: admin.Profile{Endpoint: "example.test:4433", Hostname: "example.test"}}
 	ts := httptest.NewUnstartedServer(publicHandler(admin.NewWeb(cfg, store).Handler(), cfg.PublicURL, log, http.HandlerFunc(gw.WebSocket)))
-	ts.TLS = publicTLS(store.TLS(cert))
+	ts.Config.TLSConfig = publicTLS(store.TLS(cert))
+	configurePublicTLS(ts.Config, serverConfig{PublicTLSMin: "1.0", PublicTLSDiagnostics: true}, log)
+	ts.TLS = ts.Config.TLSConfig
 	ts.StartTLS()
 	defer ts.Close()
 	client := ts.Client()
@@ -52,6 +54,33 @@ func TestSharedHTTPSPublicAndMTLS(t *testing.T) {
 		r.Body.Close()
 		if r.StatusCode != 200 {
 			t.Fatalf("anonymous %s: %d", path, r.StatusCode)
+		}
+	}
+	for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS12} {
+		for _, authenticated := range []bool{false, true} {
+			transport := client.Transport.(*http.Transport).Clone()
+			transport.TLSClientConfig.MinVersion = version
+			transport.TLSClientConfig.MaxVersion = version
+			transport.TLSClientConfig.CipherSuites = []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}
+			if authenticated {
+				transport.TLSClientConfig.Certificates = []tls.Certificate{clientCert}
+			}
+			legacy := &http.Client{Transport: transport}
+			for _, path := range []string{"/lab/login", "/tunnel", "/tunnel/bond"} {
+				response, err := legacy.Get(ts.URL + path)
+				if err != nil {
+					t.Fatal(tls.VersionName(version), authenticated, path, err)
+				}
+				response.Body.Close()
+				want := 403
+				if path == "/lab/login" {
+					want = 200
+				}
+				if response.StatusCode != want {
+					t.Fatalf("legacy %s %s authenticated=%v: %d", tls.VersionName(version), path, authenticated, response.StatusCode)
+				}
+			}
+			transport.CloseIdleConnections()
 		}
 	}
 	req, _ := http.NewRequest("GET", ts.URL+"/tunnel", nil)

@@ -122,6 +122,7 @@ class InstallerTests(unittest.TestCase):
                 if args[0] == "certbot": raise subprocess.CalledProcessError(1, args)
                 return subprocess.CompletedProcess(args, 0)
             stack.enter_context(patch.object(i, "run", side_effect=run))
+            stack.enter_context(patch.object(i, 'validate_acme_dns'))
             args = SimpleNamespace(domain="acl-retry.example.invalid", cert=None, key=None, apk=None, binary=root / "binary", frontend="direct", tls_fallback=None, gateway_allow="10.0.0.0/8", email=None)
             for attempt in range(2):
                 with self.assertRaises(subprocess.CalledProcessError), contextlib.redirect_stdout(io.StringIO()):
@@ -144,7 +145,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(i.resolve_frontend(), "direct")
             self.assertEqual(i.resolve_frontend({"domain": "old.example.org"}), "nginx")
         with patch.object(i.shutil, "which", return_value="/usr/sbin/nginx"):
-            self.assertEqual(i.resolve_frontend(), "nginx")
+            self.assertEqual(i.resolve_frontend(), "direct")
             self.assertEqual(i.resolve_frontend({"frontend": "direct"}), "direct")
         ports = i.resolve_ports(SimpleNamespace(), frontend="direct")
         self.assertEqual(ports["mtls_port"], 443)
@@ -224,7 +225,7 @@ class UpgradeStateTests(unittest.TestCase):
 
 
 class UpgradeInstallTests(unittest.TestCase):
-    def exercise(self, mode='direct', failure=None, active=True, vless=False):
+    def exercise(self, mode='direct', failure=None, active=True, vless=False, migrate=False, second_name=False):
         import json
         import ssl
         import subprocess
@@ -237,6 +238,7 @@ class UpgradeInstallTests(unittest.TestCase):
             for folder in (i.CONFIG, i.OPT, i.DATA): folder.mkdir()
             cfg = i.admin_config('lab.example.org')
             if vless: cfg['vless'] = dict(listen='0.0.0.0:9443', endpoint='lab.example.org:9443', security='tls', server_name='lab.example.org', fingerprint='chrome', flow='', mode='standalone', tls_certificate_file='/run/credentials/quic-lab-vless.service/cert.pem', tls_key_file='/run/credentials/quic-lab-vless.service/key.pem')
+            if vless and second_name: cfg['vless'].update(server_name='ui.lab.example.org', endpoint='ui.lab.example.org:9443')
             (i.CONFIG / 'admin.json').write_text(json.dumps(cfg))
             (i.CONFIG / 'server.json').write_text(json.dumps(i.server_config(i.DEFAULT_PORTS, mode, 'lab.example.org')))
             (i.CONFIG / 'install.json').write_text(json.dumps(dict(domain='lab.example.org', frontend=mode, custom_cert=True, cert=str(root / 'cert'), key=str(root / 'key'))))
@@ -263,6 +265,12 @@ class UpgradeInstallTests(unittest.TestCase):
                     self.assertIn(('systemctl', 'stop', 'quic-lab'), calls)
                     snapshot = next(i.CONFIG.glob('backup-*/identities.json'))
                     self.assertEqual(snapshot.read_bytes(), initial_identity)
+                    if migrate:
+                        migrated = json.loads(identity.read_text())
+                        self.assertEqual(migrated['vless']['listen'], '127.0.0.1:9444')
+                        self.assertEqual(migrated['vless']['endpoint'], 'ui.lab.example.org:443')
+                        self.assertEqual(migrated['vless_revision'], 8)
+                        self.assertNotIn('vless_digest', migrated)
                     identity.write_bytes(b'new-schema'); (i.DATA / 'identities.json.bak').write_bytes(b'new-backup')
                     if vless:
                         self.assertIn(('systemctl', 'stop', 'quic-lab-vless'), calls)
@@ -278,12 +286,16 @@ class UpgradeInstallTests(unittest.TestCase):
             applied_check = stack.enter_context(patch.object(i, 'vless_applied', return_value=failure != 'vless-apply', create=True))
             stack.enter_context(patch.object(i.shutil, 'which', return_value='/fake/nginx'))
             stack.enter_context(patch.object(ssl.SSLContext, 'load_cert_chain'))
-            stack.enter_context(patch.object(i, 'apply_nginx'))
+            stack.enter_context(patch.object(i, 'certificate_names', return_value={'lab.example.org', 'ui.lab.example.org'}))
+            nginx_apply = stack.enter_context(patch.object(i, 'apply_nginx'))
+            if failure == 'port-conflict':
+                blocked_socket = stack.enter_context(patch.object(i.socket, 'socket'))
+                blocked_socket.return_value.__enter__.return_value.bind.side_effect = OSError('in use')
             stack.enter_context(patch.object(i.time, 'sleep'))
             stack.enter_context(patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0 if active else 3)))
             http = MagicMock(); http.__enter__.return_value.status = 200
             stack.enter_context(patch.object(i.urllib.request, 'urlopen', return_value=http, side_effect=OSError('health') if failure == 'health' else None))
-            args = SimpleNamespace(domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False, enable_vless=False, vless_binary=worker_candidate)
+            args = SimpleNamespace(migrate_unified=migrate, vless_server_name='ui.lab.example.org' if migrate else None, vless_port=9444 if migrate else None, domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False, enable_vless=False, vless_binary=worker_candidate)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 if failure:
                     with self.assertRaises((RuntimeError, OSError)): i.install(args)
@@ -303,11 +315,13 @@ class UpgradeInstallTests(unittest.TestCase):
                         gate = unit.with_name(unit.name + '.d') / '90-quic-lab-recovery.conf'
                         self.assertIn('ConditionPathExists=!' + str(i.CONFIG / 'recovery-required'), gate.read_text())
                 if failure in ('snapshot', 'sync'):
-                    self.assertEqual(('systemctl', 'start', 'quic-lab') in calls, active)
+                    self.assertEqual(('systemctl', 'start', 'quic-lab') in calls, active if failure == 'sync' else False)
                     self.assertNotIn(('systemctl', 'restart', 'quic-lab'), calls)
-                    if vless: self.assertEqual(('systemctl', 'start', 'quic-lab-vless') in calls, active)
-                if failure in ('validation', 'worker-validation'): self.assertNotIn(('systemctl', 'stop', 'quic-lab'), calls)
+                    if vless: self.assertEqual(('systemctl', 'start', 'quic-lab-vless') in calls, active if failure == 'sync' else False)
+                if failure in ('validation', 'worker-validation', 'snapshot', 'port-conflict'): self.assertNotIn(('systemctl', 'stop', 'quic-lab'), calls)
             else:
+                if second_name:
+                    self.assertIn('server_name lab.example.org ui.lab.example.org;', nginx_apply.call_args.args[0])
                 if vless:
                     self.assertEqual((i.OPT / 'quic-lab-vless').read_bytes(), b'new-worker')
                     applied_check.assert_called()
@@ -315,15 +329,18 @@ class UpgradeInstallTests(unittest.TestCase):
                 self.assertEqual(json.loads((i.CONFIG / 'admin.json').read_text())['password'], cfg['password'])
                 self.assertEqual(json.loads((i.CONFIG / 'install.json').read_text())['frontend'], mode)
                 self.assertEqual(next(i.CONFIG.glob('backup-*/identities.json')).read_bytes(), initial_identity)
+    def test_nginx_final_configuration_retains_both_san_challenge_names(self): self.exercise(mode='nginx', vless=True, second_name=True)
+    def test_migration_rejects_busy_public_port_before_stopping_old_workers(self): self.exercise(mode='nginx', vless=True, migrate=True, failure='port-conflict')
+    def test_explicit_migration_updates_authoritative_settings_before_restart(self): self.exercise(vless=True, migrate=True)
     def test_vless_unapplied_listener_triggers_recovery(self): self.exercise(failure='vless-apply', vless=True)
     def test_vless_failed_health_preserves_revocations_and_stops_services(self): self.exercise(failure='health', vless=True)
     def test_vless_validation_precedes_all_mutations(self): self.exercise(failure='worker-validation', vless=True)
     def test_vless_upgrade_updates_managed_worker(self): self.exercise(vless=True)
-    def test_vless_snapshot_failure_resumes_previously_active_workers(self): self.exercise(failure='snapshot', vless=True)
-    def test_vless_snapshot_failure_keeps_inactive_workers_stopped(self): self.exercise(failure='snapshot', active=False, vless=True)
+    def test_symlinked_identity_preflight_preserves_active_vless_workers(self): self.exercise(failure='snapshot', vless=True)
+    def test_symlinked_identity_preflight_preserves_inactive_vless_workers(self): self.exercise(failure='snapshot', active=False, vless=True)
     def test_durability_failure_never_starts_new_server(self): self.exercise(failure='sync')
-    def test_snapshot_failure_restarts_previously_active_service(self): self.exercise(failure='snapshot')
-    def test_snapshot_failure_keeps_stopped_service_stopped(self): self.exercise(failure='snapshot', active=False)
+    def test_symlinked_identity_preflight_preserves_active_service(self): self.exercise(failure='snapshot')
+    def test_symlinked_identity_preflight_preserves_stopped_service(self): self.exercise(failure='snapshot', active=False)
     def test_upgrade_keeps_device_state(self): self.exercise()
     def test_nginx_mode_preserved(self): self.exercise('nginx')
     def test_failed_validation_no_mutations(self): self.exercise(failure='validation')
@@ -421,7 +438,7 @@ class ReleaseArchiveTests(unittest.TestCase):
             (root / 'scripts/build-server-release.py').write_bytes(builder.read_bytes())
             for name in ('install-transit.py', 'transit-network.py', 'install-awg.py', 'awg-network.py', 'install-server.py', 'reload-certificate.py', 'publish-apk.sh'):
                 (root / 'scripts' / name).write_text('fixture\n')
-            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
+            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md', 'unified-ingress.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
                 (root / folder).mkdir()
                 for name in names: (root / folder / name).write_text('fixture\n')
             (root / 'THIRD_PARTY_NOTICES.md').write_text('fixture\n')
@@ -434,8 +451,203 @@ class ReleaseArchiveTests(unittest.TestCase):
             with tarfile.open(archive) as tar:
                 name = 'quic-lab-server-packaging-test-linux-amd64/quic-lab-vless'
                 self.assertIn(name, tar.getnames(), 'server archive is missing the managed VLESS worker')
+                self.assertIn('quic-lab-server-packaging-test-linux-amd64/unified-ingress.md', tar.getnames())
                 self.assertEqual(tar.getmember(name).mode, 0o755)
                 self.assertEqual(tar.extractfile(name).read(), b'ELF\r\n./cmd/vless-server')
+
+
+class UnifiedIngressTests(unittest.TestCase):
+    def test_explicit_unified_migration_preserves_legacy_public_tls_minimum(self):
+        previous = dict(listen='0.0.0.0:4433', gateway_quic='0.0.0.0:4434', gateway_https='0.0.0.0:8443', https_listen='0.0.0.0:443', public_tls_min='1.0', public_tls_diagnostics=True)
+        result = i.server_config(i.UNIFIED_PORTS, 'direct', 'lab.example.org', previous=previous, args=SimpleNamespace(migrate_unified=True))
+        self.assertEqual(result['public_tls_min'], '1.0')
+        self.assertTrue(result['public_tls_diagnostics'])
+        self.assertEqual(previous['public_tls_min'], '1.0')
+    def test_split_upgrade_requires_explicit_migration_and_retains_manual_routes(self):
+        state = dict(frontend='direct', ports=i.DEFAULT_PORTS)
+        with self.assertRaises(ValueError):
+            i.resolve_ports(SimpleNamespace(ingress='unified'), state, frontend='direct')
+        with self.assertRaises(ValueError):
+            i.resolve_ports(SimpleNamespace(migrate_unified=True, ingress='split'), state, frontend='direct')
+        server = dict(tls_host='lab.example.org', tls_routes=[dict(server_names=['manual.example.org'], target='127.0.0.1:10444', proxy_protocol=False)])
+        i.configure_vless_route(server, dict(server_name='ui.lab.example.org', listen='127.0.0.1:9444', accept_proxy_protocol=True))
+        self.assertEqual(server['tls_routes'][0]['server_names'], ['manual.example.org'])
+        with self.assertRaises(ValueError):
+            i.configure_vless_route(server, dict(server_name='manual.example.org', listen='127.0.0.1:9444', accept_proxy_protocol=True))
+
+    def test_acme_edits_do_not_mutate_saved_config_preflight_snapshot(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            data=Path(tmp)
+            saved=dict(listen='0.0.0.0:9443', tls_certificate_file='/manual/cert.pem')
+            (data/'identities.json').write_text(json.dumps(dict(vless=saved,vless_revision=8)))
+            args=SimpleNamespace()
+            desired,_=i.vless_settings(args,None,data,i.DEFAULT_PORTS,'direct','lab.example.org')
+            desired['tls_certificate_file']='/run/credentials/quic-lab-vless.service/cert.pem'
+            self.assertEqual(args.vless_previous['tls_certificate_file'],'/manual/cert.pem')
+    def test_migration_rejects_vless_authentication_changes_during_acme_preflight(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            newer = dict(vless=dict(security='reality', reality_private_key='synthetic-new-key'), devices={'d': {'vless_uuid': 'same'}})
+            identity = data/'identities.json'; identity.write_text(json.dumps(newer))
+            before = identity.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, 'changed during installation preflight'):
+                i.migrate_vless_identity(data, dict(security='tls'), expected=dict(config=dict(security='tls')))
+            self.assertEqual(identity.read_bytes(), before)
+    def test_dns_preflight_requires_common_resolvable_ipv4(self):
+        def record(address): return [(i.socket.AF_INET, i.socket.SOCK_STREAM, 6, '', (address, 80))]
+        with patch.object(i.socket, 'getaddrinfo', side_effect=[record('192.0.2.1'), record('192.0.2.2')]):
+            with self.assertRaises(RuntimeError): i.validate_acme_dns(['lab.example.org','ui.lab.example.org'])
+        with patch.object(i.socket, 'getaddrinfo', side_effect=i.socket.gaierror()):
+            with self.assertRaises(RuntimeError): i.validate_acme_dns(['lab.example.org'])
+        with patch.object(i.socket, 'getaddrinfo', return_value=record('192.0.2.1')):
+            i.validate_acme_dns(['lab.example.org','ui.lab.example.org'])
+
+    def test_real_manual_certificate_san_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cert, key = str(Path(tmp)/'cert.pem'), str(Path(tmp)/'key.pem')
+            subprocess.run(['openssl','req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:P-256','-nodes','-days','1','-subj','/CN=lab.example.org','-addext','subjectAltName=DNS:lab.example.org,DNS:ui.lab.example.org','-keyout',key,'-out',cert], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            i.validate_certificate_names(cert, ['lab.example.org','ui.lab.example.org'])
+            with self.assertRaises(RuntimeError): i.validate_certificate_names(cert, ['unrelated.example.org'])
+
+    def test_standalone_acme_never_stops_an_unrelated_http_server(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(domain='lab.example.org', email=None)
+            with patch.object(i,'validate_acme_dns'), patch.object(i.socket,'socket') as sock, patch.object(i,'run') as run:
+                sock.return_value.__enter__.return_value.bind.side_effect = OSError('in use')
+                with self.assertRaisesRegex(RuntimeError, '--acme-webroot'):
+                    i.obtain_certificate(args, str(Path(tmp)/'absent-cert'), str(Path(tmp)/'absent-key'), ['lab.example.org'], 'direct')
+                run.assert_not_called()
+    def test_fresh_defaults_share_tcp_udp_443_even_with_nginx_installed(self):
+        with patch.object(i.shutil, 'which', return_value='/usr/sbin/nginx'):
+            self.assertEqual(i.resolve_frontend(), 'direct')
+        ports = i.resolve_ports(SimpleNamespace(), frontend='direct')
+        self.assertEqual(ports, dict(echo_quic_port=443, vpn_quic_port=443, mtls_port=443))
+        cfg = i.server_config(ports, 'direct', 'lab.example.org')
+        self.assertEqual(cfg['listen'], cfg['gateway_quic'])
+        self.assertEqual(cfg['https_listen'], cfg['gateway_https'])
+
+    def test_upgrade_retains_split_ports_until_explicit_migration(self):
+        cfg = i.admin_config('lab.example.org')
+        state = dict(frontend='direct', ports=dict(echo_quic_port=4433, vpn_quic_port=4434, mtls_port=8443))
+        self.assertEqual(i.resolve_ports(SimpleNamespace(), state, cfg, 'direct'), state['ports'])
+        ports = i.resolve_ports(SimpleNamespace(migrate_unified=True), state, cfg, 'direct')
+        self.assertEqual(ports, dict(echo_quic_port=443, vpn_quic_port=443, mtls_port=443))
+        previous = i.server_config(state['ports'], 'direct', 'lab.example.org')
+        previous.update(tls_fallback='127.0.0.1:9443', gateway_allow='10.0.0.0/8')
+        changed = i.server_config(ports, 'direct', 'lab.example.org', previous=previous, args=SimpleNamespace(migrate_unified=True))
+        self.assertEqual(changed['listen'], '0.0.0.0:443')
+        self.assertEqual(changed['gateway_quic'], '0.0.0.0:443')
+        self.assertEqual(changed['gateway_https'], '0.0.0.0:443')
+        self.assertEqual(changed['tls_fallback'], '127.0.0.1:9443')
+        self.assertEqual(changed['gateway_allow'], '10.0.0.0/8')
+
+    def test_unified_vless_uses_private_backend_and_distinct_public_sni(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(enable_vless=True, ingress='unified', vless_server_name='ui.lab.example.org', vless_port=9444)
+            cfg, managed = i.vless_settings(args, None, Path(tmp), dict(echo_quic_port=443, vpn_quic_port=443, mtls_port=443), 'direct', 'lab.example.org')
+            self.assertTrue(managed)
+            self.assertEqual(cfg['listen'], '127.0.0.1:9444')
+            self.assertEqual(cfg['endpoint'], 'ui.lab.example.org:443')
+            self.assertEqual(cfg['server_name'], 'ui.lab.example.org')
+            self.assertTrue(cfg['accept_proxy_protocol'])
+            server = i.server_config(dict(echo_quic_port=443, vpn_quic_port=443, mtls_port=443), 'direct', 'lab.example.org')
+            i.configure_vless_route(server, cfg)
+            self.assertEqual(server['tls_routes'], [dict(server_names=['ui.lab.example.org'], target='127.0.0.1:9444', proxy_protocol=True)])
+            server['vpn_sni_names'] = ['ui.lab.example.org']
+            with self.assertRaises(ValueError): i.configure_vless_route(server, cfg)
+
+    def test_saved_vless_settings_only_migrate_explicitly_preserving_authentication(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            saved = dict(listen='0.0.0.0:10443', endpoint='lab.example.org:10443', server_name='lab.example.org', security='tls', flow='xtls-rprx-vision', fingerprint='chrome', mode='standalone')
+            (data / 'identities.json').write_text(json.dumps(dict(vless=saved, vless_revision=8)))
+            cfg, _ = i.vless_settings(SimpleNamespace(), None, data, i.DEFAULT_PORTS, 'direct', 'lab.example.org')
+            self.assertEqual(cfg, saved)
+            cfg, _ = i.vless_settings(SimpleNamespace(migrate_unified=True, vless_server_name='ui.lab.example.org', vless_port=9444), None, data, dict(echo_quic_port=443, vpn_quic_port=443, mtls_port=443), 'direct', 'lab.example.org')
+            self.assertEqual(cfg['listen'], '127.0.0.1:9444')
+            self.assertEqual(cfg['endpoint'], 'ui.lab.example.org:443')
+            self.assertEqual(cfg['flow'], saved['flow'])
+            self.assertEqual(cfg['security'], saved['security'])
+            (data / 'identities.json').write_text(json.dumps(dict(vless=None, vless_revision=9)))
+            cfg, managed = i.vless_settings(SimpleNamespace(migrate_unified=True, enable_vless=True, vless_server_name='ui.lab.example.org'), None, data, i.DEFAULT_PORTS, 'direct', 'lab.example.org')
+            self.assertIsNone(cfg)
+            self.assertTrue(managed)
+
+    def test_offline_vless_migration_changes_authoritative_state_without_rotating_identities(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            state = dict(version=2, ca='preserved', ca_key='preserved-key', users={'u': {'name': 'unchanged'}}, devices={'d': {'vless_uuid': 'fixed-uuid', 'vless_revoked': True}}, vless=dict(listen='0.0.0.0:10443'), vless_revision=8, vless_digest='old-digest')
+            identity = data / 'identities.json'
+            identity.write_text(json.dumps(state)); identity.chmod(0o600)
+            before = identity.stat()
+            worker = data / 'vless'; worker.mkdir()
+            tombstones = worker / 'vless-state.json'; tombstones.write_bytes(b'permanent-revocations')
+            desired = dict(listen='127.0.0.1:9444', endpoint='ui.lab.example.org:443', accept_proxy_protocol=True)
+            i.migrate_vless_identity(data, desired)
+            migrated = json.loads(identity.read_text())
+            self.assertEqual(migrated['vless'], desired)
+            self.assertEqual(migrated['vless_revision'], 8)
+            self.assertNotIn('vless_digest', migrated)
+            for name in ('ca', 'ca_key', 'users', 'devices'): self.assertEqual(migrated[name], state[name])
+            self.assertEqual((identity.stat().st_uid, identity.stat().st_gid), (before.st_uid, before.st_gid))
+            self.assertEqual(identity.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(tombstones.read_bytes(), b'permanent-revocations')
+            identity.unlink(); identity.symlink_to(tombstones)
+            with self.assertRaises(RuntimeError): i.migrate_vless_identity(data, desired)
+
+    def test_acme_repairs_expired_matching_san_certificate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); cert=root/'cert.pem'; cert.touch(); key=root/'key.pem'; key.touch()
+            names=['lab.example.org','ui.lab.example.org']
+            args=SimpleNamespace(domain='lab.example.org', email=None, acme_webroot=str(root))
+            with patch.object(i, 'certificate_names', return_value=set(names)), patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([],1)), patch.object(i,'validate_acme_dns'), patch.object(i,'run') as run:
+                i.obtain_certificate(args,str(cert),str(key),names,'direct')
+                commands=[call.args for call in run.call_args_list if call.args[0]=='certbot']
+                self.assertEqual(len(commands),1)
+    def test_acme_san_expands_existing_certificate_without_interaction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); cert = root / 'cert.pem'; cert.touch()
+            key = root / 'key.pem'; key.touch()
+            args = SimpleNamespace(domain='lab.example.org', email=None, acme_webroot=str(root))
+            with patch.object(i, 'certificate_names', return_value={'lab.example.org'}), patch.object(i, 'validate_acme_dns') as dns, patch.object(i, 'run') as run:
+                i.obtain_certificate(args, str(cert), str(key), ['lab.example.org', 'ui.lab.example.org'], 'direct')
+                calls = [c.args for c in run.call_args_list if c.args[0] == 'certbot']
+                self.assertEqual(len(calls), 1)
+                command = calls[0]
+                self.assertIn('--expand', command)
+                self.assertIn('--non-interactive', command)
+                self.assertEqual(command[command.index('--cert-name')+1], 'lab.example.org')
+                self.assertEqual([command[n+1] for n, item in enumerate(command) if item == '-d'], ['lab.example.org', 'ui.lab.example.org'])
+                self.assertIn('--webroot', command)
+                self.assertNotIn('--standalone', command)
+                dns.assert_called_once_with(['lab.example.org', 'ui.lab.example.org'])
+            with patch.object(i, 'certificate_names', return_value={'lab.example.org', 'ui.lab.example.org'}), patch.object(i,'certificate_usable',return_value=True), patch.object(i, 'run') as run:
+                i.obtain_certificate(args, str(cert), str(key), ['lab.example.org', 'ui.lab.example.org'], 'direct')
+                run.assert_not_called()
+
+    def test_manual_certificate_missing_vless_san_is_rejected(self):
+        with patch.object(i, 'certificate_names', return_value={'lab.example.org'}):
+            with self.assertRaises(RuntimeError): i.validate_certificate_names('/cert.pem', ['lab.example.org', 'ui.lab.example.org'])
+
+    def test_unattended_renewal_hook_only_restarts_affected_managed_services(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); fake = root / 'systemctl'; calls = root / 'calls'
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n'); fake.chmod(0o755)
+            hook = root / 'hook'; hook.write_text(i.renewal_hook('lab.example.org', 'direct')); hook.chmod(0o755)
+            env = {**os.environ, 'PATH': str(root)+os.pathsep+os.environ['PATH'], 'CALLS': str(calls), 'RENEWED_LINEAGE': '/etc/letsencrypt/live/unrelated.example.org'}
+            subprocess.run([str(hook)], check=True, env=env)
+            self.assertFalse(calls.exists())
+            env['RENEWED_LINEAGE'] = '/etc/letsencrypt/live/lab.example.org'
+            subprocess.run([str(hook)], check=True, env=env)
+            lines = calls.read_text().splitlines()
+            self.assertIn('restart quic-lab', lines)
+            self.assertIn('restart quic-lab-vless', lines)
+            self.assertFalse(any('nginx' in line or 'xray' in line or 'x-ui' in line for line in lines))
 
 if __name__ == '__main__':
     unittest.main()

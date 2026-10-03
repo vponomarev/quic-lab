@@ -20,7 +20,8 @@ func publicTLSMinimum(v string) (uint16, error) {
 	return 0, fmt.Errorf("public_tls_min must be 1.0, 1.2 or 1.3")
 }
 
-// Applies only to the separate public listener; never relaxes QUIC or mTLS.
+// Public HTTPS compatibility also applies on a shared listener. VPN HTTP routes
+// independently require TLS 1.3 and verified client certificates; QUIC is unchanged.
 func configurePublicTLS(s *http.Server, opts serverConfig, log *slog.Logger) {
 	s.TLSConfig.MinVersion, _ = publicTLSMinimum(opts.PublicTLSMin)
 	if s.TLSConfig.MinVersion == tls.VersionTLS10 {
@@ -38,6 +39,7 @@ func configurePublicTLS(s *http.Server, opts serverConfig, log *slog.Logger) {
 	if !opts.PublicTLSDiagnostics {
 		return
 	}
+	previous := s.TLSConfig.GetConfigForClient
 	s.TLSConfig.GetConfigForClient = func(h *tls.ClientHelloInfo) (*tls.Config, error) {
 		versions := make([]string, 0, len(h.SupportedVersions))
 		for _, v := range h.SupportedVersions {
@@ -48,6 +50,9 @@ func configurePublicTLS(s *http.Server, opts serverConfig, log *slog.Logger) {
 			suites = append(suites, fmt.Sprintf("0x%04x:%s", v, tls.CipherSuiteName(v)))
 		}
 		log.Info("public_tls_client_hello", "remote", h.Conn.RemoteAddr().String(), "sni", h.ServerName, "versions", versions, "cipher_suites", suites, "alpn", h.SupportedProtos, "signature_schemes", h.SignatureSchemes, "groups", h.SupportedCurves)
+		if previous != nil {
+			return previous(h)
+		}
 		return nil, nil
 	}
 	s.ConnState = func(c net.Conn, state http.ConnState) {

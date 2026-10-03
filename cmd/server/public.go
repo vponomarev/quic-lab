@@ -87,8 +87,8 @@ func withCapabilities(next http.Handler, caps protocol.Capabilities) http.Handle
 func clientCertificateRequired(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Authorization comes from the real TLS connection, never headers.
-		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
-			http.Error(w, "client certificate required", http.StatusForbidden)
+		if r.TLS == nil || r.TLS.Version < tls.VersionTLS13 || len(r.TLS.VerifiedChains) == 0 {
+			http.Error(w, "TLS 1.3 and client certificate required", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)

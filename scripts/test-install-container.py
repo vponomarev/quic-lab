@@ -19,6 +19,9 @@ spec = importlib.util.spec_from_file_location("installer", "/test/install-server
 i = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(i)
 frontend = os.environ.get("TEST_FRONTEND", "nginx")
+ingress = os.environ.get("TEST_INGRESS", "split")
+assert ingress != "unified" or frontend == "direct"
+echo_port, vpn_port = ("443", "443") if ingress == "unified" else ("14433", "14434")
 real_run = i.run
 server = None
 nginx_started = False
@@ -83,7 +86,7 @@ if frontend == "nginx":
     other.write_text("server { listen 80; server_name other.example.org; return 200 'other'; }\n")
     Path("/etc/nginx/sites-enabled/other").symlink_to(other)
     original_other = other.read_bytes()
-sys.argv = ["install-server.py", "lab.example.org", "--binary", "/test/quic-lab-server", "--cert", "/test/tls/cert.pem", "--key", "/test/tls/key.pem", "--echo-quic-port", "14433", "--vpn-quic-port", "14434", "--mtls-port", "443" if frontend == "direct" else "18443"]
+sys.argv = ["install-server.py", "lab.example.org", "--binary", "/test/quic-lab-server", "--cert", "/test/tls/cert.pem", "--key", "/test/tls/key.pem", "--frontend", frontend, "--ingress", ingress, "--echo-quic-port", echo_port, "--vpn-quic-port", vpn_port, "--mtls-port", "443" if frontend == "direct" else "18443"]
 try:
     with contextlib.redirect_stdout(io.StringIO()) as output:
         i.main()
@@ -91,8 +94,8 @@ try:
     assert cfg["password"] in output.getvalue() and cfg["username"] in output.getvalue()
     assert (i.CONFIG / "admin.json").stat().st_mode & 0o777 == 0o600
     assert (i.CONFIG / "admin-credentials.txt").stat().st_mode & 0o777 == 0o600
-    assert cfg["echo"]["endpoint"].endswith(":14433")
-    assert cfg["vpn"]["quic"].endswith(":14434")
+    assert cfg["echo"]["endpoint"].endswith(":" + echo_port)
+    assert cfg["vpn"]["quic"].endswith(":" + vpn_port)
     assert cfg["vpn"]["https"].endswith(":443" if frontend == "direct" else ":18443")
     assert json.loads((i.CONFIG / "install.json").read_text())["frontend"] == frontend
     server_before = (i.CONFIG / "server.json").read_bytes()
@@ -114,7 +117,7 @@ try:
     else:
         assert not Path("/etc/nginx/sites-available/quic-lab").exists()
     # Roll back a failed service restart, keeping identity/config.
-    sys.argv += ["--vpn-quic-port", "24434", "--mtls-port", "28443"]
+    sys.argv += ["--ingress", "split", "--vpn-quic-port", "24434", "--mtls-port", "28443"]
     fail_next_start = True
     try:
         with contextlib.redirect_stdout(io.StringIO()):

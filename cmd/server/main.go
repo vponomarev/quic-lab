@@ -281,6 +281,9 @@ func main() {
 			}
 			handler = withCapabilities(handler, opts.Capabilities)
 			hs := &http.Server{Addr: *gatewayHTTPS, Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+			if *publicHTTPS == *gatewayHTTPS {
+				configurePublicTLS(hs, opts, log)
+			}
 			defer hs.Close()
 			go func() {
 				if e := servePublicTLS(ctx, hs, *publicHTTPS == *gatewayHTTPS, *tlsHost, *fallback, opts.TLSRoutes, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
