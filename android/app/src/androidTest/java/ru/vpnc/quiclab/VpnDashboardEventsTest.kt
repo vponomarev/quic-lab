@@ -5,6 +5,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VpnDashboardEventsTest {
+    @Test fun vlessHealthWithoutRttAndExpiredProof() {
+        val bridge = VpnDashboardEventStore()
+        bridge.beginRun("run", mapOf("exit" to "Exit"))
+        bridge.record("run", "exit", 1, JSONObject("""{"event":"connected","transport":"vless"}"""), 1000)
+        bridge.record("run", "exit", 1, JSONObject("""{"event":"health"}"""), 2000)
+        assertTrue(bridge.dashboards(2000).single().state.contains("подтверждена"))
+        assertTrue(bridge.dashboards(33000).single().state.contains("нет свежего подтверждения"))
+        bridge.record("run", "exit", 2, JSONObject("""{"event":"connected","transport":"vless"}"""), 34000)
+        bridge.record("run", "exit", 1, JSONObject("""{"event":"health"}"""), 35000)
+        assertFalse(bridge.dashboards(35000).single().state.contains("подтверждена"))
+        bridge.stopExit("exit", 3)
+        assertFalse(bridge.dashboards(36000).single().state.contains("TCP до сервера"))
+    }
+    @Test fun vlessTcpDoesNotClaimWorkingTunnel() {
+        val bridge = VpnDashboardEventStore()
+        bridge.beginRun("run", mapOf("exit" to "Exit"))
+        fun event(raw: String, at: Long) { bridge.record("run", "exit", 1, JSONObject(raw), at) }
+        event("""{"event":"connected","transport":"vless"}""", 1000)
+        assertTrue(bridge.dashboards(1000).single().state.contains("Передача через VPN: проверяется"))
+        event("""{"event":"vless_tcp","tcp_state":"established"}""", 2000)
+        assertTrue(bridge.dashboards(2000).single().state.contains("TCP до сервера: установлен"))
+        assertFalse(bridge.dashboards(2000).single().state.contains("подтверждена"))
+        event("""{"event":"echo","rtt_ms":20}""", 3000)
+        assertTrue(bridge.dashboards(3000).single().state.contains("Передача через VPN: подтверждена"))
+        event("""{"event":"probe_unavailable"}""", 4000)
+        assertTrue(bridge.dashboards(4000).single().state.contains("проверка не прошла"))
+        event("""{"event":"reconnecting"}""", 5000)
+        assertFalse(bridge.dashboards(5000).single().state.contains("подтверждена"))
+    }
     @Test fun physicalNetworkChangeCannotReusePreviousLatency() {
         val bridge = VpnDashboardEventStore()
         bridge.beginRun("run", mapOf("exit" to "Exit"))

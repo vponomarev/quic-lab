@@ -9,6 +9,7 @@ internal class VpnDashboardEventStore {
     private class Exit(val id: String) {
         var generation = 0L
         var state = "Ожидаем подключения"
+        var vless: VlessConnectionStatus? = null
         var stopped = false
         var connection = ""
         val retiredConnections = mutableSetOf<String>()
@@ -61,7 +62,7 @@ internal class VpnDashboardEventStore {
         if (generation > exit.generation) {
             exit.generation = generation; exit.generationRx = 0; exit.generationTx = 0
             exit.clearPathMetrics(); exit.connection = ""; exit.retiredConnections.clear()
-            exit.stopped = false; exit.state = "Подключение…"
+            exit.stopped = false; exit.state = "Подключение…"; exit.vless = null
         }
         if (exit.stopped && kind != "profile_traffic") return false
         if (kind == "connected" && connection.isNotBlank() && connection != exit.connection) {
@@ -150,6 +151,8 @@ internal class VpnDashboardEventStore {
                 if (kind in listOf("session_closed", "session_lost", "disconnected")) exit.clearPathMetrics()
             }
         }
+        if (kind == "connected" && event.optString("transport") == "vless") exit.vless = VlessConnectionStatus()
+        exit.vless?.accept(event, nowMs)
         exit.capturedAt = nowMs
         return model.accept(snapshot(exit, nowMs))
     }
@@ -157,7 +160,7 @@ internal class VpnDashboardEventStore {
         val exit = exits[exitId] ?: return
         if (generation < exit.generation) return
         if (generation > exit.generation) { exit.generationRx = 0; exit.generationTx = 0 }
-        exit.generation = generation; exit.stopped = true; exit.state = "Выход остановлен · трафик блокируется"
+        exit.generation = generation; exit.stopped = true; exit.vless = null; exit.state = "Выход остановлен · трафик блокируется"
         exit.clearPathMetrics(); exit.rxRate = 0.0; exit.txRate = 0.0
         model.accept(snapshot(exit, SystemClock.elapsedRealtime()))
     }
@@ -169,7 +172,7 @@ internal class VpnDashboardEventStore {
             path.copy(jitterMs = jitter)
         }
         val freshTraffic = !exit.stopped && exit.trafficAt > 0 && nowMs - exit.trafficAt <= 3500
-        return ExitSnapshot(exit.id, exit.generation, exit.state, exit.activePath, paths,
+        return ExitSnapshot(exit.id, exit.generation, exit.vless?.label(nowMs) ?: exit.state, exit.activePath, paths,
             exit.generationRx, exit.generationTx, if (freshTraffic) exit.rxRate else 0.0,
             if (freshTraffic) exit.txRate else 0.0, exit.ip, runId.orEmpty(), nowMs)
     }

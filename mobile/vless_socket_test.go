@@ -94,3 +94,40 @@ func TestVLESSOuterBudgetStopsActiveAndNewSockets(t *testing.T) {
 		t.Fatalf("new socket after limit: %v", err)
 	}
 }
+
+func TestVLESSSocketConnectionState(t *testing.T) {
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	f, _ := newVLESSSocketFactory(l.Addr().String(), &vlessTestBinder{})
+	a, err := f.DialContext(context.Background(), "tcp4", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.DialContext(context.Background(), "tcp4", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.connectionState() != "established" {
+		t.Fatal("TCP not reported")
+	}
+	a.Close()
+	a.Close()
+	if f.connectionState() != "established" {
+		t.Fatal("sibling lost")
+	}
+	b.Close()
+	if f.connectionState() != "closed" {
+		t.Fatal("closed TCP still reported")
+	}
+	l.Close()
+	_, err = f.DialContext(context.Background(), "tcp4", l.Addr().String())
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	if f.connectionState() != "error" {
+		t.Fatal("failure not reported")
+	}
+}

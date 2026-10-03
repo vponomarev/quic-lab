@@ -366,6 +366,7 @@ class LabVpnService : VpnService() {
         @Volatile var exitCheckedAt = 0L
         @Volatile var active = false
         @Volatile var status = "VPN выключен"
+        private var vlessStatus: VlessConnectionStatus? = null
         @Volatile var transitEnabled = false
         @Volatile var transitRtt = 0.0
         @Volatile var lastTransitEcho = 0L
@@ -398,6 +399,7 @@ class LabVpnService : VpnService() {
             lastHealth=0; rttEnabled=true; rttInterval=1000
             transitEnabled=false; transitRtt=0.0; lastTransitEcho=0
             exitIP=""; exitCheckedAt=0; exitState="Не проверен"
+            vlessStatus = if(value == "vless") VlessConnectionStatus() else null
             transport=value; startedAt=android.os.SystemClock.elapsedRealtime()
             lastEcho=0; network="—"; txBytes=0; rxBytes=0; txRate=0.0; rxRate=0.0
             lastTransition=0; trafficAt=startedAt; stats=TransportStats(); events.clear()
@@ -426,10 +428,13 @@ class LabVpnService : VpnService() {
         fun record(e: JSONObject) {
             Diagnostics.event("vpn", e)
             val kind = e.optString("event")
+            if (kind == "connected" && e.optString("transport") == "vless") vlessStatus = VlessConnectionStatus()
+            vlessStatus?.let { it.accept(e, android.os.SystemClock.elapsedRealtime()); status = it.label(android.os.SystemClock.elapsedRealtime()) }
+            if (kind == "vless_tcp") return
             when(kind) {
                 "bond_stats" -> { bondSnapshot=JSONObject(e.toString()); network="Wi-Fi + LTE"; return }
                 "rtt_policy" -> { rttEnabled=e.optBoolean("enabled"); rttInterval=e.optLong("interval_ms",1000); lastEcho=0; lastTransitEcho=0; stats=TransportStats(); return }
-                "health" -> { lastHealth=android.os.SystemClock.elapsedRealtime(); connection=e.optString("connection_id",connection); status="Туннель работает"; return }
+                "health" -> { lastHealth=android.os.SystemClock.elapsedRealtime(); connection=e.optString("connection_id",connection); if (vlessStatus == null) status="Туннель работает"; return }
                 "transit_echo" -> { transitEnabled=true; transitRtt=e.optDouble("rtt_ms"); lastTransitEcho=android.os.SystemClock.elapsedRealtime(); return }
                 "transit_probe_failed" -> { return }
                 "exit_ip_checking" -> { exitState="Проверяем…"; return }
@@ -447,7 +452,7 @@ class LabVpnService : VpnService() {
                 return
             }
             if (kind=="standby_ready") return
-            if (kind=="probe_unavailable") { status="AmneziaWG · endpoint не отвечает на ICMP"; return }
+            if (kind=="probe_unavailable") { if (transport == "awg") status="AmneziaWG · endpoint не отвечает на ICMP"; return }
             stats.accept(e,now)
             if(kind=="active_network") network=e.optString("detail")
             if(kind in listOf("active_network","path_switched","network_lost")) lastTransition=now
@@ -462,6 +467,7 @@ class LabVpnService : VpnService() {
             val detail = e.optString("detail", e.optString("error", e.optString("destination", "")))
             events.addLast("${java.time.Instant.now()}  $kind  $detail")
             while (events.size > 30) events.removeFirst()
+            if (vlessStatus != null) return
             status =
                 when (kind) {
                     "connected" -> "Туннель подключён"

@@ -66,6 +66,10 @@
 
 Подробный план и результат: [V1 standalone](2026-10-03-vless-01-standalone.md). Проверены Android TUN TCP/UDP и Wi-Fi/LTE, Linux внешний профиль; ограничения upstream зафиксированы в compatibility. Клиентский checkpoint подготовлен к выпуску [v0.8.0-pre.3](../../release-v0.8.0-pre.3.md): QR/URI/JSON, 52 Android regression + 1 live VPN test PASS. Следующий этап: V2.
 
+Дополнение pre.5: отдельные статусы TCP и проверки VPN реализованы. Приёмка и границы: [pre.5](../../release-v0.8.0-pre.5.md).
+
+- [ ] Разобрать воспроизводимый отказ HTTPS тестового приложения на LTE у внешнего REALITY/Vision-профиля: Wi-Fi TCP/UDP и служебный HTTPS проходят, отказ повторился на pre.4 и pre.5. Не объявлять полный аппаратный переход пройденным до выяснения причины; профиль пользователя на его исправленном сервере проверку проходит.
+
 ### V2 — собственный сервер как функция продукта
 
 Файлы: новые `internal/vlessserver/`, `cmd/vless-server/main.go`, systemd unit; существующие `internal/admin/store.go`, `protocols.go`, `devices.go`, `device_config.go`, `protocols_web.go`, административный UI. Конкретные hooks отзыва определяет V0.

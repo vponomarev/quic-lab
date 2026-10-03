@@ -78,6 +78,7 @@ func (g *Gateway) startVLESSLocked(binder SocketBinder) error {
 	id := fmt.Sprintf("vless-%d", g.session)
 	g.emit("connected", map[string]any{"transport": "vless", "session": g.session, "detail": "VLESS engine ready; waiting for verified tunnel probe"})
 	go g.vlessHeartbeat(ctx, engine, id)
+	go g.vlessTCPStatus(ctx, engine, f)
 	return nil
 }
 
@@ -151,5 +152,24 @@ func (g *Gateway) waitVLESSProbe(ctx context.Context, started time.Time) bool {
 		case <-timer.C:
 			return ctx.Err() == nil
 		}
+	}
+}
+
+func (g *Gateway) vlessTCPStatus(ctx context.Context, engine vless.Client, factory *vlessSocketFactory) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		g.mu.Lock()
+		if ctx.Err() != nil || g.vless != engine {
+			g.mu.Unlock()
+			return
+		}
+		g.emit("vless_tcp", map[string]any{"tcp_state": factory.connectionState()})
+		g.mu.Unlock()
 	}
 }
