@@ -29,8 +29,9 @@ type Snapshot struct {
 	Devices  []Device `json:"devices"`
 }
 type workerRecord struct {
-	Desired Snapshot        `json:"desired"`
-	Revoked map[string]bool `json:"revoked"`
+	PinnedDemux string
+	Desired     Snapshot        `json:"desired"`
+	Revoked     map[string]bool `json:"revoked"`
 }
 type managedServer interface {
 	SetClients(context.Context, []vless.ServerClient) error
@@ -39,6 +40,7 @@ type managedServer interface {
 }
 type AdmissionFunc func(context.Context, string, string) (time.Duration, error)
 type Worker struct {
+	resolver            ipResolver
 	mu                  sync.Mutex
 	dir                 string
 	ctx                 context.Context
@@ -92,7 +94,7 @@ func OpenWorker(ctx context.Context, dir string, admission AdmissionFunc) (*Work
 		return nil, errConfig
 	}
 	child, cancel := context.WithCancel(ctx)
-	w := &Worker{dir: dir, ctx: child, cancel: cancel, admission: admission, record: workerRecord{Revoked: map[string]bool{}}}
+	w := &Worker{resolver: net.DefaultResolver, dir: dir, ctx: child, cancel: cancel, admission: admission, record: workerRecord{Revoked: map[string]bool{}}}
 	w.start = func(ctx context.Context, o vless.ServerOptions) (managedServer, error) {
 		return vless.StartServer(ctx, o)
 	}
@@ -231,6 +233,9 @@ func (w *Worker) Apply(ctx context.Context, input Snapshot) error {
 		}
 	}
 	next := workerRecord{Desired: s, Revoked: revoked}
+	if s.Config.Mode == "demux-only" && current.Config.Mode == "demux-only" && s.Config.DemuxEndpoint == current.Config.DemuxEndpoint {
+		next.PinnedDemux = w.record.PinnedDemux
+	}
 	if e = w.persist(next); e != nil {
 		w.auth.Store(nil)
 		w.writeFailed = true
@@ -264,9 +269,22 @@ func (w *Worker) Apply(ctx context.Context, input Snapshot) error {
 			w.live.Close()
 			w.live = nil
 		}
-		o, e := s.Config.serverOptions(ctx, clients, net.DefaultResolver)
+		runtimeConfig := s.Config
+		if next.PinnedDemux != "" {
+			runtimeConfig.DemuxEndpoint = next.PinnedDemux
+		}
+		o, e := runtimeConfig.serverOptions(ctx, clients, w.resolver)
 		if e != nil {
 			return errApply
+		}
+		if s.Config.Mode == "demux-only" && next.PinnedDemux == "" {
+			next.PinnedDemux = o.DemuxEndpoint
+			if e = w.persist(next); e != nil {
+				w.auth.Store(nil)
+				w.writeFailed = true
+				return errApply
+			}
+			w.record = next
 		}
 		o.Admission = w.authorize
 		w.live, e = w.start(w.ctx, o)

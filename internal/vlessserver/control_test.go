@@ -96,3 +96,47 @@ func TestControlRejectsOversizedAndUnknownMessages(t *testing.T) {
 		}
 	}
 }
+
+func TestControlStatusRequiresAppliedRevision(t *testing.T) {
+	w, _ := workerFixture(t)
+	stop, e := ServeControl(context.Background(), w)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer stop()
+	client := ControlClient{Dir: w.dir}
+	s := sampleSnapshot()
+	if client.CheckApplied(context.Background(), s.Revision) == nil {
+		t.Fatal("unapplied worker healthy")
+	}
+	if e := client.Apply(context.Background(), s); e != nil {
+		t.Fatal(e)
+	}
+	if e := client.CheckApplied(context.Background(), s.Revision); e != nil {
+		t.Fatal(e)
+	}
+	if client.CheckApplied(context.Background(), s.Revision+1) == nil {
+		t.Fatal("old revision reported healthy")
+	}
+	w.Close()
+	if client.CheckApplied(context.Background(), s.Revision) == nil {
+		t.Fatal("closed worker healthy")
+	}
+}
+
+func TestPrivateStateDirectoryAllowsSystemdAlias(t *testing.T) {
+	dir := t.TempDir()
+	os.Chmod(dir, 0700)
+	alias := filepath.Join(t.TempDir(), "state")
+	if e := os.Symlink(dir, alias); e != nil {
+		t.Fatal(e)
+	}
+	stop, e := ServeAdmission(context.Background(), alias, func(context.Context, string, string) (time.Duration, error) { return time.Second, nil })
+	if e != nil {
+		t.Fatal("systemd StateDirectory alias rejected")
+	}
+	defer stop()
+	if _, e := RequestAdmission(context.Background(), alias, "device", "11111111-1111-4111-8111-111111111111"); e != nil {
+		t.Fatal(e)
+	}
+}

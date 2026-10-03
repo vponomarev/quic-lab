@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests; run on Linux (installer uses fcntl)."""
 import importlib.util
+import subprocess
 import tempfile
 import contextlib
 import io
@@ -223,25 +224,33 @@ class UpgradeStateTests(unittest.TestCase):
 
 
 class UpgradeInstallTests(unittest.TestCase):
-    def exercise(self, mode='direct', failure=None, active=True):
+    def exercise(self, mode='direct', failure=None, active=True, vless=False):
         import json
         import ssl
         import subprocess
         from unittest.mock import MagicMock
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             root = Path(tmp)
-            for name in ('CONFIG', 'OPT', 'DATA', 'UNIT', 'HOOK', 'SITE', 'ENABLED'):
-                stack.enter_context(patch.object(i, name, root / name.lower()))
+            for name in ('CONFIG', 'OPT', 'DATA', 'UNIT', 'VLESS_UNIT', 'HOOK', 'SITE', 'ENABLED'):
+                stack.enter_context(patch.object(i, name, root / name.lower(), create=True))
             stack.enter_context(patch.object(i, 'WEBROOT', str(root / 'webroot')))
             for folder in (i.CONFIG, i.OPT, i.DATA): folder.mkdir()
             cfg = i.admin_config('lab.example.org')
+            if vless: cfg['vless'] = dict(listen='0.0.0.0:9443', endpoint='lab.example.org:9443', security='tls', server_name='lab.example.org', fingerprint='chrome', flow='', mode='standalone', tls_certificate_file='/run/credentials/quic-lab-vless.service/cert.pem', tls_key_file='/run/credentials/quic-lab-vless.service/key.pem')
             (i.CONFIG / 'admin.json').write_text(json.dumps(cfg))
             (i.CONFIG / 'server.json').write_text(json.dumps(i.server_config(i.DEFAULT_PORTS, mode, 'lab.example.org')))
             (i.CONFIG / 'install.json').write_text(json.dumps(dict(domain='lab.example.org', frontend=mode, custom_cert=True, cert=str(root / 'cert'), key=str(root / 'key'))))
             for name in ('cert', 'key'): (root / name).touch()
             i.UNIT.write_text(i.MARKER); (i.OPT / 'quic-lab-server').write_bytes(b'old')
             candidate = root / 'candidate'; candidate.write_bytes(b'new')
-            identity = i.DATA / 'identities.json'; identity.write_bytes(b'synthetic-users-devices-key'); identity.chmod(0o600)
+            initial_identity = json.dumps(dict(vless=cfg['vless'], vless_revision=8)).encode() if vless else b'synthetic-users-devices-key'
+            identity = i.DATA / 'identities.json'; identity.write_bytes(initial_identity); identity.chmod(0o600)
+            worker_candidate = root / 'quic-lab-vless'; worker_candidate.write_bytes(b'new-worker')
+            if vless:
+                i.VLESS_UNIT.write_text(i.MARKER)
+                (i.OPT / 'quic-lab-vless').write_bytes(b'old-worker')
+                (i.DATA / 'vless').mkdir(mode=0o700)
+                (i.DATA / 'vless/vless-state.json').write_bytes(b'revision-8-tombstones')
             before = {p.name:p.read_bytes() for p in i.CONFIG.iterdir()}
             if failure == 'snapshot':
                 identity.unlink(); identity.symlink_to(root / 'cert')
@@ -249,18 +258,24 @@ class UpgradeInstallTests(unittest.TestCase):
             def run(*args, **kwargs):
                 calls.append(args)
                 if '-check-config' in args and failure == 'validation': raise RuntimeError('invalid')
+                if '-check-config' in args and 'quic-lab-vless' in args[0] and failure == 'worker-validation': raise subprocess.CalledProcessError(1, args)
                 if args == ('systemctl', 'restart', 'quic-lab'):
                     self.assertIn(('systemctl', 'stop', 'quic-lab'), calls)
                     snapshot = next(i.CONFIG.glob('backup-*/identities.json'))
-                    self.assertEqual(snapshot.read_bytes(), b'synthetic-users-devices-key')
+                    self.assertEqual(snapshot.read_bytes(), initial_identity)
                     identity.write_bytes(b'new-schema'); (i.DATA / 'identities.json.bak').write_bytes(b'new-backup')
+                    if vless:
+                        self.assertIn(('systemctl', 'stop', 'quic-lab-vless'), calls)
+                        self.assertLess(calls.index(('systemctl', 'stop', 'quic-lab-vless')), calls.index(('systemctl', 'stop', 'quic-lab')))
+                        (i.DATA / 'vless/vless-state.json').write_bytes(b'revision-9-revoked')
                 if args == ('systemctl', 'start', 'quic-lab') and failure != 'snapshot':
-                    self.assertEqual(identity.read_bytes(), b'synthetic-users-devices-key')
+                    self.assertEqual(identity.read_bytes(), initial_identity)
                     self.assertFalse((i.DATA / 'identities.json.bak').exists())
                 return subprocess.CompletedProcess(args, 0, stdout='')
             stack.enter_context(patch.object(i, 'run', side_effect=run))
             if failure == 'sync': stack.enter_context(patch.object(i, 'sync_directory', side_effect=OSError('disk sync failed')))
             stack.enter_context(patch.object(i, 'missing_packages', return_value=[]))
+            applied_check = stack.enter_context(patch.object(i, 'vless_applied', return_value=failure != 'vless-apply', create=True))
             stack.enter_context(patch.object(i.shutil, 'which', return_value='/fake/nginx'))
             stack.enter_context(patch.object(ssl.SSLContext, 'load_cert_chain'))
             stack.enter_context(patch.object(i, 'apply_nginx'))
@@ -268,7 +283,7 @@ class UpgradeInstallTests(unittest.TestCase):
             stack.enter_context(patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0 if active else 3)))
             http = MagicMock(); http.__enter__.return_value.status = 200
             stack.enter_context(patch.object(i.urllib.request, 'urlopen', return_value=http, side_effect=OSError('health') if failure == 'health' else None))
-            args = SimpleNamespace(domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False)
+            args = SimpleNamespace(domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False, enable_vless=False, vless_binary=worker_candidate)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 if failure:
                     with self.assertRaises((RuntimeError, OSError)): i.install(args)
@@ -276,15 +291,36 @@ class UpgradeInstallTests(unittest.TestCase):
             if failure:
                 for name, content in before.items(): self.assertEqual((i.CONFIG / name).read_bytes(), content)
                 self.assertEqual((i.OPT / 'quic-lab-server').read_bytes(), b'old')
-                if failure != 'snapshot': self.assertEqual(identity.read_bytes(), b'synthetic-users-devices-key')
+                if failure != 'snapshot': self.assertEqual(identity.read_bytes(), b'new-schema' if vless and failure in ('health', 'vless-apply') else initial_identity)
+                if vless and failure in ('health', 'vless-apply'):
+                    self.assertEqual((i.DATA / 'vless/vless-state.json').read_bytes(), b'revision-9-revoked')
+                    self.assertEqual((i.DATA / 'identities.json.bak').read_bytes(), b'new-backup')
+                    self.assertNotIn(('systemctl', 'start', 'quic-lab'), calls)
+                    self.assertNotIn(('systemctl', 'start', 'quic-lab-vless'), calls)
+                    self.assertEqual((i.OPT / 'quic-lab-vless').read_bytes(), b'old-worker')
+                    self.assertTrue((i.CONFIG / 'recovery-required').is_file())
+                    for unit in (i.UNIT, i.VLESS_UNIT):
+                        gate = unit.with_name(unit.name + '.d') / '90-quic-lab-recovery.conf'
+                        self.assertIn('ConditionPathExists=!' + str(i.CONFIG / 'recovery-required'), gate.read_text())
                 if failure in ('snapshot', 'sync'):
                     self.assertEqual(('systemctl', 'start', 'quic-lab') in calls, active)
                     self.assertNotIn(('systemctl', 'restart', 'quic-lab'), calls)
-                if failure == 'validation': self.assertNotIn(('systemctl', 'stop', 'quic-lab'), calls)
+                    if vless: self.assertEqual(('systemctl', 'start', 'quic-lab-vless') in calls, active)
+                if failure in ('validation', 'worker-validation'): self.assertNotIn(('systemctl', 'stop', 'quic-lab'), calls)
             else:
+                if vless:
+                    self.assertEqual((i.OPT / 'quic-lab-vless').read_bytes(), b'new-worker')
+                    applied_check.assert_called()
+                    self.assertIn(('systemctl', 'restart', 'quic-lab-vless'), calls)
                 self.assertEqual(json.loads((i.CONFIG / 'admin.json').read_text())['password'], cfg['password'])
                 self.assertEqual(json.loads((i.CONFIG / 'install.json').read_text())['frontend'], mode)
-                self.assertEqual(next(i.CONFIG.glob('backup-*/identities.json')).read_bytes(), b'synthetic-users-devices-key')
+                self.assertEqual(next(i.CONFIG.glob('backup-*/identities.json')).read_bytes(), initial_identity)
+    def test_vless_unapplied_listener_triggers_recovery(self): self.exercise(failure='vless-apply', vless=True)
+    def test_vless_failed_health_preserves_revocations_and_stops_services(self): self.exercise(failure='health', vless=True)
+    def test_vless_validation_precedes_all_mutations(self): self.exercise(failure='worker-validation', vless=True)
+    def test_vless_upgrade_updates_managed_worker(self): self.exercise(vless=True)
+    def test_vless_snapshot_failure_resumes_previously_active_workers(self): self.exercise(failure='snapshot', vless=True)
+    def test_vless_snapshot_failure_keeps_inactive_workers_stopped(self): self.exercise(failure='snapshot', active=False, vless=True)
     def test_durability_failure_never_starts_new_server(self): self.exercise(failure='sync')
     def test_snapshot_failure_restarts_previously_active_service(self): self.exercise(failure='snapshot')
     def test_snapshot_failure_keeps_stopped_service_stopped(self): self.exercise(failure='snapshot', active=False)
@@ -305,6 +341,101 @@ class DurableUpgradeTests(unittest.TestCase):
             with patch.object(i, 'sync_directory', side_effect=OSError('disk sync failed')):
                 with self.assertRaises(OSError): i.snapshot_identities(data, backup)
             self.assertEqual((data / 'identities.json').read_bytes(), b'old-state')
+
+class VLESSPackagingTests(unittest.TestCase):
+    def test_applied_check_uses_current_revision_without_secrets(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            (data / 'identities.json').write_text(json.dumps(dict(vless_revision=9)))
+            with patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+                self.assertTrue(i.vless_applied(Path('/worker'), data))
+                self.assertEqual(run.call_args.args[0][-7:], ['--', '/worker', '-data-dir', str(data / 'vless'), '-check-applied', '-revision', '9'])
+                self.assertIn('--property=User=quic-lab', run.call_args.args[0])
+                self.assertIn('--property=DynamicUser=yes', run.call_args.args[0])
+                self.assertIn('--property=StateDirectory=quic-lab', run.call_args.args[0])
+            with patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
+                self.assertFalse(i.vless_applied(Path('/worker'), data))
+            (data / 'identities.json').write_text('{}')
+            with patch.object(i.subprocess, 'run') as run:
+                self.assertFalse(i.vless_applied(Path('/worker'), data))
+                run.assert_not_called()
+
+    def test_opt_in_uses_free_dedicated_tls_port_and_worker_credentials(self):
+        self.assertTrue(hasattr(i, 'vless_settings'), 'missing VLESS configuration resolver')
+        with tempfile.TemporaryDirectory() as tmp:
+            config, managed = i.vless_settings(SimpleNamespace(enable_vless=True), None, Path(tmp), i.DEFAULT_PORTS, 'nginx', 'lab.example.org')
+            self.assertTrue(managed)
+            self.assertEqual(config['listen'], '0.0.0.0:9443')
+            self.assertEqual(config['endpoint'], 'lab.example.org:9443')
+            self.assertEqual(config['tls_key_file'], '/run/credentials/quic-lab-vless.service/key.pem')
+            self.assertEqual(config['tls_certificate_file'], '/run/credentials/quic-lab-vless.service/cert.pem')
+            self.assertEqual(config['security'], 'tls')
+            self.assertEqual(config['mode'], 'standalone')
+            self.assertEqual(i.vless_settings(SimpleNamespace(), None, Path(tmp), i.DEFAULT_PORTS, 'nginx', 'lab.example.org'), (None, False))
+
+    def test_persisted_ui_settings_override_initial_admin_config(self):
+        import json
+        self.assertTrue(hasattr(i, 'vless_settings'), 'missing VLESS configuration resolver')
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            saved = dict(listen='0.0.0.0:10443', security='reality')
+            (data / 'identities.json').write_text(json.dumps(dict(vless=saved, vless_revision=4)))
+            config, managed = i.vless_settings(SimpleNamespace(enable_vless=True), dict(vless=dict(listen='0.0.0.0:8443')), data, i.DEFAULT_PORTS, 'nginx', 'lab.example.org')
+            self.assertEqual(config, saved)
+            self.assertTrue(managed)
+            (data / 'identities.json').write_text(json.dumps(dict(vless=None, vless_revision=5)))
+            self.assertEqual(i.vless_settings(SimpleNamespace(enable_vless=True), dict(vless=saved), data, i.DEFAULT_PORTS, 'nginx', 'lab.example.org'), (None, True))
+
+    def test_listener_conflict_rejected_before_installation(self):
+        self.assertTrue(hasattr(i, 'vless_settings'), 'missing VLESS configuration resolver')
+        with tempfile.TemporaryDirectory() as tmp:
+            for port in (443, 8443, 8083):
+                with self.subTest(port=port), self.assertRaises(ValueError):
+                    i.vless_settings(SimpleNamespace(enable_vless=True, vless_port=port), None, Path(tmp), i.DEFAULT_PORTS, 'nginx', 'lab.example.org')
+
+    def test_unit_uses_shared_nonroot_user_private_state_and_credentials(self):
+        self.assertTrue(hasattr(i, 'vless_unit_config'), 'missing VLESS service')
+        unit = i.vless_unit_config('/cert.pem', '/key.pem', dict(listen='0.0.0.0:9443'))
+        self.assertIn('User=quic-lab\n', unit)
+        self.assertIn('DynamicUser=yes\n', unit)
+        self.assertIn('StateDirectory=quic-lab\n', unit)
+        self.assertIn('UMask=0077\n', unit)
+        self.assertIn('ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/quic-lab/vless', unit)
+        self.assertIn('LoadCredential=key.pem:/key.pem', unit)
+        self.assertIn('-data-dir /var/lib/quic-lab/vless -admission-dir /var/lib/quic-lab', unit)
+        self.assertNotIn('User=root', unit)
+        self.assertNotIn('CAP_NET_ADMIN', unit)
+        self.assertNotIn('AmbientCapabilities', unit)
+
+class ReleaseArchiveTests(unittest.TestCase):
+    def test_linux_archive_includes_executable_vless_worker_without_text_conversion(self):
+        import os
+        import subprocess
+        import sys
+        import tarfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            builder = Path(__file__).with_name('build-server-release.py')
+            (root / 'scripts/build-server-release.py').write_bytes(builder.read_bytes())
+            for name in ('install-transit.py', 'transit-network.py', 'install-awg.py', 'awg-network.py', 'install-server.py', 'reload-certificate.py', 'publish-apk.sh'):
+                (root / 'scripts' / name).write_text('fixture\n')
+            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
+                (root / folder).mkdir()
+                for name in names: (root / folder / name).write_text('fixture\n')
+            (root / 'THIRD_PARTY_NOTICES.md').write_text('fixture\n')
+            fakebin = root / 'fakebin'; fakebin.mkdir()
+            go = fakebin / 'go'
+            go.write_text('#!' + sys.executable + '\nimport pathlib, sys\npathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"ELF\\r\\n" + sys.argv[-1].encode())\n')
+            go.chmod(0o755)
+            subprocess.run([sys.executable, str(root / 'scripts/build-server-release.py'), '--version', 'packaging-test', '--arch', 'amd64'], check=True, stdout=subprocess.DEVNULL, env={**os.environ, 'PATH': str(fakebin) + os.pathsep + os.environ['PATH']})
+            archive = root / 'artifacts/server-release/quic-lab-server-packaging-test-linux-amd64.tar.gz'
+            with tarfile.open(archive) as tar:
+                name = 'quic-lab-server-packaging-test-linux-amd64/quic-lab-vless'
+                self.assertIn(name, tar.getnames(), 'server archive is missing the managed VLESS worker')
+                self.assertEqual(tar.getmember(name).mode, 0o755)
+                self.assertEqual(tar.extractfile(name).read(), b'ELF\r\n./cmd/vless-server')
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"quiclab/internal/vless"
@@ -217,5 +219,33 @@ func TestConfiguredAdmissionLimitDefaultsAndMaximum(t *testing.T) {
 	}
 	if a := NewAdmission(100); a.limit != 100 {
 		t.Fatal("configured capacity above 30 was reduced")
+	}
+}
+
+func TestVLESSCapacityRejectedBeforePersistence(t *testing.T) {
+	s, _ := managedVLESSFixture(t)
+	u, e := s.CreateWithProtocols("capacity", []string{"vless"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 1; i < 512; i++ {
+		id := fmt.Sprintf("retired-%d", i)
+		s.state.Devices[id] = Device{ID: id, UserID: u.ID, VLESSUUID: fmt.Sprintf("%08x-1111-4111-8111-111111111111", i), Disabled: true, Expires: time.Now().Add(time.Hour)}
+	}
+	if e := s.save(); e != nil {
+		t.Fatal(e)
+	}
+	before, _ := os.ReadFile(s.path)
+	if _, e := s.CreateDevice(u.ID, "overflow"); e == nil {
+		t.Fatal("overflow committed")
+	}
+	after, _ := os.ReadFile(s.path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("overflow changed durable identities")
+	}
+	d := s.state.Devices[u.ID]
+	d.VLESSRevoked = true
+	if e := s.provisionVLESS(&d, u); e != nil {
+		t.Fatal("rotation at capacity rejected")
 	}
 }

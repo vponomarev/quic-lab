@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"quiclab/internal/vless"
 	"quiclab/internal/vlessserver"
 	"sort"
 	"time"
@@ -23,6 +24,17 @@ func (s *Store) provisionVLESS(d *Device, u User) error {
 	}
 	if s.state.VLESS == nil {
 		return errors.New("VLESS server is not configured")
+	}
+	if d.VLESSUUID == "" {
+		count := 0
+		for _, existing := range s.state.Devices {
+			if existing.VLESSUUID != "" {
+				count++
+			}
+		}
+		if count >= vless.MaxServerClients {
+			return errors.New("VLESS configured device limit reached")
+		}
 	}
 	if d.VLESSUUID == "" || d.VLESSRevoked {
 		key, e := newDeviceID()

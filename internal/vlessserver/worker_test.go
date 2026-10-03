@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"quiclab/internal/vless"
@@ -164,5 +165,36 @@ func TestWorkerInactiveRecordsDoNotConsumeAdmissionLimit(t *testing.T) {
 	}
 	if e := w.Apply(context.Background(), s); e != nil {
 		t.Fatal("inactive records treated as active slots")
+	}
+}
+
+func TestWorkerDemuxPinSurvivesRestart(t *testing.T) {
+	w, _ := workerFixture(t)
+	s := sampleSnapshot()
+	s.Config.Mode = "demux-only"
+	s.Config.DemuxEndpoint = "demux.example:2443"
+	w.resolver = &changingResolver{addresses: []net.IPAddr{{IP: net.ParseIP("127.0.0.2")}}}
+	if e := w.Apply(context.Background(), s); e != nil {
+		t.Fatal(e)
+	}
+	w.Close()
+	next, e := OpenWorker(context.Background(), w.dir, func(context.Context, string, string) (time.Duration, error) { return time.Second, nil })
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer next.Close()
+	resolver := &changingResolver{addresses: []net.IPAddr{{IP: net.ParseIP("127.0.0.3")}}}
+	next.resolver = resolver
+	next.start = func(_ context.Context, o vless.ServerOptions) (managedServer, error) {
+		if o.DemuxEndpoint != "127.0.0.2:2443" {
+			t.Fatal("same revision changed pinned destination")
+		}
+		return &fakeManagedServer{revoked: map[string]bool{}}, nil
+	}
+	if e := next.Apply(context.Background(), s); e != nil {
+		t.Fatal(e)
+	}
+	if resolver.calls != 0 {
+		t.Fatal("same revision resolved DNS again")
 	}
 }

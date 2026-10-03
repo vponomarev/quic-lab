@@ -32,8 +32,12 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
         transit = Path(tmp) / "quic-lab-transit"
         subprocess.run(["go", "build", "-trimpath", "-o", str(transit), "./cmd/awg-transit"], cwd=root,
                        env={**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}, check=True)
+        vless = Path(tmp) / "quic-lab-vless"
+        subprocess.run(["go", "build", "-trimpath", "-o", str(vless), "./cmd/vless-server"], cwd=root,
+                       env={**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}, check=True)
         archive = out / (name + ".tar.gz")
-        files = [(transit, "quic-lab-transit", 0o755),
+        files = [(vless, "quic-lab-vless", 0o755),
+                 (transit, "quic-lab-transit", 0o755),
                  (root / "scripts/install-transit.py", "install-transit.py", 0o755),
                  (root / "scripts/transit-network.py", "transit-network.py", 0o755), (binary, "quic-lab-server", 0o755), (worker, "quic-lab-awg", 0o755),
                  (root / "scripts/install-awg.py", "install-awg.py", 0o755),
@@ -44,6 +48,8 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                  (root / "docs/install-server.md", "README.md", 0o644),
                  (root / "docs/phase1-upgrade.md", "phase1-upgrade.md", 0o644),
                  (root / "docs/server-config.md", "server-config.md", 0o644),
+                 (root / "docs/vless-server.md", "vless-server.md", 0o644),
+                 (root / "docs/vless-compatibility.md", "vless-compatibility.md", 0o644),
                  (root / "deploy/quic-lab.service", "deploy/quic-lab.service", 0o644),
                  (root / "deploy/quic-lab-public.service", "deploy/quic-lab-public.service", 0o644),
                  (root / "examples/server.json", "server.example.json", 0o644),
@@ -56,7 +62,7 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                 info = tar.gettarinfo(str(source), arcname=name + "/" + target)
                 info.mode, info.uid, info.gid, info.uname, info.gname = mode, 0, 0, "root", "root"
                 data = source.read_bytes()
-                if source not in (binary, worker, transit):
+                if source not in (binary, worker, transit, vless):
                     data = data.replace(b"\r\n", b"\n")
                 info.size = len(data)
                 tar.addfile(info, io.BytesIO(data))

@@ -12,7 +12,7 @@ import (
 )
 
 func privateDirectory(dir string) error {
-	st, e := os.Lstat(dir)
+	st, e := os.Stat(dir)
 	if e != nil {
 		return errConfig
 	}

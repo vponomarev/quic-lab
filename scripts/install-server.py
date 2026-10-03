@@ -23,6 +23,7 @@ DATA = Path("/var/lib/quic-lab")
 SITE = Path("/etc/nginx/sites-available/quic-lab")
 ENABLED = Path("/etc/nginx/sites-enabled/quic-lab")
 UNIT = Path("/etc/systemd/system/quic-lab.service")
+VLESS_UNIT = Path("/etc/systemd/system/quic-lab-vless.service")
 HOOK = Path("/etc/letsencrypt/renewal-hooks/deploy/quic-lab")
 WEBROOT = "/var/www/quic-lab"
 
@@ -305,6 +306,106 @@ WantedBy=multi-user.target
 """
 
 
+def vless_settings(args, cfg, data, ports, frontend, domain):
+    """Durable UI configuration takes precedence over first-enable provisioning."""
+    initial = (cfg or {}).get("vless")
+    saved = {}
+    identity = data / "identities.json"
+    if identity.is_file() and not identity.is_symlink():
+        try:
+            saved = json.loads(identity.read_text())
+        except (ValueError, UnicodeError):
+            if initial or getattr(args, "enable_vless", False) or (data / "vless").exists():
+                raise RuntimeError("Cannot inspect durable VLESS settings; repair identity state first") from None
+        if not isinstance(saved, dict):
+            saved = {}
+    managed = bool(initial or saved.get("vless") or saved.get("vless_revision") or
+                   (data / "vless").exists() or getattr(args, "enable_vless", False))
+    # A saved disable is authoritative, including when --enable-vless is repeated.
+    desired = saved.get("vless") if saved.get("vless_revision") or "vless" in saved else initial
+    if not desired and not saved.get("vless_revision") and getattr(args, "enable_vless", False):
+        occupied = {80, 443, 8081, 8082, 8083, ports["mtls_port"]}
+        chosen = getattr(args, "vless_port", None)
+        port = port_number(chosen if chosen is not None else next(p for p in (8443, 9443, 10443) if p not in occupied))
+        desired = dict(listen=f"0.0.0.0:{port}", endpoint=f"{domain}:{port}", security="tls",
+                       server_name=domain, fingerprint="chrome", flow="", mode="standalone",
+                       tls_certificate_file="/run/credentials/quic-lab-vless.service/cert.pem",
+                       tls_key_file="/run/credentials/quic-lab-vless.service/key.pem")
+    elif desired and getattr(args, "vless_port", None) is not None:
+        if port_number(desired["listen"].rsplit(":", 1)[1]) != args.vless_port:
+            raise ValueError("VLESS already configured; change its listener in the administrator UI")
+    if desired:
+        port = port_number(desired["listen"].rsplit(":", 1)[1])
+        if port in {80, 443, 8081, 8082, 8083, ports["mtls_port"]}:
+            raise ValueError("VLESS TCP listener conflicts with the frontend or another backend")
+    return desired, managed
+
+
+def vless_applied(binary, data):
+    """Read the backend's desired revision and ask its private worker for an ACK."""
+    try:
+        state = json.loads((data / "identities.json").read_text())
+        revision = state.get("vless_revision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision <= 0:
+            return False
+        result = subprocess.run(["systemd-run", "--quiet", "--pipe", "--wait", "--collect",
+                                 "--property=User=quic-lab", "--property=DynamicUser=yes",
+                                 "--property=StateDirectory=quic-lab", "--property=StateDirectoryMode=0700",
+                                 "--property=NoNewPrivileges=yes", "--property=ProtectSystem=strict",
+                                 "--property=ProtectHome=yes", "--", str(binary),
+                                 "-data-dir", str(data / "vless"), "-check-applied",
+                                 "-revision", str(revision)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        return result.returncode == 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def validate_vless(binary, config):
+    if not binary.is_file():
+        raise RuntimeError("Bundled VLESS worker missing; use a current server archive or --vless-binary PATH")
+    try:
+        run(str(binary.resolve()), "-h", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if config:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as pending:
+                json.dump(config, pending); pending.flush()
+                run(str(binary.resolve()), "-check-config", pending.name,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        raise RuntimeError("VLESS worker/configuration preflight failed; existing installation unchanged") from None
+
+
+def vless_unit_config(cert, key, config):
+    port = port_number(config["listen"].rsplit(":", 1)[1]) if config else 8443
+    capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n" if port < 1024 else "CapabilityBoundingSet=\n"
+    return f"""{MARKER}
+[Unit]
+Description=QUIC Lab managed VLESS transport
+After=network-online.target quic-lab.service
+Wants=network-online.target quic-lab.service
+
+[Service]
+Type=simple
+User=quic-lab
+DynamicUser=yes
+StateDirectory=quic-lab
+StateDirectoryMode=0700
+UMask=0077
+{capability}LoadCredential=cert.pem:{cert}
+LoadCredential=key.pem:{key}
+ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/quic-lab/vless
+ExecStart=/opt/quic-lab/quic-lab-vless -data-dir /var/lib/quic-lab/vless -admission-dir /var/lib/quic-lab
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+
 def owned(path):
     if path.is_symlink() or (path.exists() and MARKER not in path.read_text().splitlines()[:2]):
         raise RuntimeError(f"Refusing to overwrite unmanaged file: {path}. See migration instructions.")
@@ -353,6 +454,9 @@ def main():
     parser.add_argument("--tls-fallback", help="Direct frontend: pass other TLS SNI names to this host:port, including remote hosts")
     parser.add_argument("--email", help="Optional Let's Encrypt account email")
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-server")
+    parser.add_argument("--enable-vless", action="store_true", help="Provision optional managed VLESS with TLS on a dedicated TCP port")
+    parser.add_argument("--vless-port", type=port_number, help="Initial VLESS TCP port: first available of 8443, 9443, 10443; requires --enable-vless")
+    parser.add_argument("--vless-binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-vless")
     parser.add_argument("--enable-awg", action="store_true", help="Enable optional AmneziaWG worker (dedicated UDP port and firewall chains)")
     parser.add_argument("--awg-address", help="Initial AWG server IPv4/prefix, e.g. 10.77.0.1/24")
     parser.add_argument("--awg-port", type=port_number, help="AWG UDP port; initial default 51820")
@@ -369,6 +473,8 @@ def main():
     args = parser.parse_args()
     if (args.awg_port or args.awg_address) and not args.enable_awg:
         parser.error("--awg-port/--awg-address require --enable-awg")
+    if args.vless_port and not args.enable_vless:
+        parser.error("--vless-port requires --enable-vless")
     if os.geteuid() != 0:
         parser.error("Run with sudo/root.")
     if bool(args.cert) != bool(args.key):
@@ -438,6 +544,14 @@ def install(args):
     env_file = CONFIG / "server.env"
     if args.gateway_allow and (env_file.exists() or server_file.exists()):
         raise RuntimeError("Policy already exists; edit gateway_allow in /etc/quic-lab/server.json and restart the service instead.")
+    desired_vless, vless_managed = vless_settings(args, cfg, DATA, ports, frontend, args.domain)
+    vless_managed = vless_managed or VLESS_UNIT.exists()
+    vless_binary_source = getattr(args, "vless_binary", Path(__file__).with_name("quic-lab-vless"))
+    if vless_managed:
+        owned(VLESS_UNIT)
+        for dropin in VLESS_UNIT.with_name(VLESS_UNIT.name + ".d").glob("*.conf"):
+            raise RuntimeError("VLESS unit has local overrides; review and migrate them before updating")
+        validate_vless(vless_binary_source, desired_vless)
     desired_server = server_config(ports, frontend, args.domain, args.gateway_allow or legacy_policy(env_file), previous_server, args)
     # Validate before changing packages, configs, nginx or a running service.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as pending:
@@ -465,11 +579,12 @@ def install(args):
     if old_config is not None:
         backup = CONFIG / ("backup-" + time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3))
         backup.mkdir(mode=0o700)
-        for source in (existing, server_file, state_file, env_file, UNIT, HOOK, SITE):
+        for source in (existing, server_file, state_file, env_file, UNIT, VLESS_UNIT, HOOK, SITE):
             if source.is_file(): atomic(backup / (source.parent.name + "-" + source.name), source.read_bytes(), 0o600)
         print(f"Previous configuration saved in {backup}", flush=True)
     if not existing.exists():
         cfg = admin_config(args.domain, ports)
+        if desired_vless: cfg["vless"] = desired_vless
         atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
         credentials = f"URL: {cfg['public_url']}login\nLogin: {cfg['username']}\nPassword: {cfg['password']}\n"
         atomic(CONFIG / "admin-credentials.txt", credentials, 0o600)
@@ -498,7 +613,8 @@ def install(args):
 {MARKER}
 set -eu
 [ "${{RENEWED_LINEAGE:-}}" = "/etc/letsencrypt/live/{args.domain}" ] || exit 0
-{reload_nginx}if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
+{reload_nginx}if systemctl is-active --quiet quic-lab-vless; then systemctl restart quic-lab-vless; fi
+if systemctl is-active --quiet quic-lab; then systemctl restart quic-lab; fi
 """, 0o755)
         run("systemctl", "enable", "--now", "certbot.timer")
     run("openssl", "x509", "-in", cert, "-noout", "-checkhost", args.domain)
@@ -512,10 +628,19 @@ set -eu
     old_binary = binary.read_bytes() if binary.exists() else None
     old_unit = UNIT.read_bytes() if UNIT.exists() else None
     was_active = subprocess.run(["systemctl", "is-active", "--quiet", "quic-lab"]).returncode == 0
+    worker_binary = OPT / "quic-lab-vless"
+    old_worker_binary = worker_binary.read_bytes() if worker_binary.exists() else None
+    old_worker_unit = VLESS_UNIT.read_bytes() if VLESS_UNIT.exists() else None
+    worker_was_active = vless_managed and subprocess.run(["systemctl", "is-active", "--quiet", "quic-lab-vless"]).returncode == 0
+    worker_stopped = False
+    new_started = False
     snapshot_complete = False
     stopped = False
     replaced = False
     try:
+        if vless_managed and old_worker_unit is not None:
+            run("systemctl", "stop", "quic-lab-vless")
+            worker_stopped = True
         if old_config is not None:
             run("systemctl", "stop", "quic-lab")
             stopped = True
@@ -526,17 +651,27 @@ set -eu
         replaced = True
         atomic(binary, args.binary.read_bytes(), 0o755)
         atomic(UNIT, unit_config(cert, key, ports, frontend))
+        if vless_managed:
+            if old_worker_binary is not None:
+                atomic(OPT / "quic-lab-vless.previous", old_worker_binary, 0o755)
+            atomic(worker_binary, vless_binary_source.read_bytes(), 0o755)
+            atomic(VLESS_UNIT, vless_unit_config(cert, key, desired_vless))
         atomic(server_file, json.dumps(desired_server, indent=2) + "\n", 0o600)
         if old_config is not None:
             for name, section, field in (("echo_quic_port", "echo", "endpoint"), ("vpn_quic_port", "vpn", "quic"), ("mtls_port", "vpn", "https")):
                 # Keep custom hostnames, account, routing and all other settings.
                 host = cfg[section][field].rsplit(":", 1)[0]
                 cfg[section][field] = f"{host}:{ports[name]}"
+            if desired_vless and not cfg.get("vless"): cfg["vless"] = desired_vless
             atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
         atomic(state_file, json.dumps(dict(domain=args.domain, cert=cert, key=key, custom_cert=custom_cert, ports=ports, frontend=frontend), indent=2) + "\n", 0o600)
         run("systemctl", "daemon-reload")
         run("systemctl", "enable", "quic-lab")
+        new_started = True  # Even a failing restart can briefly accept mutations.
         run("systemctl", "restart", "quic-lab")
+        if vless_managed:
+            run("systemctl", "enable", "quic-lab-vless")
+            run("systemctl", "restart", "quic-lab-vless")
         ready = False
         for _ in range(20):
             time.sleep(0.5)
@@ -544,6 +679,9 @@ set -eu
                 with urllib.request.urlopen("http://127.0.0.1:8083/", timeout=2) as response:
                     ready = response.status == 200
                 ready = ready and subprocess.run(["systemctl", "is-active", "--quiet", "quic-lab"]).returncode == 0
+                if vless_managed:
+                    ready = ready and subprocess.run(["systemctl", "is-active", "--quiet", "quic-lab-vless"]).returncode == 0
+                    if desired_vless: ready = ready and vless_applied(worker_binary, DATA)
                 if ready:
                     break
             except OSError:
@@ -554,9 +692,24 @@ set -eu
         if not replaced:
             if stopped and was_active:
                 run("systemctl", "start", "quic-lab")
+            if worker_stopped and worker_was_active:
+                run("systemctl", "start", "quic-lab-vless")
             raise
+        if vless_managed:
+            run("systemctl", "stop", "quic-lab-vless")
         run("systemctl", "stop", "quic-lab")
-        if snapshot_complete:
+        preserve_revocations = vless_managed and new_started
+        if preserve_revocations:
+            # Keep recovery fail-closed across reboot and dependency activation.
+            marker = CONFIG / "recovery-required"
+            atomic(marker, "Inspect current identities and VLESS tombstones before resuming.\n", 0o600)
+            for guarded_unit in (UNIT, VLESS_UNIT):
+                dropins = guarded_unit.with_name(guarded_unit.name + ".d")
+                dropins.mkdir(mode=0o755, parents=True, exist_ok=True)
+                atomic(dropins / "90-quic-lab-recovery.conf",
+                       f"{MARKER}\n[Unit]\nConditionPathExists=!{marker}\n", 0o644)
+            run("systemctl", "daemon-reload")
+        if snapshot_complete and not preserve_revocations:
             restore_identities(DATA, backup)
         if old_server is not None:
             atomic(server_file, old_server, 0o600)
@@ -568,13 +721,22 @@ set -eu
             atomic(state_file, old_state, 0o600)
         elif old_config is not None:
             state_file.unlink(missing_ok=True)
+        if vless_managed:
+            if old_worker_binary is not None: atomic(worker_binary, old_worker_binary, 0o755)
+            else: worker_binary.unlink(missing_ok=True)
+            if old_worker_unit is not None: atomic(VLESS_UNIT, old_worker_unit)
+            else: VLESS_UNIT.unlink(missing_ok=True)
         if old_binary is not None and old_unit is not None:
             atomic(binary, old_binary, 0o755)
             atomic(UNIT, old_unit)
             run("systemctl", "daemon-reload")
-            if was_active:
+            if was_active and not preserve_revocations:
                 run("systemctl", "start", "quic-lab")
+            if worker_was_active and not preserve_revocations:
+                run("systemctl", "start", "quic-lab-vless")
             print("Previous server binary and unit restored.", file=sys.stderr)
+        if preserve_revocations:
+            raise RuntimeError("Upgrade failed after services started. Identities and VLESS tombstones preserved; quic-lab and quic-lab-vless left stopped with persistent recovery gates. Inspect /etc/quic-lab/recovery-required and unit drop-ins. Install a compatible release and inspect durable state before restarting; never restore identity/worker-state backups.") from None
         raise
     if args.apk:
         # StateDirectory belongs to DynamicUser; preserve its ownership.
@@ -588,7 +750,9 @@ set -eu
         if args.awg_address:
             command += ["--address", args.awg_address]
         run(*command)
-    tcp_ports = ",".join(str(p) for p in sorted({80, 443, ports["mtls_port"]}))
+    exposed_tcp = {80, 443, ports["mtls_port"]}
+    if desired_vless: exposed_tcp.add(port_number(desired_vless["listen"].rsplit(":", 1)[1]))
+    tcp_ports = ",".join(str(p) for p in sorted(exposed_tcp))
     print(f"Frontend: {frontend}\nReady: https://{args.domain}/lab/\nConfig: /etc/quic-lab/server.json and admin.json\n"
           "Credentials: /etc/quic-lab/admin-credentials.txt (first installation)\n"
           f"Allow inbound TCP {tcp_ports} and UDP {ports['echo_quic_port']},{ports['vpn_quic_port']} in host/cloud firewalls.\n"

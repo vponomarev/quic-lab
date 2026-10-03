@@ -80,3 +80,11 @@ A separate Vision regression feeds a 16 KiB application write through upstream R
 - One fresh review identified inbound UDP fragmentation; its regression is fixed. Additional live-test and parent-review regressions (dial-context ownership and Vision buffer size) are fixed and covered. Source scan found no private fixture credentials.
 
 V1 is an accepted local development checkpoint. No production server update, GitHub release or push was performed. V2 managed server is the next delivery; V3 demux continuity and subscriptions remain future scope. Existing phase-one all-apps Android limitation and outstanding long-run/load gates are unchanged.
+
+## V2 managed-server acceptance (2026-10-03)
+
+Managed Linux TLS and REALITY/Vision server, private worker/control/admission and Android managed profile integration are implemented. See [server behavior and acceptance](vless-server.md). Public isolated tests passed Android HTTPS/UDP on Wi-Fi, LTE and Wi-Fi return for both transports; stock Xray CLI TCP/UDP also passed. Five simultaneous connections per test UUID were revoked without dropping the sibling UUID; restart continued denying revoked credentials.
+
+XUDP GlobalID is deliberately normalized to zero to prevent cross-device association reuse in the process-global upstream cache. No UDP association resumption across outer connections is promised. The full race gate requires disabling checkptr only in upstream Xray VLESS packages because Vision uses unsafe pointer arithmetic; project packages retain checkptr and the race detector remains enabled. This does not resolve the pre.5 external-profile LTE issue.
+
+No512-device/100Mbps load result or repeated optical camera QR scan is claimed. Server binary delivery uses the existing installer; publication/deployment remains a separate checkpoint.

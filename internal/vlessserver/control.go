@@ -15,6 +15,10 @@ import (
 const maxControlMessage = 128 * 1024
 
 type ControlClient struct{ Dir string }
+type controlRequest struct {
+	Snapshot
+	Status bool
+}
 type controlResponse struct {
 	Revision uint64 `json:"revision"`
 	Applied  bool   `json:"applied"`
@@ -156,10 +160,16 @@ func serve(ctx context.Context, dir, name string, timeout time.Duration, handle 
 }
 func ServeControl(ctx context.Context, w *Worker) (func(), error) {
 	return serve(ctx, w.dir, "vless-control.sock", 8*time.Second, func(ctx context.Context, c net.Conn) {
-		var s Snapshot
+		var s controlRequest
 		reply := controlResponse{}
-		if readMessage(c, &s) == nil && w.Apply(ctx, s) == nil {
-			reply = controlResponse{Revision: s.Revision, Applied: true}
+		if readMessage(c, &s) == nil {
+			if s.Status {
+				w.mu.Lock()
+				reply = controlResponse{Revision: w.record.Desired.Revision, Applied: w.live != nil && !w.closed && !w.writeFailed && w.applied == w.record.Desired.Revision}
+				w.mu.Unlock()
+			} else if w.Apply(ctx, s.Snapshot) == nil {
+				reply = controlResponse{Revision: s.Revision, Applied: true}
+			}
 		}
 		writeMessage(c, reply)
 	})
@@ -175,4 +185,12 @@ func ServeAdmission(ctx context.Context, dir string, renew AdmissionFunc) (func(
 		}
 		writeMessage(c, reply)
 	})
+}
+
+func (c ControlClient) CheckApplied(ctx context.Context, revision uint64) error {
+	var reply controlResponse
+	if revision == 0 || request(ctx, c.Dir, "vless-control.sock", time.Second, controlRequest{Status: true}, &reply) != nil || !reply.Applied || reply.Revision != revision {
+		return errApply
+	}
+	return nil
 }

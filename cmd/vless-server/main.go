@@ -23,7 +23,12 @@ func run() error {
 	dir := flag.String("data-dir", "/var/lib/quic-lab/vless", "private VLESS worker directory")
 	admission := flag.String("admission-dir", "/var/lib/quic-lab", "private admission broker directory")
 	check := flag.String("check-config", "", "validate private typed configuration without starting services")
+	health := flag.Bool("check-applied", false, "check worker applied revision without modifying state")
+	revision := flag.Uint64("revision", 0, "expected revision for health check")
 	flag.Parse()
+	if *health {
+		return (vlessserver.ControlClient{Dir: *dir}).CheckApplied(context.Background(), *revision)
+	}
 	if *check != "" {
 		_, e := vlessserver.ReadConfig(*check)
 		return e
