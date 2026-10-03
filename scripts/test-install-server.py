@@ -225,7 +225,10 @@ class UpgradeStateTests(unittest.TestCase):
 
 
 class UpgradeInstallTests(unittest.TestCase):
-    def exercise(self, mode='direct', failure=None, active=True, vless=False, migrate=False, second_name=False):
+    def test_existing_awg_is_upgraded_without_enable_flag(self):
+        self.exercise(awg=True)
+
+    def exercise(self, mode='direct', failure=None, active=True, vless=False, migrate=False, second_name=False, awg=False):
         import json
         import ssl
         import subprocess
@@ -237,6 +240,7 @@ class UpgradeInstallTests(unittest.TestCase):
             stack.enter_context(patch.object(i, 'WEBROOT', str(root / 'webroot')))
             for folder in (i.CONFIG, i.OPT, i.DATA): folder.mkdir()
             cfg = i.admin_config('lab.example.org')
+            if awg: cfg['awg'] = dict(endpoint='lab.example.org:51820', address='10.77.0.1/24')
             if vless: cfg['vless'] = dict(listen='0.0.0.0:9443', endpoint='lab.example.org:9443', security='tls', server_name='lab.example.org', fingerprint='chrome', flow='', mode='standalone', tls_certificate_file='/run/credentials/quic-lab-vless.service/cert.pem', tls_key_file='/run/credentials/quic-lab-vless.service/key.pem')
             if vless and second_name: cfg['vless'].update(server_name='ui.lab.example.org', endpoint='ui.lab.example.org:9443')
             (i.CONFIG / 'admin.json').write_text(json.dumps(cfg))
@@ -295,11 +299,13 @@ class UpgradeInstallTests(unittest.TestCase):
             stack.enter_context(patch.object(i.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0 if active else 3)))
             http = MagicMock(); http.__enter__.return_value.status = 200
             stack.enter_context(patch.object(i.urllib.request, 'urlopen', return_value=http, side_effect=OSError('health') if failure == 'health' else None))
-            args = SimpleNamespace(migrate_unified=migrate, vless_server_name='ui.lab.example.org' if migrate else None, vless_port=9444 if migrate else None, domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False, enable_vless=False, vless_binary=worker_candidate)
+            args = SimpleNamespace(migrate_unified=migrate, vless_server_name='ui.lab.example.org' if migrate else None, vless_port=9444 if migrate else None, domain='lab.example.org', cert=None, key=None, apk=None, binary=candidate, frontend=None, tls_fallback=None, gateway_allow=None, email=None, enable_awg=False, awg_port=None, awg_address=None, enable_vless=False, vless_binary=worker_candidate)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 if failure:
                     with self.assertRaises((RuntimeError, OSError)): i.install(args)
                 else: i.install(args)
+            if awg and not failure:
+                self.assertTrue(any(len(c)>1 and str(c[1]).endswith('install-awg.py') for c in calls), 'existing AWG worker must be upgraded without enable flag')
             if failure:
                 for name, content in before.items(): self.assertEqual((i.CONFIG / name).read_bytes(), content)
                 self.assertEqual((i.OPT / 'quic-lab-server').read_bytes(), b'old')

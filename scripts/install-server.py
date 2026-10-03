@@ -974,7 +974,8 @@ def install(args):
         downloads = Path("/var/lib/quic-lab/downloads")
         downloads.mkdir(mode=0o755, exist_ok=True)
         atomic(downloads / "quic-lab.apk", args.apk.read_bytes())
-    if args.enable_awg:
+    # An enabled transport must be upgraded with the server, even without opt-in flags.
+    if args.enable_awg or (cfg and cfg.get("awg")):
         command = [sys.executable, str(Path(__file__).with_name("install-awg.py")), "--binary", str(Path(__file__).with_name("quic-lab-awg"))]
         if args.awg_port:
             command += ["--port", str(args.awg_port)]
