@@ -195,3 +195,16 @@ func TestBackoffAndProgressReset(t *testing.T) {
 		t.Fatal("idle time reset backoff")
 	}
 }
+
+func TestIntermittentUsefulProgressResetsBackoff(t *testing.T) {
+	p := fixture()
+	c := &candidate{profile: p.profiles[0], id: "manual", state: "ready", generation: 1, failures: 6}
+	p.paths[c.id] = c
+	now := time.Unix(100, 0)
+	for tick := 0; tick <= 310; tick++ {
+		p.Observe(Observation{PathID: c.id, Generation: 1, At: now.Add(time.Duration(tick) * 100 * time.Millisecond), AckedBytes: uint64(tick/10 + 1)})
+	}
+	if c.failures != 0 {
+		t.Fatal("healthy intermittent ACKs never reset policy backoff")
+	}
+}

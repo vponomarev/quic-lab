@@ -74,8 +74,10 @@ class LabVpnService : VpnService() {
         try {
             // One shared meter survives every exit reconnect in this VPN run.
             val runBudget = budgetRun.start(VpnBudgetSettings.limitBytes(this))
+            val dashboardRunId=JSONObject(runBudget.snapshot()).getString("epoch")
             if (VpnProfiles.multiple(this)) {
                 val plan=MultipleVpnPlan.load(this)
+                VpnDashboardEvents.beginRun(dashboardRunId,plan.profiles.associate {it.id to it.name}) {runBudget.snapshot()}
                 tun=Builder().setSession("QUIC Lab · multiple").setMtu(1280).addAddress("10.254.254.1",32)
                     .addRoute("0.0.0.0",0).addDnsServer(plan.dns).addDisallowedApplication(packageName)
                     .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
@@ -131,13 +133,14 @@ class LabVpnService : VpnService() {
                     .put("control_url", prefs.getString("control_url", ""))
                     .put("android_version_code", BuildConfig.VERSION_CODE)
                     .put("data_version", prefs.getInt("data_version", 0))
-                    .put("probe_exit_ip", mode != 3)
+                    .put("probe_exit_ip", true)
                     .put("ca", prefs.getString("ca", ""))
                     .put("dns", prefs.getString("dns", "1.1.1.1"))
             val endpoint = prefs.getString("endpoint", "")!!
             val hostname = prefs.getString("hostname", "")!!
             val cm = getSystemService(ConnectivityManager::class.java)
             val exitId = VpnProfiles.current(this).id
+            VpnDashboardEvents.beginRun(dashboardRunId,mapOf(exitId to VpnProfiles.current(this).name)) {runBudget.snapshot()}
             VpnProfiles.configuration(this)
             val dnsOwner=VpnDnsPolicy(this,VpnProfiles.dnsMode(this),exitId)
             dnsPolicy=dnsOwner
@@ -151,7 +154,10 @@ class LabVpnService : VpnService() {
                     override fun onEvent(eventJSON:String) {
                         val event=JSONObject(eventJSON)
                         if(event.optString("event")=="profile_traffic" && event.optString("profile_id")!=exitId) return
-                        handler.post {if(singleRouterToken===routerToken) record(event)}
+                        handler.post {if(singleRouterToken===routerToken) {
+                            VpnDashboardEvents.record(dashboardRunId,exitId,exits?.token(exitId) ?: 0L,event)
+                            record(event)
+                        }}
                     }
                 },
             )
@@ -174,9 +180,10 @@ class LabVpnService : VpnService() {
                     .put("control_url", prefs.getString("control_url", ""))
                     .put("android_version_code", BuildConfig.VERSION_CODE)
                     .put("data_version", prefs.getInt("data_version", 0))
-                    .put("probe_exit_ip", mode != 3)
+                    .put("probe_exit_ip", true)
                     .put("ca", prefs.getString("ca", ""))
                     .put("dns", prefs.getString("dns", "1.1.1.1"))
+            VpnConfiguration.attachRuntime(this,id,cfg)
             val endpoint = prefs.getString("endpoint", "")!!
             val hostname = prefs.getString("hostname", "")!!
 
@@ -203,6 +210,9 @@ class LabVpnService : VpnService() {
                         handler.post {
                             controller.withCurrent(id, token) {
                                 if (type == "operation_failed") starting = false
+                                val scoped=JSONObject(event.toString()).put("exit_id",id)
+                                    .put("runtime_generation",event.optLong("generation")).put("generation",token)
+                                VpnDashboardEvents.record(dashboardRunId,id,token,scoped)
                                 controller.event(id, token, type)
                                 record(event)
                             }
@@ -278,6 +288,7 @@ class LabVpnService : VpnService() {
         runCatching { exits?.stopAll() }.onFailure { Diagnostics.event("vpn", JSONObject().put("event", "close_failed").put("error", it.toString())) }
         exits = null
         session = null
+        VpnDashboardEvents.clearRun()
         budgetRun.stop()
         runCatching { tun?.close() }
         tun = null
@@ -297,6 +308,29 @@ class LabVpnService : VpnService() {
 
     companion object {
         @Volatile private var liveService: LabVpnService? = null
+        /** Diagnostics never create a service, a VPN run, or a replacement exit. */
+        internal fun echoExits(): Map<String,String> {
+            val service = liveService?.takeIf { active } ?: return emptyMap()
+            return VpnDashboardEvents.names().filterKeys { id ->
+                (service.multiple?.echoSession(id) ?: service.exits?.session(id)) != null
+            }
+        }
+        internal fun startExitEcho(exitId: String, target: String, intervalMs: Long,
+                                   output: (JSONObject) -> Unit): AutoCloseable {
+            val service = liveService?.takeIf { active } ?: error("VPN выключен")
+            val session = service.multiple?.echoSession(exitId) ?: service.exits?.session(exitId)
+                ?: error("Выбранный VPN-выход недоступен")
+            val generation = service.multiple?.echoGeneration(exitId) ?: service.exits?.token(exitId)
+                ?: error("Выход остановлен")
+            val runId = VpnDashboardEvents.runId ?: error("VPN выключен")
+            return session.startExitEcho(target,intervalMs) { event ->
+                val current = service.multiple?.echoSession(exitId) ?: service.exits?.session(exitId)
+                if (event.optBoolean("terminal") ||
+                    liveService === service && active && current === session && VpnDashboardEvents.runId == runId) {
+                    output(JSONObject(event.toString()).put("exit_id",exitId).put("generation",generation).put("run_id",runId))
+                }
+            }
+        }
         private val offlineBudget = VpnBudgetRun()
 
         @Volatile internal var updateRuntime: VpnProfileUpdateRuntime? = null

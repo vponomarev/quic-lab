@@ -162,16 +162,39 @@ func Open(ctx context.Context, open func(context.Context) (Stream, error), netwo
 }
 func OpenWithReply(ctx context.Context, open func(context.Context) (Stream, error), network, address string) (Stream, Reply, error) {
 	var reply Reply
+	if err := ctx.Err(); err != nil {
+		return nil, reply, err
+	}
 	s, e := open(ctx)
 	if e != nil {
 		return nil, reply, e
 	}
-	s.SetDeadline(time.Now().Add(10 * time.Second))
+	deadline := time.Now().Add(10 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	if e = s.SetDeadline(deadline); e != nil {
+		s.Close()
+		return nil, reply, e
+	}
+	// Interrupt only this request stream, preserving the owning VPN session.
+	// Join the short deadline callback before clearing deadlines for the caller.
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		s.SetDeadline(time.Now())
+		close(interrupted)
+	})
 	if e = WriteJSON(s, Request{network, address}); e == nil {
 		e = ReadJSON(s, &reply)
 		if e == nil && reply.Error != "" {
 			e = errors.New(reply.Error)
 		}
+	}
+	if !stop() {
+		<-interrupted
+	}
+	if err := ctx.Err(); err != nil {
+		e = err
 	}
 	if e != nil {
 		s.Close()

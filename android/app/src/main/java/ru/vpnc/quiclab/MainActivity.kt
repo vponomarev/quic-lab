@@ -98,6 +98,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.action == android.content.Intent.ACTION_MAIN &&
+            intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER) &&
+            !intent.getBooleanExtra("standalone_echo", false)) {
+            startActivity(android.content.Intent(this, VpnActivity::class.java))
+            finish()
+            return
+        }
         Diagnostics.init(applicationContext)
         Diagnostics.event("app", JSONObject().put("event","screen_opened"))
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -499,7 +506,7 @@ class MainActivity : Activity() {
                 exitRefresh.isEnabled=LabVpnService.active
                 val age=if(LabVpnService.exitCheckedAt>0) " · ${(time-LabVpnService.exitCheckedAt)/1000} с назад" else ""
                 val exitStatus=if(LabVpnService.active && LabVpnService.lastHealth>0 && !LabVpnService.healthFresh(time)) "Нет свежих ответов туннеля" else LabVpnService.exitState
-                vpnExit.text="Exit IPv4: ${LabVpnService.exitIP.ifBlank { "—" }}\n$exitStatus$age"
+                vpnExit.text="Exit IPv4: ${if(LabVpnService.exitState == "Проверка недоступна") "Недоступен" else LabVpnService.exitIP.ifBlank { "Недоступен" }}\n$exitStatus$age"
                 vpnTraffic.text="TX ↑ ${size(LabVpnService.txRate)}/с    RX ↓ ${size(LabVpnService.rxRate)}/с\nВсего: ↑ ${size(LabVpnService.txBytes.toDouble())}    ↓ ${size(LabVpnService.rxBytes.toDouble())}"
                 banner.text=if(LabVpnService.active && !LabVpnService.healthFresh(time)) "VPN · ждём ответы" else LabVpnService.status
                 reserveView.text=if(LabVpnService.rttEnabled) "RTT: каждые ${LabVpnService.rttInterval/1000} с · $transport · ${LabVpnService.network}" else "RTT выключен · контроль связи: 5 с · $transport"
@@ -550,6 +557,9 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         destroyed = true; handler.removeCallbacksAndMessages(null)
-        radios.close(); quic.close(); wss.close(); profileEcho?.close(); publicAwg?.close(); super.onDestroy()
+        if (::radios.isInitialized) radios.close()
+        if (::quic.isInitialized) quic.close()
+        if (::wss.isInitialized) wss.close()
+        profileEcho?.close(); publicAwg?.close(); super.onDestroy()
     }
 }

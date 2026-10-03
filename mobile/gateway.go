@@ -48,30 +48,39 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
-	budget             *TrafficBudget
-	bondCellUsed       uint64
-	bondCellBlocked    bool
-	bond               *bond.Mux
-	bondToken          string
-	bondPathGeneration uint64
-	bondDraining       []*bond.Mux
-	bondBinders        map[string]SocketBinder
-	probes             probePolicy
-	direct             flowDialer // Set only before publishing a direct-only router backend.
-	udpStream          bool
-	datagrams          *gateway.DatagramMux
-	awg                *awg.Engine
-	exitChecking       bool
-	mu                 sync.Mutex
-	q                  *Client
-	mux                *smux.Session
-	cfg                gatewayConfig
-	tls                *tls.Config
-	sink               EventSink
-	ctx                context.Context
-	cancel             context.CancelFunc
-	tunStop            func()
-	session            int64
+	exitEchoDialGate    diagnosticDialGate
+	runtimeBond         *runtimeGateway
+	muxOpenSlot         chan struct{}
+	exitEchoParent      context.Context
+	exitEchoWake        chan struct{}
+	exitEchoProbeCancel context.CancelFunc
+	exitEchoTarget      string
+	exitEchoInterval    time.Duration
+	exitEchoGeneration  uint64
+	budget              *TrafficBudget
+	bondCellUsed        uint64
+	bondCellBlocked     bool
+	bond                *bond.Mux
+	bondToken           string
+	bondPathGeneration  uint64
+	bondDraining        []*bond.Mux
+	bondBinders         map[string]SocketBinder
+	probes              probePolicy
+	direct              flowDialer // Set only before publishing a direct-only router backend.
+	udpStream           bool
+	datagrams           *gateway.DatagramMux
+	awg                 *awg.Engine
+	exitChecking        bool
+	mu                  sync.Mutex
+	q                   *Client
+	mux                 *smux.Session
+	cfg                 gatewayConfig
+	tls                 *tls.Config
+	sink                EventSink
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	tunStop             func()
+	session             int64
 }
 
 func NewGateway(sink EventSink) *Gateway { return &Gateway{sink: sink} }
@@ -290,7 +299,7 @@ func (g *Gateway) open(ctx context.Context) (gateway.Stream, error) {
 		}
 		g.mu.Lock()
 		if g.bond == bonded {
-			err = g.rotateBondLocked(bonded)
+			err = g.rotateBondLocked(ctx, bonded)
 		} else {
 			err = nil
 		}
@@ -318,11 +327,7 @@ func (g *Gateway) open(ctx context.Context) (gateway.Stream, error) {
 		return gateway.QStream{Stream: s}, nil
 	}
 	if m != nil {
-		s, e := m.OpenStream()
-		if e != nil {
-			return nil, e
-		}
-		return gateway.NewMStream(s), nil
+		return g.openMuxStream(ctx, m)
 	}
 	return nil, errors.New("gateway disconnected")
 }
@@ -411,6 +416,8 @@ func (g *Gateway) LocalAddress() string {
 }
 func (g *Gateway) Stop() {
 	g.mu.Lock()
+	g.stopExitEchoLocked()
+	g.terminateBondsLocked()
 	for _, old := range g.bondDraining {
 		old.Close()
 	}

@@ -28,12 +28,17 @@ internal class VpnSession(
     private val attached: ((Gateway) -> Unit)? = null,
     private val detached: ((Gateway) -> Unit)? = null,
 ) : AutoCloseable {
-    private val isBond = config.optBoolean("max_availability")
+    private val isDemux = config.has("_exit_runtime")
+    private val isBond = isDemux || config.optBoolean("max_availability")
+    @Volatile private var demuxRuntime: mobile.ExitRuntime? = null
+    private val runtimeNetworks = mutableMapOf<Int,Triple<Network?,Boolean,Boolean>>()
+    private val runtimeGenerations = mutableMapOf<Int,Long>()
     private val bondNetworks = mutableMapOf<Int, Network>()
     private val bondRetry = mutableMapOf<Int, Long>()
     private var bondResolverNetwork: Network? = null
     private fun refreshBondPaths() {
         if (!alive || !isBond) return
+        if (demuxRuntime != null) { refreshDemuxNetworks(); return }
         service?.setUnderlyingNetworks(networks.values.toTypedArray())
         for ((kind, network) in networks) {
             val name = if (kind == WIFI) "wifi" else "cell"
@@ -83,8 +88,10 @@ internal class VpnSession(
                 if (preparedNetwork == network) preparedNetwork = null
             }
         }
+        if (demuxRuntime != null) refreshDemuxNetworks()
+        val demuxDemand=demuxRuntime?.let {JSONObject(it.snapshot()).optBoolean("needs_cellular")}
         // A failed primary may acquire mobile data for recovery, even when prewarming is disabled.
-        val needCell = cellAllowed() && (if (isBond) alive && client?.bondCellAllowed() != false else (alive && (activeKind == CELLULAR || failedNetwork != null ||
+        val needCell = cellAllowed() && (if (demuxDemand != null) alive && demuxDemand else if (isBond) alive && client?.bondCellAllowed() != false else (alive && (activeKind == CELLULAR || failedNetwork != null ||
             (automatic && reserveAllowed(CELLULAR)))) || now() < manualCellUntil)
         if (needCell && cellRequest == null) {
             val callback = object : ConnectivityManager.NetworkCallback() {}
@@ -99,6 +106,70 @@ internal class VpnSession(
         }
     }
     private var client: Gateway? = null
+    private val exitEchoLock = Any()
+    private class ExitEchoLease(var output: ((JSONObject) -> Unit)?) {
+        var gateway: Gateway? = null
+        var generation = -1L
+        var epoch = -1L
+    }
+    private var exitEchoLease: ExitEchoLease? = null
+
+    /** A diagnostic lease uses only this session's existing Gateway. */
+    internal fun startExitEcho(target: String, intervalMs: Long, output: (JSONObject) -> Unit): AutoCloseable {
+        val lease = ExitEchoLease(output)
+        synchronized(exitEchoLock) {
+            check(!closed) { "VPN-выход остановлен" }
+            exitEchoLease?.output = null
+            exitEchoLease = lease
+        }
+        submit {
+            if (synchronized(exitEchoLock) { exitEchoLease !== lease || lease.output == null }) return@submit
+            try {
+                val gateway = client?.takeIf { alive } ?: error("Выбранный VPN-выход недоступен")
+                lease.gateway = gateway; lease.epoch = epoch
+                gateway.startExitEcho(target,intervalMs)
+                lease.generation = gateway.exitEchoGeneration()
+            } catch (e: Exception) {
+                finishExitEcho(e.message ?: "Диагностика недоступна",lease)
+            }
+        }
+        return AutoCloseable {
+            synchronized(exitEchoLock) {
+                lease.output = null
+                if (exitEchoLease === lease) exitEchoLease = null
+            }
+            submit {
+                if (synchronized(exitEchoLock) { exitEchoLease == null } && client === lease.gateway) lease.gateway?.stopExitEcho()
+            }
+        }
+    }
+    private fun routeExitEcho(event: JSONObject) {
+        val kind = event.optString("event")
+        if (kind in listOf("disconnected","session_closed","session_lost")) {
+            val expected = synchronized(exitEchoLock) { exitEchoLease }
+            if (expected != null) submit { finishExitEcho("VPN-выход переподключён",expected) }
+            return
+        }
+        if (kind != "exit_echo") return
+        submit {
+            val callback = synchronized(exitEchoLock) {
+                exitEchoLease?.takeIf { it.gateway === client && it.epoch == epoch &&
+                    it.generation == event.optLong("echo_generation",-2) }?.output
+            }
+            callback?.invoke(JSONObject(event.toString()))
+        }
+    }
+    private fun finishExitEcho(reason: String, expected: ExitEchoLease? = null) {
+        val ended = synchronized(exitEchoLock) {
+            val lease = exitEchoLease ?: return
+            if (expected != null && lease !== expected) return
+            val callback = lease.output
+            lease.output = null; exitEchoLease = null
+            lease to callback
+        }
+        if (client === ended.first.gateway) ended.first.gateway?.stopExitEcho()
+        ended.second?.invoke(JSONObject().put("event","exit_echo").put("terminal",true).put("error",reason))
+    }
     private var alive = false
     private var reconnectRequired = false
     @Volatile private var lastReplyAt = 0L
@@ -129,6 +200,7 @@ internal class VpnSession(
         rttMode = mode
         intervalMS = if (mode == 0L) 5000 else mode
         client?.setRTT(mode > 0, intervalMS)
+        demuxRuntime?.setRTT(mode > 0, intervalMS)
         // Allow the first scheduled health reply before evaluating a stall.
         lastEchoAt = now(); lastReplyAt = now()
         output(JSONObject().put("event", "rtt_policy").put("enabled", mode > 0).put("interval_ms", intervalMS))
@@ -202,6 +274,7 @@ internal class VpnSession(
                     }
                     error("Сеть ${label(kind)} пока недоступна")
                 }
+                if (!alive && isDemux) { startDemux(kind,network,name); return@submit }
                 if (alive && isBond) {
                     refreshBondPaths()
                     event("bond_policy", "Два пути управляются автоматически; приоритет у Wi-Fi")
@@ -219,6 +292,7 @@ internal class VpnSession(
                                 override fun onEvent(eventJSON: String) {
                                     if (closed || token != epoch) return
                                     val e = JSONObject(eventJSON)
+                                    routeExitEcho(e)
                                     if (e.optString("event") in listOf("echo", "health")) {
                                         if (isAWG) awgPingSeen = true
                                         lastEchoAt = now()
@@ -287,6 +361,72 @@ internal class VpnSession(
             }
         }
 
+    private fun physicalName(kind:Int)=if(kind==WIFI) "wifi" else "cell"
+
+    private fun refreshDemuxNetworks() {
+        val runtime=demuxRuntime ?: return
+        for(kind in listOf(WIFI,CELLULAR)) {
+            val network=networks[kind]
+            val allowed=kind!=CELLULAR || cellAllowed()
+            val checkAllowed=reserveAllowed(kind,network)
+            val state=Triple(network,allowed,checkAllowed)
+            if(runtimeNetworks[kind]==state) continue
+            val generation=(runtimeGenerations[kind]?:0L)+1
+            runtimeGenerations[kind]=generation;runtimeNetworks[kind]=state
+            runtime.updateNetwork(JSONObject().put("network",physicalName(kind)).put("available",network!=null)
+                .put("allowed",allowed).put("reserve_check_allowed",checkAllowed).put("generation",generation).toString(),network?.let {binder(it)})
+        }
+        service?.setUnderlyingNetworks(networks.values.toTypedArray())
+    }
+
+    private fun startDemux(kind:Int,network:Network,name:String) {
+        stopInternal()
+        val shared=requireNotNull(budget) {"Demux requires the whole-run LTE budget"}
+        val token=epoch
+        val runtimeConfig=JSONObject(config.getJSONObject("_exit_runtime").toString())
+        val profiles=runtimeConfig.getJSONObject("model").getJSONArray("profiles")
+        val gateways=runtimeConfig.getJSONObject("gateways")
+        for(i in 0 until profiles.length()) {
+            val profile=profiles.getJSONObject(i)
+            if(profile.getString("mode")=="disabled")continue
+            val gateway=gateways.getJSONObject(profile.getString("id"))
+            val resolved=resolveEndpoint(profile.getString("endpoint"),network)
+            profile.put("endpoint",resolved.address);gateway.put("endpoint",resolved.address)
+            if(gateway.optString("hostname").isBlank()) gateway.put("hostname",name.ifBlank{resolved.hostname})
+        }
+        runtimeConfig.put("initial_network",JSONObject().put("network",physicalName(kind))
+            .put("available",true).put("allowed",true).put("reserve_check_allowed",reserveAllowed(kind,network)).put("generation",1))
+        val runtime=Mobile.newExitRuntime(object:EventSink {
+            override fun onEvent(eventJSON:String) {
+                if(closed || token!=epoch)return
+                val e=JSONObject(eventJSON)
+                routeExitEcho(e)
+                if(e.optString("event") in listOf("echo","health")) {lastEchoAt=now();lastReplyAt=lastEchoAt}
+                output(e)
+                if(e.optString("event") in listOf("connected","session_rotated")) submit {
+                    if(token!=epoch)return@submit
+                    nextExitCheckAt=0;lastEchoAt=now();lastReplyAt=lastEchoAt
+                    if(e.optString("event")!="connected")return@submit
+                    val active=if(e.optString("network")=="cell") CELLULAR else WIFI
+                    networks[active]?.let {n->activeKind=active;activeNetwork=n;selected(n,active);event("active_network",label(active))}
+                }
+                if(e.optString("event")=="session_lost") event("reconnecting","Общая сессия завершена; прежние потоки закрыты")
+            }
+        })
+        try {
+            runtime.setTrafficBudget(shared)
+            runtime.start(runtimeConfig.toString(),binder(network))
+            demuxRuntime=runtime
+            runtimeNetworks[kind]=Triple(network,true,reserveAllowed(kind,network));runtimeGenerations[kind]=1
+            val gateway=requireNotNull(runtime.gateway())
+            client=gateway
+            if(attached!=null) attached.invoke(gateway) else gateway.attach(tunFD.toLong())
+            alive=true;activeKind=kind;activeNetwork=network;selected(network,kind)
+            lastReplyAt=now();lastEchoAt=now();nextExitCheckAt=0;reconnectRequired=false
+            rttMode=-1;refreshRTT();lastEchoAt=0;lastReplyAt=0;refreshDemuxNetworks();refreshReserve()
+            event("active_network",label(kind))
+        }catch(e:Exception){demuxRuntime=null;runtime.stop();client=null;throw e}
+    }
     private fun migrate(kind: Int, network: Network, reason: String) {
         val current = client ?: return
         if (network == activeNetwork && failedNetwork == null && !reconnectRequired) {
@@ -296,11 +436,15 @@ internal class VpnSession(
         event("migration_started", "$reason → ${label(kind)}")
         if (reconnectRequired) {
             event("reconnecting", "Новое соединение → ${label(kind)}")
+            finishExitEcho("VPN-выход переподключён")
             current.reconnect(binder(network))
             reconnectRequired = false
             lastReplyAt = now()
             nextExitCheckAt = 0L
-        } else current.migrateTo(key(network), binder(network))
+        } else {
+            if (config.optString("transport") == "https") finishExitEcho("VPN-выход переподключён")
+            current.migrateTo(key(network), binder(network))
+        }
         preparedNetwork = null
         preparedAt = 0
         lastSwitchAt = now()
@@ -360,7 +504,7 @@ internal class VpnSession(
     }
 
     fun checkExitIP() = submit {
-        if (alive && config.optBoolean("probe_exit_ip")) {
+        if (alive && client?.isConnected() == true && config.optBoolean("probe_exit_ip")) {
             client?.checkExitIP()
             nextExitCheckAt = now() + 60000
         }
@@ -379,16 +523,18 @@ internal class VpnSession(
             if (!isBond && activeKind == CELLULAR) { recover("Лимит LTE исчерпан"); return }
         }
         val time = now()
-        if (config.optBoolean("probe_exit_ip") && time >= nextExitCheckAt && time - lastEchoAt < 2000) {
+        if (config.optBoolean("probe_exit_ip") && client?.isConnected() == true && time >= nextExitCheckAt && time - lastEchoAt < 2000) {
             client?.checkExitIP()
             nextExitCheckAt = time + 60000
         }
+        if (demuxRuntime != null) { refreshDemuxNetworks(); return }
         if (isBond) {
             if (client?.isConnected() != true && time-lastAttemptAt>5000) {
                 lastAttemptAt=time
                 val network=networks[WIFI] ?: networks[CELLULAR]?.takeIf { cellAllowed() && client?.bondCellAllowed()!=false }
                 if (network != null) try {
                     event("reconnecting", "Общая сессия завершена; старые потоки закрыты")
+                    finishExitEcho("VPN-выход переподключён")
                     client?.restartBond(if(network==networks[WIFI]) "wifi" else "cell",binder(network)); bondNetworks.clear(); bondRetry.clear()
                 } catch(e:Exception) { event("operation_failed", e.message ?: "Reconnect failed") }
             }
@@ -521,7 +667,8 @@ internal class VpnSession(
                     if (preparedNetwork == network) preparedNetwork = null
                     client?.invalidatePath(key(network))
                     event("network_lost", "${label(kind)} $network")
-                    if (isBond) {
+                    if (demuxRuntime != null) refreshDemuxNetworks()
+                    if (isBond && demuxRuntime == null) {
                         client?.dropBondPath(if(kind==WIFI) "wifi" else "cell")
                         bondNetworks.remove(kind); bondRetry.remove(kind)
                         refreshBondPaths()
@@ -556,6 +703,7 @@ internal class VpnSession(
 
     private fun stopInternal() {
         epoch++
+        finishExitEcho("VPN-выход остановлен")
         bondNetworks.clear(); bondRetry.clear()
         awgPingSeen = false
         alive = false
@@ -569,7 +717,9 @@ internal class VpnSession(
         lastAttemptAt = 0
         nextProbeAt = 0
         client?.let { detached?.invoke(it) }
-        client?.stop()
+        val runtime=demuxRuntime;demuxRuntime=null
+        if(runtime!=null) runtime.stop() else client?.stop()
+        runtimeNetworks.clear();runtimeGenerations.clear()
         client = null
         manualCellUntil = 0L
         pendingCellStart = null

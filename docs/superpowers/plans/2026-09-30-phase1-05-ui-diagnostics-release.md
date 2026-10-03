@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** План предложен для проверки; реализация не начата.
+**Status:** E1, E3 и E4 выполнены. E2 реализован и проверен для Echo через VPN; live ComparisonTest через Wi-Fi/LTE ожидает внешний тестовый endpoint. E5 не начат; MVP не объявлен принятым.
 
 ## Global Constraints
 
@@ -51,7 +51,7 @@ A–D для итоговой приёмки. E1 можно писать на fi
 
 **Interfaces:** Kotlin data class ExitSnapshot(val exitId: String, val generation: Long, val state: String, val activePathId: String?, val paths: List<PathSnapshot>, val rxBytes: Long, val txBytes: Long, val rxBps: Double, val txBps: Double, val exitIpv4: String?); PathSnapshot: pathId, profileId, network, state, rttMs?, jitterMs?, measuredAtMs. VpnDashboardModel.accept(snapshot: ExitSnapshot): Boolean. Существующий Gateway.CheckExitIP() вызывается на собственном gateway выхода; событие помечено generation.
 
-- [ ] **Step 1 — регрессионный тест:** добавить VpnDashboardModelTest.staleMetricsAndExitIp; TestExitIPBoundToGateway; VpnDashboardTest. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить VpnDashboardModelTest.staleMetricsAndExitIp; TestExitIPBoundToGateway; VpnDashboardTest. Минимальные обязательные проверки:
 
 ```text
 assert staleGenerationEvent.ignored
@@ -62,17 +62,17 @@ assert deniedLocationPermission.doesNotBreakVPN
 assert reconnectTransport.doesNotResetRunTotals
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** VPN сделать основным экраном. Карточка выхода: RX/TX скорость и итог за запуск, активный профиль/транспорт/путь, RTT активного пути и доступных альтернатив, jitter при свежих samples, exitIPv4, краткие radio данные. Не смешивать jitter с QUIC variance: использовать существующее определение jitter в TransportStats и подписать окно. Счётчики переживают reconnect профиля и сбрасываются при Stop/Start всего VPN. Устаревание RTT после max(3*configuredInterval,5s); отсутствие разрешения — 'Недоступно', не нули. Exit IP запрос при подключении/смене выхода; отменить старый и проверить поколение результата. Сверху общий бюджет C1.
+- [x] **Step 3 — реализация:** VPN сделать основным экраном. Карточка выхода: RX/TX скорость и итог за запуск, активный профиль/транспорт/путь, RTT активного пути и доступных альтернатив, jitter при свежих samples, exitIPv4, краткие radio данные. Не смешивать jitter с QUIC variance: использовать существующее определение jitter в TransportStats и подписать окно. Счётчики переживают reconnect профиля и сбрасываются при Stop/Start всего VPN. Устаревание RTT после max(3*configuredInterval,5s); отсутствие разрешения — 'Недоступно', не нули. Exit IP запрос при подключении/смене выхода; отменить старый и проверить поколение результата. Сверху общий бюджет C1.
 
-- [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
+- [x] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
 ```text
 go test ./mobile -run 'Exit|Traffic' -count=1; Android: VpnDashboardModelTest, VpnDashboardTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: show per-exit VPN status traffic and network metrics"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: show per-exit VPN status traffic and network metrics"`. Не включать соседние незавершённые задачи.
 
 ### Task E2: Два режима Echo и изоляция диагностики
 
@@ -82,7 +82,7 @@ go test ./mobile -run 'Exit|Traffic' -count=1; Android: VpnDashboardModelTest, V
 
 **Interfaces:** gomobile: func (g *Gateway) StartExitEcho(target string, intervalMillis int64) error; func (g *Gateway) StopExitEcho(); emit exit_echo с exit_id/generation/rtt_ms/error. Kotlin EchoActivity выбирает standalone или exit ID. target — разрешённый тестовый адресат; выполнять обмен через g.dialStream/его UDP backend, не стандартный direct HTTP client.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestExitEchoCannotFallback; TestExitEchoDoesNotSwitchPolicy; VpnEchoTest; ComparisonTest. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestExitEchoCannotFallback; TestExitEchoDoesNotSwitchPolicy; VpnEchoTest; ComparisonTest. Минимальные обязательные проверки:
 
 ```text
 assert runningVPNAndStandaloneEcho.mutuallyExclusive
@@ -92,9 +92,9 @@ assert echoTargetFailure.doesNotPromoteAnotherProfile
 assert echoTraffic.countedInSharedBudget
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Перенести существующий самостоятельный Echo UI на дополнительный экран без потери QUIC/WSS/AWG сравнения и радиографиков. Новый echo проходит через выбранный выход до тестового responder (управляемый локальный/публичный стенд, адрес не зашит в APK). RTT полного пути отдельный от RTT шлюза. Echo ошибки диагностические, не feed для автомиграции. Цикл ограничен, отменяется вместе с выходом и при закрытии опыта. Не активировать отдельный VpnService для Echo.
+- [x] **Step 3 — реализация:** Перенести существующий самостоятельный Echo UI на дополнительный экран без потери QUIC/WSS/AWG сравнения и радиографиков. Новый echo проходит через выбранный выход до тестового responder (управляемый локальный/публичный стенд, адрес не зашит в APK). RTT полного пути отдельный от RTT шлюза. Echo ошибки диагностические, не feed для автомиграции. Цикл ограничен, отменяется вместе с выходом и при закрытии опыта. Не активировать отдельный VpnService для Echo.
 
 - [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
@@ -102,7 +102,9 @@ assert echoTraffic.countedInSharedBudget
 go test ./mobile -run 'Echo|Exit' -count=1 -timeout=90s; Android: VpnEchoTest, ComparisonTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: keep lab Echo separate and add Echo through VPN exits"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: keep lab Echo separate and add Echo through VPN exits"`. Не включать соседние незавершённые задачи.
+
+Проверено 2026-10-03: Echo через выбранный выход, бюджет, отмена, lifecycle и отсутствие прямого fallback; Go race, VpnEchoTest и живой тест двух выходов. Step 4 остаётся открытым только для live ComparisonTest самостоятельного QUIC/WSS с Wi-Fi/LTE; без внешнего тестового endpoint он не выполнен. Существующий самостоятельный экран и сравнение сохранены.
 
 ### Task E3: Серверный захват и ограничения режима
 

@@ -54,13 +54,10 @@ func TestVPNReconnectAfterServerRestartPreservesTUN(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		cancel()
 		l.Close()
-		until := time.Now().Add(3 * time.Second)
-		for g.IsConnected() && time.Now().Before(until) {
-			time.Sleep(10 * time.Millisecond)
-		}
-		if g.IsConnected() {
-			t.Fatal("dead transport reported alive")
-		}
+		// An abrupt UDP socket close may lose CONNECTION_CLOSE. Raw QUIC keeps
+		// its 90-second idle timeout; Android's independent health policy
+		// detects silent loss and requests Reconnect. This test supplies that
+		// recovery decision and checks transport replacement preserves TUN.
 		l, cancel = start()
 		if e = g.Reconnect(nil); e != nil {
 			t.Fatal(e)

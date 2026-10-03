@@ -80,7 +80,10 @@ internal data class MultipleVpnPlan(
                             .put("control_url", p.getString("control_url", ""))
                             .put("android_version_code", BuildConfig.VERSION_CODE)
                             .put("data_version", p.getInt("data_version", 0))
-                            .put("probe_exit_ip", false)
+                            .put("probe_exit_ip", true)
+                            .put("max_availability",p.getBoolean("max_availability",false))
+                            .put("bond_copy_budget",p.getLong("bond_copy_kib",256).coerceIn(0,65536)*1024/2)
+                    VpnConfiguration.attachRuntime(c,profile.id,cfg)
                     MultipleProfile(
                         profile.id,
                         profile.name,

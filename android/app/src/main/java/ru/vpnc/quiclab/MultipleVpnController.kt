@@ -18,8 +18,11 @@ internal class MultipleVpnController(
 ) {
     private val cm = service.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
+    private val dashboardRunId=JSONObject(budget.snapshot()).getString("epoch")
+    private val dashboardTokens=java.util.concurrent.ConcurrentHashMap<String,Long>()
     private val currentProfiles=plan.profiles.associateBy {it.id}.toMutableMap()
     private val exits = VpnExitController(plan.profiles.map { it.id }.toSet()) { id, token ->
+        dashboardTokens[id]=token
         createSession(currentProfiles.getValue(id), token)
     }
     private val networks = mutableMapOf<String, Network>()
@@ -62,7 +65,9 @@ internal class MultipleVpnController(
                 override fun onEvent(eventJSON: String) {
                     if (closed) return
                     val e = JSONObject(eventJSON)
-                    MultipleVpnState.record(e.optString("profile_id"), e)
+                    val exitId=e.optString("profile_id")
+                    VpnDashboardEvents.record(dashboardRunId,exitId,exits.token(exitId) ?: dashboardTokens[exitId] ?: 0L,e)
+                    MultipleVpnState.record(exitId, e)
                     Diagnostics.event("multiple", e)
                 }
             },
@@ -109,7 +114,7 @@ internal class MultipleVpnController(
     }
 
     private fun createSession(p: MultipleProfile, token: Long): VpnSession {
-        require(!VpnProfiles.preferences(service,p.id).getBoolean("max_availability",false)) { "Максимальная доступность пока работает только с одним профилем" }
+
 
 
         available[p.id] = mutableSetOf()
@@ -148,6 +153,9 @@ internal class MultipleVpnController(
                 output = { event ->
                     handler.post {
                         if (!closed && exits.current(p.id, token)) {
+                            val scoped=JSONObject(event.toString()).put("exit_id",p.id)
+                                .put("runtime_generation",event.optLong("generation")).put("generation",token)
+                            VpnDashboardEvents.record(dashboardRunId,p.id,token,scoped)
                             exits.event(p.id, token, event.optString("event"))
                             MultipleVpnState.record(p.id, event)
                             Diagnostics.event(
@@ -190,6 +198,7 @@ internal class MultipleVpnController(
         } else {
             paused.add(id)
             router.blockExit(id)
+            VpnDashboardEvents.stopExit(id,dashboardTokens[id] ?: 0L)
             exits.stop(id)
             available.remove(id)
             starting.remove(id)
@@ -207,11 +216,15 @@ internal class MultipleVpnController(
             .forEach { exits.session(it.id)?.startOrMigrate(kind, it.endpoint, it.hostname, "", 100) }
     }
 
+    internal fun echoSession(id: String): VpnSession? = if (closed || id in paused) null else exits.session(id)
+    internal fun echoGeneration(id: String): Long? = if (closed) null else exits.token(id)
+
     fun close() {
         if (closed) return
         closed = true
         dnsPolicy.close()
         plan.profiles.forEach {
+            VpnDashboardEvents.stopExit(it.id,dashboardTokens[it.id] ?: 0L)
             MultipleVpnState.record(it.id, JSONObject().put("event", "stopped"))
         }
         handler.removeCallbacksAndMessages(null)

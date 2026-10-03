@@ -25,6 +25,16 @@ class VpnActivity : Activity() {
         }
 
     private val handler = Handler(Looper.getMainLooper())
+    private lateinit var dashboardBudget: TextView
+    private lateinit var dashboardExits: LinearLayout
+    private lateinit var startControl: Button
+    private lateinit var stopControl: Button
+    private val exitViews = linkedMapOf<String, TextView>()
+    private var dashboardRunId: String? = null
+    private val profileLabelsByExit = mutableMapOf<String, Pair<Long, Map<String, String>>>()
+    private var radios: RadioMonitor? = null
+    private var wifiRadio = "Недоступно"
+    private var cellRadio = "Недоступно"
     private lateinit var transport: Spinner
     private lateinit var mode: Spinner
     private lateinit var endpoint: EditText
@@ -162,7 +172,7 @@ class VpnActivity : Activity() {
         )
         toolbar.addView(
             TextView(this).apply {
-                text = "Настройки VPN"
+                text = "VPN"
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 textSize = 21f
                 setTextColor(ink)
@@ -238,6 +248,29 @@ class VpnActivity : Activity() {
                 root.addView(this, LinearLayout.LayoutParams(-1, -2))
             }
         }
+        val home = section("VPN")
+        dashboardBudget = label(home, "Общий LTE бюджет: VPN выключен")
+        startControl = Button(this).apply {
+            text = "Запустить VPN"; isAllCaps = false; setTextColor(accent)
+            setOnClickListener {
+                try {
+                    if (LabVpnService.active) return@setOnClickListener
+                    if (VpnProfiles.multiple(this@VpnActivity)) MultipleVpnPlan.load(this@VpnActivity) else save()
+                    val request = VpnService.prepare(this@VpnActivity)
+                    if (request != null) startActivityForResult(request, 12) else startVPN()
+                } catch (e: Exception) { error(e) }
+            }
+        }
+        stopControl = Button(this).apply {
+            text = "Остановить VPN"; isAllCaps = false; setTextColor(accent)
+            setOnClickListener { startService(Intent(this@VpnActivity, LabVpnService::class.java).setAction("stop")) }
+        }
+        home.addView(startControl); home.addView(stopControl)
+        button(home, "Echo · диагностика сетей ›") { startActivity(Intent(this, EchoActivity::class.java)) }
+        button(home, "Разрешить сведения о сети") {
+            requestPermissions(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION, android.Manifest.permission.ACCESS_FINE_LOCATION), 21)
+        }
+        dashboardExits = section("АКТИВНЫЕ ВЫХОДЫ")
         var panel = section("ПРОФИЛЬ")
         button(panel, "Несколько VPN одновременно ›") { startActivity(Intent(this, MultipleVpnActivity::class.java)) }
         val profiles = VpnProfiles.list(this)
@@ -505,13 +538,46 @@ class VpnActivity : Activity() {
             }
         }
         label(diagnostics, "Настройка управляет RTT шлюза и транзита. При выключенных измерениях остаётся служебная проверка связи раз в 5 секунд; она не отображается на графике. Keep-alive и переключение сетей сохраняются.")
-        val maximum = section("МАКСИМАЛЬНАЯ ДОСТУПНОСТЬ · ЭКСПЕРИМЕНТАЛЬНО")
+        val maximum = section("ОБЩАЯ СЕССИЯ И КАРУСЕЛЬ")
+        val demux = android.widget.Switch(this).apply {
+            text="Общая сессия QUIC / HTTPS"
+            isChecked=prefs.getBoolean("demux_enabled",prefs.getBoolean("max_availability",false))
+            isEnabled=!LabVpnService.active && selectedTransport()!="awg"
+            setOnCheckedChangeListener { _, value -> prefs.edit().putBoolean("demux_enabled",value).apply() }
+        }
+        maximum.addView(demux)
         maximum.addView(android.widget.Switch(this).apply {
-            text="Два активных пути: Wi-Fi + LTE"
+            text="Максимальная доступность · готовить LTE"
             isChecked=prefs.getBoolean("max_availability",false)
-            setOnCheckedChangeListener { _, value -> prefs.edit().putBoolean("max_availability",value).apply() }
+            isEnabled=!LabVpnService.active && selectedTransport()!="awg"
+            setOnCheckedChangeListener { _, value ->
+                if(value) demux.isChecked=true
+                prefs.edit().putBoolean("max_availability",value).putBoolean("demux_enabled",demux.isChecked).apply()
+            }
         })
-        label(maximum,"Повышенный расход LTE и аккумулятора ради быстрого переключения, в том числе при выключенном экране. Требует обновлённого QUIC Lab сервера и транспорта QUIC. Применяется после перезапуска VPN. Переключатели резерва ниже в этом режиме не действуют.")
+        label(maximum,"Общая сессия сохраняет TCP и UDP при смене QUIC/HTTPS одного сервера. В экономии рабочий Wi-Fi не готовит LTE. Максимальная доступность расходует больше LTE и батареи; готовый резерв требует пула от 2 соединений. Изменения применяются после перезапуска выхода. AWG работает самостоятельно.")
+        for(kind in transportTypes.filter{it in listOf("quic","https")}) {
+            val modes=listOf("auto","reserve","disabled")
+            val profileMode=choice(maximum,"${kind.uppercase()} · участие",arrayOf("Автоматически","Только резерв","Не использовать"),modes.indexOf(prefs.getString("${kind}_mode","auto")).coerceAtLeast(0))
+            profileMode.isEnabled=!LabVpnService.active
+            profileMode.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent:AdapterView<*>?){}
+                override fun onItemSelected(parent:AdapterView<*>?,view:android.view.View?,position:Int,id:Long){prefs.edit().putString("${kind}_mode",modes[position]).apply()}
+            }
+            val defaultPool=if(kind==selectedTransport() && prefs.getBoolean("max_availability",false)) 2 else 1
+            val pool=choice(maximum,"${kind.uppercase()} · соединений всего",arrayOf("1 · карусель выключена","2","3","4","5"),(prefs.getInt("${kind}_pool_size",defaultPool)-1).coerceIn(0,4))
+            pool.isEnabled=!LabVpnService.active
+            pool.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent:AdapterView<*>?){}
+                override fun onItemSelected(parent:AdapterView<*>?,view:android.view.View?,position:Int,id:Long){prefs.edit().putInt("${kind}_pool_size",position+1).apply()}
+            }
+            maximum.addView(android.widget.CheckBox(this).apply {
+                text="${kind.uppercase()} · редко проверять профиль «Только резерв»"
+                isChecked=prefs.getBoolean("${kind}_check_reserve",false);isEnabled=!LabVpnService.active
+                setOnCheckedChangeListener{_,value->prefs.edit().putBoolean("${kind}_check_reserve",value).apply()}
+            })
+        }
+        label(maximum,"Пул общий для Wi-Fi и LTE, а не отдельный для каждой сети. Выбранный выше транспорт имеет первый приоритет. «Только резерв» включается после отказа всех автоматических путей; редкие проверки не запускают его карусель. Разные сохранённые серверы остаются разными выходами.")
         fun budget(title:String,key:String,default:Long,limit:Long, target: android.content.SharedPreferences = prefs, container: LinearLayout = maximum) {
             label(container,title)
             container.addView(EditText(this).apply {
@@ -556,11 +622,66 @@ class VpnActivity : Activity() {
                         if (LabVpnService.active)
                             if(LabVpnService.multipleMode) MultipleVpnState.summary() else "${LabVpnService.status} · RTT ${LabVpnService.rttLabel(android.os.SystemClock.elapsedRealtime())}"
                         else LabVpnService.status
+                    renderDashboard()
                     logs.text = LabVpnService.log()
                     handler.postDelayed(this, 500)
                 }
             }
         )
+    }
+
+    private fun renderDashboard() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        dashboardBudget.text = VpnDashboardText.budget(VpnDashboardEvents.budget())
+        startControl.isEnabled = !LabVpnService.active
+        stopControl.isEnabled = LabVpnService.active
+        val run = VpnDashboardEvents.runId
+        if (dashboardRunId != run) { profileLabelsByExit.clear(); dashboardRunId = run }
+        val cards = VpnDashboardEvents.dashboards()
+        val names = VpnDashboardEvents.names()
+        val ids = cards.map { it.exitId }.toSet()
+        exitViews.keys.filter { it !in ids }.toList().forEach { dashboardExits.removeView(exitViews.remove(it)) }
+        if (cards.isEmpty()) {
+            if (!exitViews.containsKey("")) exitViews[""] = label(dashboardExits, "VPN выключен · выберите профиль и запустите VPN")
+            return
+        }
+        exitViews.remove("")?.let { dashboardExits.removeView(it) }
+        val permission = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val location = getSystemService(android.location.LocationManager::class.java).isLocationEnabled
+        val interval = VpnRttSettings.interval(this)
+        for (card in cards) {
+            val path = card.paths.firstOrNull { it.pathId == card.activePathId }
+            val radio = if (!permission || !location) "Недоступно" else when (VpnDashboardText.network(path?.network.orEmpty())) {
+                "Wi-Fi" -> wifiRadio
+                "LTE" -> cellRadio
+                else -> "Недоступно"
+            }
+            val view = exitViews.getOrPut(card.exitId) { label(dashboardExits, "").apply { textSize = 15f; setTextColor(ink) } }
+            if (profileLabelsByExit[card.exitId]?.first != card.generation) {
+                val kind = VpnProfiles.preferences(this, card.exitId).getString("transport", "quic").orEmpty()
+                val selected = transportName(kind)
+                profileLabelsByExit[card.exitId] = card.generation to mapOf(
+                    "" to selected, card.exitId to selected,
+                    "${card.exitId}.quic" to "QUIC", "${card.exitId}.https" to "HTTPS / WebSocket",
+                    "${card.exitId}.awg" to "AmneziaWG")
+            }
+            view.text = VpnDashboardText.card(card, names[card.exitId] ?: card.exitId, now, interval, radio,
+                profileLabelsByExit.getValue(card.exitId).second)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        radios = RadioMonitor(this, { wifi, cell ->
+            wifiRadio = wifi.lineSequence().filter { it.startsWith("Wi-Fi:") || it.startsWith("Сигнал") }.joinToString(" · ")
+            cellRadio = cell.lineSequence().take(3).joinToString(" · ")
+        }, { _, _ -> }).also { it.start() }
+    }
+
+    override fun onPause() {
+        radios?.close(); radios = null
+        wifiRadio = "Недоступно"; cellRadio = "Недоступно"
+        super.onPause()
     }
 
     private fun updateProfile(id:String,allowOverBudget:Boolean=false) {

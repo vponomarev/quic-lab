@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.8, существующий fork quic-go 0.63.0, coder/websocket, AmneziaWG, Kotlin, Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md), утверждена владельцем 2026-09-30.
-**Status:** B1 выполнен с переходным ограничением конечного LTE-бюджета до C1/C2; B2 выполнен; B3 выполнен; B4 не начат.
+**Status:** B1–B3 выполнены. B4 реализован, проверен локально и на Android через Wi-Fi; финальный физический Wi-Fi/LTE gate остаётся открытым.
 
 ## Global Constraints
 
@@ -146,7 +146,7 @@ go test ./internal/pathpolicy ./internal/bond -count=1 -timeout=120s
 
 **Interfaces:** type Pool struct; func NewPool(limit int) (*Pool,error); func (p *Pool) Reserve(profileID, network string) (connectionID string, err error); func (p *Pool) Release(connectionID string). gomobile: type ExitRuntime struct; func NewExitRuntime(sink EventSink) *ExitRuntime; Start(configJSON string, binder SocketBinder) error; UpdateNetwork(networkJSON string, binder SocketBinder) error; Stop(); Snapshot() string. Runtime использует A/B/C API, возвращает JSON события с exit_id/profile_id/path_id/generation.
 
-- [ ] **Step 1 — регрессионный тест:** добавить TestPoolBoundAcrossNetworks; TestReconnectDoesNotResetCellBudget; CarouselDeviceTest; BondDeviceTest. Минимальные обязательные проверки:
+- [x] **Step 1 — регрессионный тест:** добавить TestPoolBoundAcrossNetworks; TestReconnectDoesNotResetCellBudget; CarouselDeviceTest; BondDeviceTest. Минимальные обязательные проверки:
 
 ```text
 assert poolSizeAcrossWifiAndLTE <= configuredSize
@@ -158,9 +158,9 @@ assert tcpBytesExactlyEqualBeforeAfterSwitch
 assert stoppedGenerationCannotReplenishPool
 ```
 
-- [ ] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
+- [x] **Step 2 — RED:** выполнить целевые команды ниже. Убедиться, что отсутствующий контракт даёт ожидаемое падение проверки, а не ошибку окружения. Для уже работающего поведения сохранить зелёный регрессионный тест и выделить отсутствующую часть.
 
-- [ ] **Step 3 — реализация:** Общий пул на профиль, не отдельный на сеть. Очередь connect/Reconnect сериализована; отмена освобождает слот ровно один раз. Native sockets защитить от TUN и bind до connect. Ограничения C1/C2 проверяются перед подключением и probes. Сохранить standalone AWG без пула и без обещания demux; самостоятельно менять физическую сеть существующим механизмом. Убрать запрет multiple+bond после успешного теста двух выходов и остановки одного. Нужна проверка отключения Wi-Fi и silent blackhole, не только модель callbacks.
+- [x] **Step 3 — реализация:** Общий пул на профиль, не отдельный на сеть. Очередь connect/Reconnect сериализована; отмена освобождает слот ровно один раз. Native sockets защитить от TUN и bind до connect. Ограничения C1/C2 проверяются перед подключением и probes. Сохранить standalone AWG без пула и без обещания demux; самостоятельно менять физическую сеть существующим механизмом. Убрать запрет multiple+bond после успешного теста двух выходов и остановки одного. Нужна проверка отключения Wi-Fi и silent blackhole, не только модель callbacks.
 
 - [ ] **Step 4 — GREEN:** повторить команды ниже; ожидаются PASS / exit 0, Android instrumentation — OK без failures. Проверки, требующие Linux или устройства, не заменять Windows-сборкой.
 
@@ -168,10 +168,13 @@ assert stoppedGenerationCannotReplenishPool
 go test ./internal/pathpolicy ./internal/bond ./mobile -count=1 -timeout=120s; Android: CarouselDeviceTest, BondDeviceTest, MultipleLiveTest
 ```
 
-- [ ] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: manage bounded carousel connections per VPN profile"`. Не включать соседние незавершённые задачи.
+- [x] **Step 5 — локальная проверка и коммит:** проверить diff и отсутствие секретов; добавить только реально изменённые файлы задачи из Files, включая новые тесты, затем выполнить `git diff --cached --check` и `git commit -m "feat: manage bounded carousel connections per VPN profile"`. Не включать соседние незавершённые задачи.
 
 ## Проверка плана
 
 - Сопоставить результат задач с матрицей покрытия в плане 00.
 - Review Focus распределён по указанным тестам; транспортные тесты не заменяют испытания на Android.
 - Никакой шаг этого плана не является разрешением на публикацию или изменение действующего сервера.
+
+
+Проверено 2026-10-03: Linux Go/race/vet, Android-сборка/lint, CarouselDeviceTest и живые два выхода с повторным запуском. Step 4 остаётся открытым: физическое переключение Wi-Fi/LTE и его задержки требуют тестового endpoint, доступного через LTE. Локальный 192.168.5.214 этого не доказывает. При пуле 1 после исчерпания flow ID новые потоки ждут завершения старых и подтверждения их данных либо ограниченного drain (120 с); скрытое дополнительное соединение не открывается.

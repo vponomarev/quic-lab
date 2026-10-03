@@ -6,7 +6,7 @@
 **Architecture:** Единое ядро, независимые VPN-выходы и подключаемые транспорты. Работа разбита на пять планов с общими контрактами; сначала модель и устойчивость сессии, затем политики и управление, после — UI и полная приёмка.
 **Tech Stack:** Go 1.26.8, текущий fork quic-go 0.63.0, coder/websocket, AWG, Kotlin/Android API 30+, JDK 17, Linux/systemd.
 **Spec:** [Утверждённая спецификация](../specs/2026-09-30-vpn-product-design.md).
-**Status:** Выполняется. Завершены A1–A3, B1–B3, C1–C4, D1–D4 и E3–E4: 16 из 20 задач. B4 и модель E1 в работе; E2 и итоговая приёмка E5 впереди.
+**Status:** Завершены 17 из 20 задач: A1–A3, B1–B3, C1–C4, D1–D4, E1 и E3–E4. B4 и E2 реализованы, но их физические Wi-Fi/LTE проверки остаются открытыми; E5 не начат.
 
 ## Global Constraints
 
@@ -33,7 +33,7 @@
 | B1 — удержание и ротация сессии | Выполнен | Linux tests/race/vet, Android build/lint; конечный LTE-бюджет — интеграционный gate C1/C2 |
 | B2 — HTTPS общей сессии | Выполнен | Linux TCP/UDP QUIC↔HTTPS, race/vet; Android build/lint |
 | B3 — здоровье путей и выбор профиля | Выполнен | Linux policy/bond/mobile, race/vet; Android build/lint; исполнение решений — B4 |
-| B4 — карусель и Android | В работе | Linux runtime и QUIC↔HTTPS проверены; Android и итоговые проверки впереди |
+| B4 — пул и Android | Реализован, проверка не завершена | Linux race/vet, Android и два выхода PASS; физический Wi-Fi/LTE gate открыт |
 | C1 — общий бюджет и период работы | Выполнен | Ledger, gomobile, владелец периода в службе; Linux и Android проверки |
 | C2 — учёт транспорта и блокировка LTE | Выполнен | QUIC/HTTPS/AWG, общий лимит, Linux race/vet, Android 6 тестов |
 | C3 — служебные загрузки | Выполнен | dbda3e2; Linux race/vet, независимое ревью и Android ServiceTransferTest PASS |
@@ -42,9 +42,11 @@
 | D2 — QR и допуск устройств | Выполнен | 24ч/5 регистраций, cap 30 с AWG; Linux race/vet, Android и ревью PASS |
 | D3 — SNI и совместимость | Выполнен | TLS/QUIC/HTTPS, независимый control PKI, Android и ревью PASS; ingress в E4 |
 | D4 — обновление профиля/APK | Выполнен | Linux race/vet, Android 16 тестов + живые два выхода; ревью PASS |
-| E1–E2 — UI и Echo | Не начаты | 2 задачи |
+| E1 — VPN-экран и метрики | Выполнен | Android model/events/UI, реальный IPv4 обоих выходов и ревью PASS |
+| E2 — два режима Echo | Реализован, проверка не завершена | Go race, Android и Echo через живой VPN PASS; live ComparisonTest через Wi-Fi/LTE впереди |
 | E3 — ограничения серверного захвата | Выполнен | Lifecycle bond, scope устройств, race/vet и ревью PASS |
 | E4 — systemd и обновление сервера | Выполнен | 25 тестов, systemd миграция 1→2, архив/SHA256 и ревью PASS |
+| E5 — полная приёмка | Не начат | Матрица отказов, нагрузка и длительный прогон |
 
 Подробные результаты и ограничения: [phase1-progress](../../phase1-progress.md). Непомеченные требования среды являются условиями предстоящих live/load проверок, а не выполненными испытаниями.
 ## Пакет планов

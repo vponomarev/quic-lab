@@ -23,6 +23,8 @@ const (
 	pong       byte = 8
 	Stop       byte = 9
 	blockCell  byte = 10
+	terminate  byte = 11
+	terminated byte = 12
 	Chunk           = 1050
 	header          = 30
 	maxPending      = 1024
@@ -60,6 +62,7 @@ type pathState struct {
 	failures                                          int
 }
 type PathStats struct {
+	Draining         bool    `json:"draining,omitempty"`
 	ProfileID        string  `json:"profile_id"`
 	Network          string  `json:"network"`
 	Generation       uint64  `json:"generation"`
@@ -88,20 +91,23 @@ type Stats struct {
 	CellBlocked bool        `json:"cell_blocked"`
 }
 type Session struct {
-	options       Options
-	generations   map[string]uint64
-	cellBlocked   bool
-	totals        map[string]*traffic
-	recordTimeout time.Duration
-	mu            sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	paths         map[string]*pathState
-	pending       map[uint64]*packet
-	perFlow       map[uint32]int
-	next          uint64
-	changed       chan struct{}
-	deliver       func(Record) bool
+	preferredPath    string
+	terminateAck     chan struct{}
+	terminateHandler func()
+	options          Options
+	generations      map[string]uint64
+	cellBlocked      bool
+	totals           map[string]*traffic
+	recordTimeout    time.Duration
+	mu               sync.Mutex
+	ctx              context.Context
+	cancel           context.CancelFunc
+	paths            map[string]*pathState
+	pending          map[uint64]*packet
+	perFlow          map[uint32]int
+	next             uint64
+	changed          chan struct{}
+	deliver          func(Record) bool
 	// Datagram duplicate window never stalls a reliable stream.
 	seen                                     [65536]uint64
 	seenHigh                                 uint64
@@ -314,6 +320,9 @@ func frame(kind byte, flow uint32, seq, id uint64, stamp int64, copy bool, paylo
 }
 func copyBytes(dst, src []byte) { copy(dst, src) }
 func (s *Session) preferred(now time.Time) string {
+	if p := s.paths[s.preferredPath]; p != nil && now.After(p.penalizedUntil) && now.Sub(p.lastReply) < 2*time.Second && (p.info.Network != "cell" || !s.cellBlocked && (s.cellLimit == 0 || s.cellSent < s.cellLimit)) {
+		return s.preferredPath
+	}
 	wn, cn := "", ""
 	for name, p := range s.paths {
 		if p.info.Network == "wifi" && (wn == "" || p.rtt < s.paths[wn].rtt || p.rtt == s.paths[wn].rtt && name < wn) {
@@ -474,6 +483,11 @@ func (s *Session) run() {
 					continue
 				}
 				threshold := hedge(s.paths[p.primary])
+				// A speculative UDP rescue must run before its 200ms lifetime.
+				// Leave half the lifetime for the alternate path and scheduler jitter.
+				if p.Kind == Datagram {
+					threshold = min(threshold, 100*time.Millisecond)
+				}
 				if !p.copied && now.Sub(p.last) > threshold {
 					other := ""
 					for name, path := range s.paths {
@@ -546,6 +560,29 @@ func (s *Session) receive(name string, ps *pathState) {
 			ps.rxControl += uint64(len(b))
 		} else if b[1] == 1 {
 			ps.rxCopies += uint64(len(b))
+		}
+		if kind == terminated && len(b) == header {
+			if s.terminateAck != nil {
+				close(s.terminateAck)
+				s.terminateAck = nil
+			}
+			s.mu.Unlock()
+			continue
+		}
+		if kind == terminate && len(b) == header {
+			handler := s.terminateHandler
+			s.mu.Unlock()
+			// Only a server with an explicit registry owner accepts termination. Paths
+			// are authenticated; tokens never travel in the control record or logs.
+			if handler != nil {
+				handler()
+				s.mu.Lock()
+				_ = s.sendOn(name, ps, frame(terminated, 0, 0, 0, 0, false, nil), true)
+				s.mu.Unlock()
+				s.Close()
+				return
+			}
+			continue
 		}
 		if kind == blockCell && len(b) == header {
 			s.cellBlocked = true

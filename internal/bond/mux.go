@@ -353,6 +353,17 @@ func (m *Mux) BeginDrain() {
 	m.draining = true
 	m.next = 65536
 	m.mu.Unlock()
-	timer := time.AfterFunc(m.Session.options.DisconnectGrace, func() { m.Close() })
+	timer := time.AfterFunc(m.Session.options.DisconnectGrace, func() { m.CloseGracefully() })
 	context.AfterFunc(m.Context(), func() { timer.Stop() })
+}
+
+// ActiveFlows includes only streams that have not been explicitly closed.
+func (m *Mux) ActiveFlows() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.flows) }
+
+// CloseGracefully releases the peer registry entry before closing live paths.
+func (m *Mux) CloseGracefully() {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	m.Session.Terminate(ctx)
+	m.Close()
 }

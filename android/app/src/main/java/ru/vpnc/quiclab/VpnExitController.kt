@@ -43,6 +43,7 @@ internal class VpnExitController<T: AutoCloseable>(
   }
   apply(id,token,state)
  }
+ @Synchronized fun token(id:String):Long?=generations[id]
  @Synchronized fun state(id:String)=states[id] ?: "stopped"
  @Synchronized fun session(id:String):T?=sessions[id]
  @Synchronized fun stop(id:String) {

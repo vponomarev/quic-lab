@@ -28,6 +28,7 @@ class MultipleLiveTest {
         val saved = meta.all.toMap()
         val created = mutableListOf<String>()
         val migrate = args.getString("multiple_migration") == "true"
+        val bonded = args.getString("multiple_bond") == "true"
         val wifi = c.getSystemService(android.net.wifi.WifiManager::class.java)
         val wifiWasEnabled = wifi.isWifiEnabled
         listOf(selected, direct).forEach { c.packageManager.getApplicationInfo(it, 0) }
@@ -51,7 +52,10 @@ class MultipleLiveTest {
             }
         fun waitFor(label: String, seconds: Int = 45, predicate: () -> Boolean) {
             val end = System.currentTimeMillis() + seconds * 1000
-            while (!predicate() && System.currentTimeMillis() < end) Thread.sleep(200)
+            while (System.currentTimeMillis() < end) {
+                if (predicate()) return
+                Thread.sleep(200)
+            }
             assertTrue("$label: ${MultipleVpnState.summary()}", predicate())
         }
         fun stop() {
@@ -112,7 +116,8 @@ class MultipleLiveTest {
                 check(
                     prefs
                         .edit()
-                        .putBoolean("max_availability", false)
+                        .putBoolean("max_availability", bonded)
+                        .putBoolean("demux_enabled", bonded)
                         .putString("transport", transport)
                         .putString("endpoint", prefs.getString("${transport}_endpoint", ""))
                         .putInt("mode", mode)
@@ -135,6 +140,26 @@ class MultipleLiveTest {
             probe(selected, "https", "api.ipify.org")
             probe(direct, "tcp")
             probe(direct, "https", "api.ipify.org")
+            waitFor("dashboard exposes both live exits and useful traffic", 10) {
+                val cards = VpnDashboardEvents.dashboards()
+                cards.map { it.exitId }.toSet() == setOf(home.id, apps.id) &&
+                    cards.all { it.activePathId != null && it.rxTotalBytes > 0 && it.txTotalBytes > 0 }
+            }
+            waitFor("each Internet-capable fixture exit reports its IPv4", 20) {
+                VpnDashboardEvents.dashboards().let { cards -> cards.size == 2 && cards.all { !it.exitIpv4.isNullOrBlank() } }
+            }
+            val echoDone = java.util.concurrent.CountDownLatch(1)
+            val echoResult = java.util.concurrent.atomic.AtomicReference<JSONObject>()
+            val echoLease = LabVpnService.startExitEcho(home.id, "$target:39081", 100L) { event ->
+                if (event.has("rtt_ms")) { echoResult.set(event); echoDone.countDown() }
+            }
+            try {
+                assertTrue("Selected-exit Echo must return through the live tunnel", echoDone.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals(home.id, echoResult.get().getString("exit_id"))
+                assertTrue(echoResult.get().getDouble("rtt_ms") >= 0.0)
+            } finally { echoLease.close() }
+            assertTrue("Closing diagnostic keeps VPN active", LabVpnService.active)
+            probe(selected, "tcp")
             val report = Diagnostics.report(c, "")
             val uid = c.packageManager.getApplicationInfo(selected, 0).uid
             assertTrue(
@@ -176,7 +201,7 @@ class MultipleLiveTest {
                         it.contains("destination=$target")
                 },
             )
-            shell("am start -W -n ru.vpnc.quiclab/.MainActivity")
+            shell("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ru.vpnc.quiclab/.MainActivity")
             Thread.sleep(500)
             inst.uiAutomation.takeScreenshot()?.let { img ->
                 File(c.filesDir, "multiple-live.png").outputStream().use {
@@ -222,7 +247,8 @@ class MultipleLiveTest {
                 check(
                     prefs
                         .edit()
-                        .putBoolean("max_availability", false)
+                        .putBoolean("max_availability", bonded)
+                        .putBoolean("demux_enabled", bonded)
                         .putString("transport", transport)
                         .putString("endpoint", prefs.getString("${transport}_endpoint", ""))
                         .commit()

@@ -13,14 +13,14 @@ type Decision struct {
 	Generation                                 uint64
 }
 type candidate struct {
-	profile                                      vpnmodel.Profile
-	network, id, state                           string
-	generation                                   uint64
-	health                                       Health
-	retry, started, healthy, last, progressSince time.Time
-	successes, failures                          int
-	recoveries                                   []time.Time
-	stalled, recommended                         bool
+	profile                                                    vpnmodel.Profile
+	network, id, state                                         string
+	generation                                                 uint64
+	health                                                     Health
+	retry, started, healthy, last, progressSince, lastProgress time.Time
+	successes, failures                                        int
+	recoveries                                                 []time.Time
+	stalled, recommended                                       bool
 }
 type Policy struct {
 	mu           sync.Mutex
@@ -67,9 +67,10 @@ func (p *Policy) Observe(o Observation) {
 		c.successes++
 	}
 	if progress {
-		if c.progressSince.IsZero() {
+		if c.progressSince.IsZero() || (!c.lastProgress.IsZero() && o.At.Sub(c.lastProgress) > 5*time.Second) {
 			c.progressSince = o.At
 		}
+		c.lastProgress = o.At
 		if o.At.Sub(c.progressSince) >= 30*time.Second {
 			c.failures = 0
 		}
@@ -77,7 +78,7 @@ func (p *Policy) Observe(o Observation) {
 			c.recoveries = append(c.recoveries, o.At)
 			c.stalled = false
 		}
-	} else {
+	} else if !c.lastProgress.IsZero() && o.At.Sub(c.lastProgress) > 5*time.Second {
 		c.progressSince = time.Time{}
 	}
 	c.health.Observe(o)

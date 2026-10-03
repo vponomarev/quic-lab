@@ -19,7 +19,7 @@ internal object VpnConfiguration {
         "hostname", "dns", "mode", "routes", "apps", "global_apps", "ca",
         "server_name", "verify_name", "control_url", "data_version",
         "transit_endpoint", "max_availability", "bond_copy_budget", "bond_cell_budget",
-        "available_transports",
+        "available_transports", "demux_enabled", "quic_mode", "https_mode", "quic_pool_size", "https_pool_size", "quic_check_reserve", "https_check_reserve",
     )
 
     /** One immutable view of the atomically committed server bundle. Editors
@@ -50,6 +50,25 @@ internal object VpnConfiguration {
             @Suppress("UNCHECKED_CAST") override fun getStringSet(key:String,defValues:MutableSet<String>?):MutableSet<String>? =
                 if(key in values) (values[key] as? Set<String>)?.toMutableSet() else local.getStringSet(key,defValues)
         }
+    }
+    /** Credentials enter only this in-memory runtime envelope, never the portable snapshot. */
+    fun attachRuntime(context:Context,id:String,config:JSONObject):JSONObject {
+        val model=load(context).getJSONObject("model")
+        val exits=model.getJSONArray("exits")
+        val exit=(0 until exits.length()).map{exits.getJSONObject(it)}.single{it.getString("id")==id}
+        if(exit.getString("kind")!="demux") {config.put("max_availability",false);return config}
+        val p=effectivePreferences(context,id)
+        val profiles=JSONArray();val gateways=JSONObject();val all=model.getJSONArray("profiles")
+        for(i in 0 until all.length()) {
+            val profile=all.getJSONObject(i);if(profile.getString("exit_id")!=id)continue
+            profiles.put(JSONObject(profile.toString()))
+            gateways.put(profile.getString("id"),JSONObject(config.toString())
+                .put("transport",profile.getString("transport")).put("endpoint",profile.getString("endpoint"))
+                .put("hostname",p.getString("hostname","")).put("max_availability",true))
+        }
+        return config.put("_exit_runtime",JSONObject()
+            .put("model",JSONObject().put("version",1).put("exits",JSONArray().put(JSONObject(exit.toString()))).put("profiles",profiles))
+            .put("gateways",gateways).put("economy",!p.getBoolean("max_availability",false)))
     }
     @Synchronized fun load(context: Context): JSONObject = migrate(context)
 
@@ -93,15 +112,25 @@ internal object VpnConfiguration {
             val prefs = effectivePreferences(context,id)
             val transport = prefs.getString("transport", "quic").orEmpty()
             val endpoint = prefs.getString("endpoint", "").orEmpty()
-            val demux = transport == "quic" && prefs.getBoolean("max_availability", false)
+            val demux = transport in listOf("quic","https") && prefs.getBoolean("demux_enabled",prefs.getBoolean("max_availability",false))
             val exit = JSONObject().put("id", id).put("name", item.getString("name"))
                 .put("kind", if (demux) "demux" else "standalone")
             if (demux) exit.put("demux_id", "legacy:$id")
             exits.put(exit)
-            profiles.put(JSONObject().put("id", id).put("exit_id", id).put("transport", transport)
-                .put("mode", if (endpoint.isBlank()) "disabled" else "auto")
-                .put("endpoint", endpoint).put("priority", i).put("pool_size", 1)
-                .put("check_reserve", false))
+            val available=prefs.getStringSet("available_transports",null)
+            val transports=if(demux) listOf(transport)+listOf("quic","https").filter {
+                it!=transport && !prefs.getString("${it}_endpoint","").isNullOrBlank() && (available==null || it in available)
+            } else listOf(transport)
+            transports.forEachIndexed { priority, kind ->
+                val address=if(kind==transport) endpoint else prefs.getString("${kind}_endpoint","").orEmpty()
+                val profileId=if(kind==transport) id else "$id.$kind"
+                val profileMode=if(address.isBlank()) "disabled" else if(demux) prefs.getString("${kind}_mode","auto") else "auto"
+                val defaultPool=if(demux && kind==transport && prefs.getBoolean("max_availability",false)) 2 else 1
+                profiles.put(JSONObject().put("id",profileId).put("exit_id",id).put("transport",kind)
+                    .put("mode",profileMode).put("endpoint",address).put("priority",priority)
+                    .put("pool_size",if(demux) prefs.getInt("${kind}_pool_size",defaultPool) else 1)
+                    .put("check_reserve",demux && prefs.getBoolean("${kind}_check_reserve",false)))
+            }
             val local = JSONObject()
             val all = prefs.all
             for (key in localKeys) {

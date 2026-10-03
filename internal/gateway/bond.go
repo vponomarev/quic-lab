@@ -79,6 +79,13 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 	if entry == nil && h.Create && ownerCount < 4 && len(s.bonds.entries) < 32 {
 		entry = &bondEntry{mux: bond.NewMuxWithOptions(root, false, s.BondOptions), owner: owner, ready: make(chan struct{})}
 		s.bonds.entries[h.Token] = entry
+		entry.mux.Session.SetTerminationHandler(func() {
+			s.bonds.mu.Lock()
+			if s.bonds.entries[h.Token] == entry {
+				delete(s.bonds.entries, h.Token)
+			}
+			s.bonds.mu.Unlock()
+		})
 		entry.mux.Session.Configure(h.CopyBudget, h.CellBudget)
 		if h.CellDisabled {
 			entry.mux.Session.BlockCell()

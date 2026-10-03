@@ -39,7 +39,11 @@ func (g *Gateway) checkCapabilities(binder SocketBinder) error {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
 		return errors.New("invalid capabilities HTTPS URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	root := g.ctx
+	if root == nil {
+		root = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(root, 5*time.Second)
 	defer cancel()
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	if binder != nil {
@@ -92,7 +96,16 @@ func (g *Gateway) checkCapabilities(binder SocketBinder) error {
 	}
 	if compatibilityErr != nil {
 		g.emit("upgrade_required", map[string]any{"min_android_version_code": caps.MinAndroidVersionCode, "data_version": caps.DataVersion})
-		return compatibilityErr
+		return &runtimeUpgradeError{cause: compatibilityErr, minAndroid: caps.MinAndroidVersionCode, dataVersion: caps.DataVersion}
 	}
 	return nil
 }
+
+type runtimeUpgradeError struct {
+	cause       error
+	minAndroid  int
+	dataVersion int
+}
+
+func (e *runtimeUpgradeError) Error() string { return e.cause.Error() }
+func (e *runtimeUpgradeError) Unwrap() error { return e.cause }

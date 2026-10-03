@@ -14,6 +14,10 @@ class BondDeviceTest {
   val old=p.all.filterKeys{it in keys}
   val probe="ru.vpnc.quicprobe"; val probeId="bond"+System.nanoTime()
   val probeHost=InstrumentationRegistry.getArguments().getString("probe_host")?:error("probe_host required")
+  val probeKind=InstrumentationRegistry.getArguments().getString("probe_kind")?:"https-long"
+  require(probeKind in setOf("https-long","tcp-long"))
+  val probePort=InstrumentationRegistry.getArguments().getString("probe_port")?.toInt()?:443
+  require(probePort in 1..65535)
   require(probeHost.matches(Regex("[A-Za-z0-9.-]+")))
   c.packageManager.getApplicationInfo(probe,0)
   val wifi=c.getSystemService(android.net.wifi.WifiManager::class.java).isWifiEnabled
@@ -25,7 +29,7 @@ class BondDeviceTest {
   }
   fun ready(name:String):Boolean {
    val a=LabVpnService.bondSnapshot?.optJSONArray("paths")?:return false
-   return (0 until a.length()).any {val v=a.getJSONObject(it);v.optString("name")==name && v.optBoolean("ready")}
+   return (0 until a.length()).any {val v=a.getJSONObject(it);v.optString("network",v.optString("name"))==name && v.optBoolean("ready")}
   }
   val stay=shell("settings get global stay_on_while_plugged_in").trim()
   try {
@@ -42,7 +46,7 @@ class BondDeviceTest {
    waitFor("both paths") {ready("wifi") && ready("cell")}
    waitFor("session") {LabVpnService.connection.startsWith("bond-")}
    val session=LabVpnService.connection
-   shell("am start -W -n $probe/ru.vpnc.quicprobe.ProbeActivity --es id $probeId --es kind https-long --es host $probeHost --ei port 443")
+   shell("am start -W -n $probe/ru.vpnc.quicprobe.ProbeActivity --es id $probeId --es kind $probeKind --es host $probeHost --ei port $probePort")
    Thread.sleep(3000)
    println("BOND both paths: ${LabVpnService.bondSnapshot}")
    shell("svc wifi disable")
