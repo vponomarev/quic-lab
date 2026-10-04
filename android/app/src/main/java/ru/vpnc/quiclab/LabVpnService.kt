@@ -258,7 +258,7 @@ class LabVpnService : VpnService() {
     private fun vpnNotification(): Notification {
         val now = android.os.SystemClock.elapsedRealtime()
         val content = if (multipleMode) MultipleVpnState.notification(now) else notificationSnapshot(now)
-        val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = PendingIntent.getActivity(this, 2, Intent(this, VpnActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, LabVpnService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "vpn")
             .setSmallIcon(android.R.drawable.ic_lock_lock)

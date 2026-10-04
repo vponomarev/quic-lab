@@ -7,8 +7,8 @@ android {
         applicationId = "ru.vpnc.quiclab"
         minSdk = 30
         targetSdk = 35
-        versionCode = 31
-        versionName = "0.8.0-pre.11"
+        versionCode = 32
+        versionName = "0.8.0-pre.12"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
