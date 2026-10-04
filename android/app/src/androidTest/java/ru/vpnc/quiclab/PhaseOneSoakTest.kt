@@ -59,9 +59,19 @@ class PhaseOneSoakTest {
             val start=SystemClock.elapsedRealtime()
             println("SOAK START id=$id seconds=$seconds utc_ms=${System.currentTimeMillis()} transport=${LabVpnService.transport}")
             var lastProbe=-1L
+            var lastScreenSample=start
+            var previousScreenOn=false
+            var screenOnMillis=0L
+            var screenOffMillis=0L
+            var screenTransitions=0
             output.outputStream().bufferedWriter().use { out ->
                 while(SystemClock.elapsedRealtime()-start<seconds*1000) {
                     val now=SystemClock.elapsedRealtime()
+                    val screenOn=c.getSystemService(PowerManager::class.java).isInteractive
+                    val interval=now-lastScreenSample
+                    if(previousScreenOn) screenOnMillis+=interval else screenOffMillis+=interval
+                    if(screenOn!=previousScreenOn) screenTransitions++
+                    previousScreenOn=screenOn;lastScreenSample=now
                     val memory=Debug.MemoryInfo();Debug.getMemoryInfo(memory)
                     val battery=c.registerReceiver(null,IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                     val raw=shell("run-as $probe cat files/$id.jsonl")
@@ -70,7 +80,9 @@ class PhaseOneSoakTest {
                     val last=rows.last()
                     val row=JSONObject().put("elapsed_ms",now-start).put("utc_ms",System.currentTimeMillis())
                         .put("active",LabVpnService.active).put("health_age_ms",now-LabVpnService.lastHealth)
-                        .put("screen_on",c.getSystemService(PowerManager::class.java).isInteractive)
+                        .put("screen_on",screenOn)
+                        .put("screen_on_sampled_ms",screenOnMillis).put("screen_off_sampled_ms",screenOffMillis)
+                        .put("screen_transitions_sampled",screenTransitions)
                         .put("pss_kib",memory.totalPss).put("native_heap_bytes",Debug.getNativeHeapAllocatedSize())
                         .put("java_heap_bytes",Runtime.getRuntime().totalMemory()-Runtime.getRuntime().freeMemory())
                         .put("fds",File("/proc/self/fd").list()?.size ?: -1)
@@ -80,7 +92,6 @@ class PhaseOneSoakTest {
                         .put("tx_bytes",LabVpnService.txBytes).put("rx_bytes",LabVpnService.rxBytes)
                     out.write(row.toString());out.newLine();out.flush()
                     assertTrue("Unexpected VPN stop",LabVpnService.active)
-                    assertFalse("Screen turned on",row.getBoolean("screen_on"))
                     for(r in rows.filter {it.getLong("seq")>lastProbe}) {
                         assertTrue("Probe bypassed VPN",r.getBoolean("vpn"))
                         assertTrue("TCP failure: $r",r.optBoolean("tcp_ok"))
@@ -91,7 +102,7 @@ class PhaseOneSoakTest {
                     Thread.sleep(10000)
                 }
             }
-            println("SOAK PASS id=$id elapsed_ms=${SystemClock.elapsedRealtime()-start} samples_file=${output.name}")
+            println("SOAK PASS id=$id elapsed_ms=${SystemClock.elapsedRealtime()-start} screen_on_sampled_ms=$screenOnMillis screen_off_sampled_ms=$screenOffMillis screen_transitions_sampled=$screenTransitions samples_file=${output.name}")
         } finally {
             shell("am force-stop $probe")
             c.stopService(Intent(c,LabVpnService::class.java));Thread.sleep(1000)

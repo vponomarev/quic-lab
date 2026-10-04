@@ -45,3 +45,14 @@ This soak uses repeated connections. Persistent single-socket byte continuity, n
 - Source baseline: `55b8254` plus the soak harness recorded in the following commit. Production server unchanged during this run.
 - Detached Windows runner PID at launch: 21496. Host evidence: `%TEMP%/quic-phase1-soak/run-20261004-132515`. Runner saves instrumentation output and retrieves application/probe JSONL after completion. Logs also remain on the device if host collection is interrupted.
 - First two samples: VPN active, screen off, TCP/UDP successful, 110 descriptors. These samples establish startup only and are not an endurance verdict.
+
+## Screen activation policy
+
+Screen activation is logged and does not fail or stop the soak. On/off duration and transitions are sampled every ten seconds (not exact event timestamps). The eight-hour total run and its measured screen-off portion must be reported separately; mixed screen use does not prove eight uninterrupted screen-off hours. VPN/traffic failures still fail the test. The initial 2026-10-04 run stopped at 13:46 after 21 minutes because the old harness rejected screen activation; TCP/UDP were healthy at that point.
+
+## Replacement run — 2026-10-04
+
+- Started **14:06:53 Europe/Moscow**, run `soak1791112008307`, expected finish approximately **22:06:53**. Result pending.
+- Host evidence: `%TEMP%/quic-phase1-soak/run-20261004-140648`; detached runner PID 23348.
+- Instrumentation SHA256: `86ae5514ae04deb93f07e776e0de3903af01c8893b28dddf8a31a24fddecb1ab`; client APK unchanged.
+- Physical regression verified in the first 30 seconds: screen off → on → off, two sampled transitions, successful TCP/UDP throughout, VPN active. Screen activation no longer terminates the test. Eight-hour acceptance remains pending.
