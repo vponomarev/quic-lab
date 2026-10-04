@@ -43,5 +43,5 @@ This soak uses repeated connections. Persistent single-socket byte continuity, n
 - Client APK SHA256: `529b7c97138f483b2158eada66fb2a0307fbfdca6fedef086d2457548e34808f`.
 - Instrumentation APK SHA256: `b599b902d8cdc74ff889b45a32d527717d18d162e8c90a40c1f17a69efdf9c5d`.
 - Source baseline: `55b8254` plus the soak harness recorded in the following commit. Production server unchanged during this run.
-- Detached Windows runner PID at launch: 21496. Host evidence: `%TEMP%/quic-phase1-soak/run-20261004-132514` (use the actual latest directory if timestamp differs). Runner saves instrumentation output and retrieves application/probe JSONL after completion. Logs also remain on the device if host collection is interrupted.
+- Detached Windows runner PID at launch: 21496. Host evidence: `%TEMP%/quic-phase1-soak/run-20261004-132515`. Runner saves instrumentation output and retrieves application/probe JSONL after completion. Logs also remain on the device if host collection is interrupted.
 - First two samples: VPN active, screen off, TCP/UDP successful, 110 descriptors. These samples establish startup only and are not an endurance verdict.
