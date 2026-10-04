@@ -47,6 +47,9 @@ func decodeGatewayVLESS(raw, endpoint string) (vless.Config, error) {
 	if p.Config.ShortID != "" {
 		q.Set("sid", p.Config.ShortID)
 	}
+	if p.Config.SpiderX != "" {
+		q.Set("spx", p.Config.SpiderX)
+	}
 	u := url.URL{Scheme: "vless", User: url.User(p.Config.UUID), Host: p.Config.Endpoint, RawQuery: q.Encode(), Fragment: p.Name}
 	checked, err := vless.ParseImport(u.String())
 	if err != nil {

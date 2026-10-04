@@ -10,7 +10,7 @@ import org.junit.Assume.assumeFalse
 import org.junit.Test
 
 class VlessImportTest {
-    private val fixture = "vless://11111111-1111-4111-8111-111111111111@outer.invalid:443?security=reality&type=tcp&sni=server.invalid&fp=chrome&pbk=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&sid=aabb&spx=%2F#Fixture"
+    private val fixture = "vless://11111111-1111-4111-8111-111111111111@outer.invalid:443?security=reality&type=tcp&sni=server.invalid&fp=chrome&pbk=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&sid=aabb&spx=%2Fdocs%2Fa%2520b%3Fq%3Dx%252Fy#Fixture"
 
     @Test fun importStoresCredentialsOnlyInEncryptedBundle() {
         val c = InstrumentationRegistry.getInstrumentation().targetContext
@@ -41,6 +41,7 @@ class VlessImportTest {
             val bundle = VpnIdentity.load(c)
             val canonical = JSONObject(bundle.getString("vless_config"))
             assertEquals("11111111-1111-4111-8111-111111111111", canonical.getJSONObject("config").getString("UUID"))
+            assertEquals("/docs/a%20b?q=x%2Fy", canonical.getJSONObject("config").getString("SpiderX"))
             assertFalse(String(VpnProfiles.identityFile(c).readBytes(), Charsets.ISO_8859_1).contains("11111111"))
         } finally {
             VpnProfiles.select(c, previous)

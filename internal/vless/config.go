@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,7 @@ type Config struct {
 	Flow             string
 	RealityPublicKey string
 	ShortID          string
+	SpiderX          string `json:",omitempty"`
 	// RootPEM optionally supplies a private fixture trust root for TLS.
 	RootPEM []byte
 }
@@ -65,7 +67,7 @@ func buildConfig(c Config) (*core.Config, error) {
 	var security *serial.TypedMessage
 	switch c.Security {
 	case "tls":
-		if c.RealityPublicKey != "" || c.ShortID != "" {
+		if c.RealityPublicKey != "" || c.ShortID != "" || c.SpiderX != "" {
 			return nil, errors.New("REALITY fields require REALITY security")
 		}
 		tls := &xtls.Config{ServerName: c.ServerName, Fingerprint: c.Fingerprint}
@@ -92,9 +94,13 @@ func buildConfig(c Config) (*core.Config, error) {
 		if err != nil || len(sid) > 8 {
 			return nil, errors.New("invalid VLESS REALITY short ID")
 		}
+		spider, err := NormalizeSpiderX(c.SpiderX)
+		if err != nil {
+			return nil, err
+		}
 		shortID := make([]byte, 8)
 		copy(shortID, sid)
-		security = serial.ToTypedMessage(&reality.Config{ServerName: c.ServerName, Fingerprint: c.Fingerprint, PublicKey: key, ShortId: shortID, SpiderX: "/", SpiderY: make([]int64, 10)})
+		security = serial.ToTypedMessage(&reality.Config{ServerName: c.ServerName, Fingerprint: c.Fingerprint, PublicKey: key, ShortId: shortID, SpiderX: spider, SpiderY: make([]int64, 10)})
 	default:
 		return nil, errors.New("unsupported VLESS security")
 	}
@@ -156,4 +162,34 @@ func validRoots(data []byte) bool {
 		data = rest
 	}
 	return count > 0
+}
+
+// NormalizeSpiderX preserves escaped paths and query parameters without accepting an external URL.
+func NormalizeSpiderX(value string) (string, error) {
+	if value == "" {
+		return "/", nil
+	}
+	bad := errors.New("invalid REALITY SpiderX path")
+	if len(value) > 2048 || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\\#\r\n\t") {
+		return "", bad
+	}
+	for _, r := range value {
+		if r < 32 || r == 127 {
+			return "", bad
+		}
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Host != "" || u.Scheme != "" || u.Fragment != "" {
+		return "", bad
+	}
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		return "", bad
+	}
+	for _, r := range decoded {
+		if r < 32 || r == 127 {
+			return "", bad
+		}
+	}
+	return value, nil
 }

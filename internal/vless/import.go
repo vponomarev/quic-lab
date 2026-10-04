@@ -79,8 +79,8 @@ func parseImportURI(raw string) (ImportedProfile, error) {
 	if (q.Has("type") && q.Get("type") != "tcp" && q.Get("type") != "raw") || (q.Has("encryption") && q.Get("encryption") != "none") {
 		return p, invalid
 	}
-	// The adapter already uses SpiderX="/". Accept this explicit default only; do not silently discard a different crawl path.
-	if q.Has("spx") && (q.Get("security") != "reality" || q.Get("spx") != "/") {
+	// Explicit SpiderX belongs only to REALITY.
+	if q.Has("spx") && (q.Get("security") != "reality" || q.Get("spx") == "") {
 		return p, invalid
 	}
 	// Explicit REALITY query fields under TLS are rejected even when empty.
@@ -88,7 +88,7 @@ func parseImportURI(raw string) (ImportedProfile, error) {
 		return p, invalid
 	}
 	p.Name = u.Fragment
-	p.Config = Config{Endpoint: u.Host, UUID: u.User.Username(), Security: q.Get("security"), ServerName: q.Get("sni"), Fingerprint: q.Get("fp"), Flow: q.Get("flow"), RealityPublicKey: q.Get("pbk"), ShortID: q.Get("sid")}
+	p.Config = Config{Endpoint: u.Host, UUID: u.User.Username(), Security: q.Get("security"), ServerName: q.Get("sni"), Fingerprint: q.Get("fp"), Flow: q.Get("flow"), RealityPublicKey: q.Get("pbk"), ShortID: q.Get("sid"), SpiderX: q.Get("spx")}
 	return p, nil
 }
 
@@ -111,6 +111,7 @@ type importReality struct {
 	Fingerprint string `json:"fingerprint"`
 	PublicKey   string `json:"publicKey"`
 	ShortID     string `json:"shortId"`
+	SpiderX     string `json:"spiderX,omitempty"`
 }
 type importObject struct {
 	Tag      string `json:"tag"`
@@ -168,6 +169,7 @@ func parseImportJSON(raw string) (ImportedProfile, error) {
 		p.Config.Fingerprint = o.Stream.Reality.Fingerprint
 		p.Config.RealityPublicKey = o.Stream.Reality.PublicKey
 		p.Config.ShortID = o.Stream.Reality.ShortID
+		p.Config.SpiderX = o.Stream.Reality.SpiderX
 	default:
 		return p, invalid
 	}
@@ -204,7 +206,7 @@ func scanImportJSON(d *json.Decoder, depth int) error {
 			}
 			seen[key] = true
 			switch key {
-			case "tag", "protocol", "settings", "vnext", "address", "port", "users", "id", "encryption", "flow", "streamSettings", "network", "security", "tlsSettings", "realitySettings", "serverName", "fingerprint", "publicKey", "shortId":
+			case "tag", "protocol", "settings", "vnext", "address", "port", "users", "id", "encryption", "flow", "streamSettings", "network", "security", "tlsSettings", "realitySettings", "serverName", "fingerprint", "publicKey", "shortId", "spiderX":
 			default:
 				return invalid
 			}

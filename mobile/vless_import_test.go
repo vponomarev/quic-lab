@@ -41,3 +41,23 @@ func TestImportVLESSBridgeSeparatesSecretsFromMetadata(t *testing.T) {
 		t.Fatal("invalid validation accepted or leaked")
 	}
 }
+
+func TestVLESSStoredSpiderXAndLegacy(t *testing.T) {
+	base := "vless://11111111-1111-4111-8111-111111111111@outer.invalid:443?security=reality&sni=server.invalid&fp=chrome&pbk=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE&sid=aabb"
+	for _, suffix := range []string{"", "&spx=%2Fdocs%2Fa%2520b%3Fq%3Dx%252Fy"} {
+		raw, err := ImportVLESSConfig(base + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := decodeGatewayVLESS(raw, "127.0.0.1:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if suffix != "" && got.SpiderX != "/docs/a%20b?q=x%2Fy" {
+			t.Fatalf("lost SpiderX: %q", got.SpiderX)
+		}
+		if suffix == "" && strings.Contains(raw, "SpiderX") {
+			t.Fatal("legacy canonical JSON changed")
+		}
+	}
+}

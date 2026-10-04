@@ -20,8 +20,16 @@ func (c Config) clientURI(uuid, name string) (string, error) {
 			return "", errConfig
 		}
 		q.Set("pbk", pub)
-		q.Set("sid", c.RealityShortIDs[0])
-		q.Set("spx", "/")
+		id := c.RealityExportShortID
+		if id == "" {
+			id = c.RealityShortIDs[0]
+		}
+		q.Set("sid", id)
+		spider, err := vless.NormalizeSpiderX(c.RealitySpiderX)
+		if err != nil {
+			return "", err
+		}
+		q.Set("spx", spider)
 	}
 	u := url.URL{Scheme: "vless", User: url.User(uuid), Host: c.Endpoint, RawQuery: q.Encode(), Fragment: name}
 	return u.String(), nil

@@ -84,9 +84,20 @@ func TestParseImportRealityDefaultSpiderX(t *testing.T) {
 			t.Fatal("profile changed")
 		}
 	}
-	for _, raw := range []string{base + "&spx=", base + "&spx=/custom", base + "&spx=/&spx=/", strings.Replace(importURI, "#Fixture", "&spx=/#Fixture", 1)} {
+	for _, raw := range []string{base + "&spx=", base + "&spx=https://invalid/", base + "&spx=/&spx=/", strings.Replace(importURI, "#Fixture", "&spx=/#Fixture", 1)} {
 		if _, err := ParseImport(raw); err == nil {
 			t.Fatal("unsupported spiderX accepted")
 		}
+	}
+}
+
+func TestParseImportRealityJSONSpiderX(t *testing.T) {
+	raw := `{"protocol":"vless","settings":{"vnext":[{"address":"outer.invalid","port":443,"users":[{"id":"11111111-1111-4111-8111-111111111111","encryption":"none"}]}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverName":"server.invalid","fingerprint":"chrome","publicKey":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE","shortId":"aabb","spiderX":"/docs/a%20b?q=x%2Fy"}}}`
+	got, err := ParseImport(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Config.SpiderX != "/docs/a%20b?q=x%2Fy" {
+		t.Fatal("JSON SpiderX lost")
 	}
 }

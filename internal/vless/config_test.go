@@ -154,3 +154,17 @@ func TestBuildConfigRejectsUnsupportedInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestSpiderXPathValidation(t *testing.T) {
+	for _, value := range []string{"", "/", "/docs/a%20b?q=x%2Fy&lang=ru"} {
+		got, err := NormalizeSpiderX(value)
+		if err != nil || got == "" {
+			t.Fatalf("valid path %q: %v", value, err)
+		}
+	}
+	for _, value := range []string{"https://host/", "//host/", "/a#fragment", "/a%0d%0a", "/bad%xx", "/a\n", "/a\\b"} {
+		if _, err := NormalizeSpiderX(value); err == nil {
+			t.Fatalf("unsafe path accepted %q", value)
+		}
+	}
+}

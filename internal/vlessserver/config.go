@@ -15,21 +15,23 @@ import (
 )
 
 type Config struct {
-	AcceptProxyProtocol bool     `json:"accept_proxy_protocol,omitempty"`
-	Listen              string   `json:"listen"`
-	Endpoint            string   `json:"endpoint"`
-	Security            string   `json:"security"`
-	ServerName          string   `json:"server_name"`
-	Fingerprint         string   `json:"fingerprint,omitempty"`
-	Flow                string   `json:"flow,omitempty"`
-	TLSCertificateFile  string   `json:"tls_certificate_file,omitempty"`
-	TLSKeyFile          string   `json:"tls_key_file,omitempty"`
-	RealityTarget       string   `json:"reality_target,omitempty"`
-	RealityServerNames  []string `json:"reality_server_names,omitempty"`
-	RealityPrivateKey   string   `json:"reality_private_key,omitempty"`
-	RealityShortIDs     []string `json:"reality_short_ids,omitempty"`
-	Mode                string   `json:"mode"`
-	DemuxEndpoint       string   `json:"demux_endpoint,omitempty"`
+	AcceptProxyProtocol  bool     `json:"accept_proxy_protocol,omitempty"`
+	Listen               string   `json:"listen"`
+	Endpoint             string   `json:"endpoint"`
+	Security             string   `json:"security"`
+	ServerName           string   `json:"server_name"`
+	Fingerprint          string   `json:"fingerprint,omitempty"`
+	Flow                 string   `json:"flow,omitempty"`
+	TLSCertificateFile   string   `json:"tls_certificate_file,omitempty"`
+	TLSKeyFile           string   `json:"tls_key_file,omitempty"`
+	RealityTarget        string   `json:"reality_target,omitempty"`
+	RealityServerNames   []string `json:"reality_server_names,omitempty"`
+	RealityPrivateKey    string   `json:"reality_private_key,omitempty"`
+	RealityShortIDs      []string `json:"reality_short_ids,omitempty"`
+	RealityExportShortID string   `json:"reality_export_short_id,omitempty"`
+	RealitySpiderX       string   `json:"reality_spider_x,omitempty"`
+	Mode                 string   `json:"mode"`
+	DemuxEndpoint        string   `json:"demux_endpoint,omitempty"`
 }
 
 var errConfig = errors.New("invalid VLESS server configuration")
@@ -100,10 +102,24 @@ func (c Config) Validate() error {
 	}
 	switch c.Security {
 	case "tls":
-		if !filepath.IsAbs(c.TLSCertificateFile) || !filepath.IsAbs(c.TLSKeyFile) || strings.ContainsAny(c.TLSCertificateFile+c.TLSKeyFile, "\x00\r\n") || c.RealityTarget != "" || c.RealityPrivateKey != "" || len(c.RealityServerNames) > 0 || len(c.RealityShortIDs) > 0 {
+		if !filepath.IsAbs(c.TLSCertificateFile) || !filepath.IsAbs(c.TLSKeyFile) || strings.ContainsAny(c.TLSCertificateFile+c.TLSKeyFile, "\x00\r\n") || c.RealityTarget != "" || c.RealityPrivateKey != "" || len(c.RealityServerNames) > 0 || len(c.RealityShortIDs) > 0 || c.RealityExportShortID != "" || c.RealitySpiderX != "" {
 			return errConfig
 		}
 	case "reality":
+		if _, err := vless.NormalizeSpiderX(c.RealitySpiderX); err != nil {
+			return errConfig
+		}
+		if c.RealityExportShortID != "" {
+			found := false
+			for _, id := range c.RealityShortIDs {
+				if id == c.RealityExportShortID {
+					found = true
+				}
+			}
+			if !found {
+				return errConfig
+			}
+		}
 		if c.TLSCertificateFile != "" || c.TLSKeyFile != "" || !endpoint(c.RealityTarget, false) || len(c.RealityServerNames) == 0 || len(c.RealityServerNames) > 16 || len(c.RealityShortIDs) == 0 || len(c.RealityShortIDs) > 16 {
 			return errConfig
 		}

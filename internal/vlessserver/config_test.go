@@ -98,3 +98,25 @@ func TestClientURIRoundTrips(t *testing.T) {
 		t.Fatal("invalid UUID or secret error")
 	}
 }
+
+func TestRealityExportSelectionAndSpiderXRoundTrip(t *testing.T) {
+	c := realityConfig()
+	c.RealityShortIDs = []string{"aabb", "ccdd"}
+	c.RealityExportShortID = "ccdd"
+	c.RealitySpiderX = "/docs/a%20b?q=x%2Fy&lang=ru"
+	raw, err := c.ClientURI("11111111-1111-4111-8111-111111111111", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := vless.ParseImport(raw)
+	if err != nil || p.Config.ShortID != "ccdd" || p.Config.SpiderX != c.RealitySpiderX {
+		t.Fatalf("round trip: %+v %v", p, err)
+	}
+	if strings.Contains(raw, c.RealityPrivateKey) {
+		t.Fatal("private key exported")
+	}
+	c.RealityExportShortID = "eeee"
+	if c.Validate() == nil {
+		t.Fatal("unknown selected ID accepted")
+	}
+}
