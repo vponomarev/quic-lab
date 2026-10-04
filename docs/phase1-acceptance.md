@@ -32,13 +32,13 @@ This soak uses repeated connections. Persistent single-socket byte continuity, n
 ## Current status
 
 - Server settings: full Go suite and vet pass on Linux; focused admin/worker/server race pass; real HTTPS/CSP editor browser checks pass.
-- Android soak harness: preparation / short validation; eight-hour acceptance not yet complete.
+- Android soak: replacement eight-hour run completed on pre.10; see results below. This is not a final 0.8.0 endurance run.
 - Physical failover, load and remaining fault matrix: pending; see the closure plan.
 
 ## Active run — 2026-10-04
 
 - Short validation: `PhaseOneSoakTest`, 60 seconds, JUnit `OK (1 test)`, wall duration 67.339 s. TCP/UDP through VPN and screen off confirmed.
-- Eight-hour run started at **2026-10-04 13:25:20 Europe/Moscow** (first sample UTC millis 1791109520174); scheduled completion approximately 21:25:20. **Result pending.**
+- Eight-hour run started at **2026-10-04 13:25:20 Europe/Moscow** (first sample UTC millis 1791109520174); scheduled completion approximately 21:25:20. **Stopped at 13:46 by the old screen-wake assertion; superseded by the replacement run.**
 - Run ID: `soak1791109515385`; device Redmi Note 9 Pro / Android 11 / API 30 / `dc69eb2c`; USB power connected.
 - Client APK SHA256: `529b7c97138f483b2158eada66fb2a0307fbfdca6fedef086d2457548e34808f`.
 - Instrumentation APK SHA256: `b599b902d8cdc74ff889b45a32d527717d18d162e8c90a40c1f17a69efdf9c5d`.
@@ -52,7 +52,7 @@ Screen activation is logged and does not fail or stop the soak. On/off duration 
 
 ## Replacement run — 2026-10-04
 
-- Started **14:06:53 Europe/Moscow**, run `soak1791112008307`, expected finish approximately **22:06:53**. Result pending.
+- Started **14:06:53 Europe/Moscow**, run `soak1791112008307`, expected finish approximately **22:06:53**. Completed at **22:07:05**, JUnit `OK (1 test)`, exit 0.
 - Host evidence: `%TEMP%/quic-phase1-soak/run-20261004-140648`; detached runner PID 23348.
 - Instrumentation SHA256: `86ae5514ae04deb93f07e776e0de3903af01c8893b28dddf8a31a24fddecb1ab`; client APK unchanged.
-- Physical regression verified in the first 30 seconds: screen off → on → off, two sampled transitions, successful TCP/UDP throughout, VPN active. Screen activation no longer terminates the test. Eight-hour acceptance remains pending.
+- Physical regression verified in the first 30 seconds: screen off → on → off, two sampled transitions, successful TCP/UDP throughout, VPN active. Screen activation no longer terminates the test. Final results: 2780 successful TCP/UDP probes, 2840 active VPN samples; screen on 172.325 s, off 28626.716 s, 30 sampled transitions. FD 110–111. USB power throughout; no unplugged endurance claim.
