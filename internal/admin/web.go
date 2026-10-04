@@ -330,12 +330,13 @@ func (w *Web) qr(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, e.Error(), 400)
 		return
 	}
-	img, e := qrImage(w.Config.PublicURL + "enroll#" + token)
+	link := w.Config.PublicURL + "enroll#" + token
+	img, e := qrImage(link)
 	if e != nil {
 		http.Error(rw, "QR unavailable", 500)
 		return
 	}
-	w.page(rw, view{Title: "Регистрация устройств", Admin: true, CSRF: session.CSRF, QR: img, Enrollment: true, EnrollmentRecord: &en})
+	w.page(rw, view{Title: "Регистрация устройств", Admin: true, CSRF: session.CSRF, QR: img, ConnectionLink: link, Enrollment: true, EnrollmentRecord: &en})
 }
 func (w *Web) revokeEnrollment(rw http.ResponseWriter, r *http.Request) {
 	if _, ok := w.authorized(rw, r, true); !ok {
@@ -390,6 +391,7 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 }
 
 type view struct {
+	ConnectionLink string
 	VisitorIP, VisitorAgent, VisitorLanguage            string
 	TLSVersion, TLSCipher, TLSALPN, TLSSNI, VisitorHTTP string
 	EnrollmentRecord                                    *Enrollment
@@ -412,6 +414,7 @@ type view struct {
 
 func (w *Web) page(rw http.ResponseWriter, v view) {
 	v.Base = w.base
+	if v.ConnectionLink != "" { rw.Header().Set("Cache-Control", "no-store"); rw.Header().Set("Referrer-Policy", "no-referrer") }
 	v.CaptureAvailable = w.Capture != nil
 	if v.Admin {
 		v.Entries = w.entryPoints()

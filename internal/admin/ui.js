@@ -143,5 +143,11 @@
  window.AdminUI={update(row,user){if(user.last_at){const cell=$('[data-stat=last]',row),date=new Date(user.last_at);cell.replaceChildren(document.createTextNode(date.toLocaleString(undefined,{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})),document.createElement('br'),el('small','',user.last.split('\n').slice(1).join(' ')));cell.title=date.toLocaleString(undefined,{timeZoneName:'short'});}controllers.get(row.dataset.userId)?.updateConnections(user.connections);controllers.get(row.dataset.userId)?.refreshOverview();}};
  const help=$('#stats-help');if(help){wire(help);$('[data-help]').onclick=()=>help.showModal();}
  if($('.login-page'))$('main > h1').hidden=true;
+ document.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-copy-connection]');if(!button)return;
+  const box=button.closest('.connection-link'),input=box.querySelector('[data-connection-link]'),status=box.querySelector('[data-copy-status]');
+  try {await navigator.clipboard.writeText(input.value);status.textContent='Ссылка скопирована';}
+  catch(_){input.focus();input.select();status.textContent='Скопируйте выделенную ссылку вручную';}
+ });
  const tz=$('#visitor-timezone');if(tz)tz.textContent=Intl.DateTimeFormat().resolvedOptions().timeZone || 'Не определён';
 })();

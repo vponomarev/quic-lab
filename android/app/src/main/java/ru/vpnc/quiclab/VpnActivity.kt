@@ -86,10 +86,14 @@ class VpnActivity:Activity() {
  private fun rename(p:VpnProfiles.Profile){val input=EditText(this).apply{setText(p.name);setSingleLine()};AlertDialog.Builder(this).setTitle("Название подключения").setView(input).setNegativeButton("Отмена",null).setPositiveButton("Сохранить"){_,_->action{VpnProfiles.rename(this,input.text.toString(),p.id);showPage(page,false)}}.show()}
  private fun delete(p:VpnProfiles.Profile){AlertDialog.Builder(this).setTitle("Удалить ${p.name}?").setMessage("Профиль и его данные доступа будут удалены с телефона.").setNegativeButton("Отмена",null).setPositiveButton("Удалить"){_,_->action{VpnProfiles.delete(this,p.id);showPage(page,false)}}.show()}
  private fun addConnection(){
-  AlertDialog.Builder(this).setTitle("Добавить подключение").setItems(arrayOf("Сканировать QR","Вставить VLESS URI / JSON","Выбрать файл JSON / CONF","Настроить вручную")){_,which->action{
+  AlertDialog.Builder(this).setTitle("Добавить подключение").setItems(arrayOf("Сканировать QR","Вставить ссылку / конфиг","Выбрать файл JSON / CONF","Настроить вручную")){_,which->action{
    check(!LabVpnService.active){"Для импорта сначала отключите VPN"}
-   when(which){0->startActivityForResult(Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST);1->VlessImport.prompt(this){showPage("Подключения")};2->startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE),14);else->{val input=EditText(this);AlertDialog.Builder(this).setTitle("Название подключения").setView(input).setNegativeButton("Отмена",null).setPositiveButton("Добавить"){_,_->action{openEditor(VpnProfiles.create(this,input.text.toString()).id)}}.show()}}
+   when(which){0->startActivityForResult(Intent(this,ProfileScanActivity::class.java),ProfileImport.REQUEST);1->pasteConnection();2->startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE),14);else->{val input=EditText(this);AlertDialog.Builder(this).setTitle("Название подключения").setView(input).setNegativeButton("Отмена",null).setPositiveButton("Добавить"){_,_->action{openEditor(VpnProfiles.create(this,input.text.toString()).id)}}.show()}}
   }}.show()
+ }
+ private fun pasteConnection(){
+  val input=EditText(this).apply{hint="https://…/enroll#… или vless://… / JSON";minLines=3;maxLines=8;isSaveEnabled=false;importantForAutofill=android.view.View.IMPORTANT_FOR_AUTOFILL_NO;inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS}
+  AlertDialog.Builder(this).setTitle("Вставить ссылку / конфиг").setView(input).setNegativeButton("Отмена"){_,_->input.text.clear()}.setPositiveButton("Проверить"){_,_->val raw=input.text.toString().trim();input.text.clear();startActivityForResult(Intent(this,ProfileScanActivity::class.java).putExtra("import_text",raw),ProfileImport.REQUEST)}.show()
  }
  private fun diagnostics(){
   val card=ui.card(content);card.addView(ui.text("Проверка связи",18f,true));card.addView(ui.text("Echo проверяет передачу данных через выход. Самостоятельное сравнение транспортов доступно внутри диагностики."))

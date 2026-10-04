@@ -12,6 +12,9 @@ class ProfileScanActivity : Activity() {
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(TextView(this).apply{text="Импорт профиля QUIC Lab…";setPadding(24,72,24,24)})
+        enrollmentURL=savedInstanceState?.getString("enrollment_url")
+        val supplied=intent.getStringExtra("import_text")
+        if(supplied!=null) { importText(supplied.trim());return }
         if(savedInstanceState==null) IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
             .setPrompt("QR QUIC Lab, AmneziaWG или VLESS").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
     }
@@ -20,8 +23,12 @@ class ProfileScanActivity : Activity() {
         val scan=IntentIntegrator.parseActivityResult(requestCode,resultCode,data)
         if(scan==null){super.onActivityResult(requestCode,resultCode,data);return}
         val raw=scan.contents ?: run{finish();return}
+        importText(raw.trim())
+    }
+    private fun importText(raw:String) {
         try {
-            require(raw.length<=8192){"QR слишком большой"}
+            check(!LabVpnService.active){"Сначала остановите VPN"}
+            require(raw.length<=32768){"Конфигурация слишком большая"}
             if(raw.trimStart().startsWith("vless://")) {
                 VlessImport.review(this,raw,{setResult(RESULT_OK,Intent().putExtra("kind","vpn"));finish()},{finish()})
             }
@@ -58,5 +65,6 @@ class ProfileScanActivity : Activity() {
                 val saved=ProfileImport.save(this,p);enrollmentURL?.let { ProfileImport.completeEnrollment(this,it) };setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
             }catch(_:Exception){fail(IllegalArgumentException("Проверьте формат и параметры профиля"))}}.show()
     }
+    override fun onSaveInstanceState(out:Bundle){out.putString("enrollment_url",enrollmentURL);super.onSaveInstanceState(out)}
     private fun fail(e:Exception){if(isFinishing)return;AlertDialog.Builder(this).setTitle("Импорт не выполнен").setMessage(e.message ?: "Ошибка профиля").setPositiveButton("OK"){_,_->finish()}.show()}
 }

@@ -21,7 +21,7 @@ func (w *Web) vlessQR(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "QR unavailable", 500)
 		return
 	}
-	w.page(rw, view{Title: "VLESS", Admin: true, CSRF: auth.CSRF, QR: image, Enrollment: true, VLESSQR: true})
+	w.page(rw, view{Title: "VLESS", Admin: true, CSRF: auth.CSRF, QR: image, ConnectionLink: raw, Enrollment: true, VLESSQR: true})
 }
 func (w *Web) vlessSettings(rw http.ResponseWriter, r *http.Request) {
 	auth, ok := w.authorized(rw, r, false)
