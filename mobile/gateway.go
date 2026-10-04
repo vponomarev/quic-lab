@@ -185,10 +185,14 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	return nil
 }
 func (g *Gateway) connect(binder SocketBinder) error {
+	// This attempt owns a new lifetime: Reconnect canceled the old transport.
+	// Capabilities must share the new lifetime, not inherit the canceled one.
+	g.ctx, g.cancel = context.WithCancel(context.Background())
 	if err := g.checkCapabilities(binder); err != nil {
+		g.cancel()
+		g.cancel = nil
 		return err
 	}
-	g.ctx, g.cancel = context.WithCancel(context.Background())
 	if g.cfg.Transport == "quic" {
 		g.q = NewClient(g.sink)
 		g.q.probes = &g.probes

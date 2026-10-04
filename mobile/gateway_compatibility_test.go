@@ -108,6 +108,10 @@ func TestGatewayChecksCapabilitiesBeforeDataHandshake(t *testing.T) {
 
 func TestGatewayQUICAndHTTPSCustomSNI(t *testing.T) {
 	pair, cp, kp := testIdentity(t)
+	caps := httptest.NewUnstartedServer(protocol.CapabilitiesHandler(protocol.Capabilities{ControlVersion: 1, DataVersion: protocol.DataVersion}))
+	caps.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
+	caps.StartTLS()
+	defer caps.Close()
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM([]byte(cp))
 	for _, mode := range []string{"quic", "https"} {
@@ -139,7 +143,7 @@ func TestGatewayQUICAndHTTPSCustomSNI(t *testing.T) {
 			}
 			g := NewGateway(nil)
 			defer g.Stop()
-			raw, _ := json.Marshal(gatewayConfig{Transport: mode, Endpoint: endpoint, Hostname: "localhost", ServerName: "cover.test", VerifyName: "localhost", Certificate: cp, Key: kp, CA: cp})
+			raw, _ := json.Marshal(gatewayConfig{Transport: mode, Endpoint: endpoint, Hostname: "localhost", ServerName: "cover.test", VerifyName: "localhost", Certificate: cp, Key: kp, CA: cp, ControlURL: caps.URL, AndroidVersionCode: 45})
 			if err := g.Start(string(raw), nil); err != nil {
 				t.Fatal(err)
 			}
@@ -150,6 +154,24 @@ func TestGatewayQUICAndHTTPSCustomSNI(t *testing.T) {
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("no TLS hello")
+			}
+			for attempt := 0; attempt < 3; attempt++ {
+				if err := g.Reconnect(nil); err != nil {
+					t.Fatalf("reconnect %d: %v", attempt, err)
+				}
+				select {
+				case <-seen:
+				case <-time.After(3 * time.Second):
+					t.Fatal("no reconnect TLS hello")
+				}
+				if !g.IsConnected() {
+					t.Fatal("replacement transport disconnected")
+				}
+				stream, err := g.open(context.Background())
+				if err != nil {
+					t.Fatalf("replacement stream: %v", err)
+				}
+				stream.Close()
 			}
 		})
 	}
@@ -226,6 +248,30 @@ func TestProfileAndCapabilitiesMismatchEmitUpgradeRequired(t *testing.T) {
 				}
 			case <-time.After(100 * time.Millisecond):
 				t.Fatal("upgrade_required event missing")
+			}
+		})
+	}
+}
+
+func TestGatewayReconnectRenewsCapabilitiesContext(t *testing.T) {
+	caps := httptest.NewUnstartedServer(protocol.CapabilitiesHandler(protocol.Capabilities{ControlVersion: 1, DataVersion: 9}))
+	caps.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	caps.StartTLS()
+	defer caps.Close()
+	for _, transport := range []string{"quic", "https"} {
+		t.Run(transport, func(t *testing.T) {
+			g := NewGateway(nil)
+			defer g.Stop()
+			g.cfg = gatewayConfig{Transport: transport, ControlURL: caps.URL, CA: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caps.TLS.Certificates[0].Certificate[0]}))}
+			g.ctx, g.cancel = context.WithCancel(context.Background())
+			for attempt := 0; attempt < 3; attempt++ {
+				err := g.Reconnect(nil)
+				if !errors.Is(err, protocol.ErrUpgradeRequired) {
+					t.Fatalf("attempt %d: capabilities must reach server, got %v", attempt, err)
+				}
+				if g.cancel != nil {
+					t.Fatal("failed reconnect retained running state")
+				}
 			}
 		})
 	}
