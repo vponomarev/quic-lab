@@ -26,11 +26,11 @@ class LabVpnService : VpnService() {
         liveService=this
         Diagnostics.init(applicationContext)
         if (intent?.action == "toggle-profile") {
-            multiple?.toggle(intent.getStringExtra("profile_id").orEmpty());return START_NOT_STICKY
+            multiple?.toggle(intent.getStringExtra("profile_id").orEmpty());return restartPolicy()
         }
         if (intent?.action == "exit-ip") {
             if (active && exitEnabled) session?.checkExitIP()
-            return START_NOT_STICKY
+            return restartPolicy()
         }
         if (intent?.action == "stop") {
             Diagnostics.event("vpn", JSONObject().put("event", "stop_requested"))
@@ -45,13 +45,14 @@ class LabVpnService : VpnService() {
         }
         if (intent?.action == "move") {
             if (active) {
-                multiple?.let { it.move(intent.getIntExtra("network",VpnSession.WIFI));return START_NOT_STICKY }
+                multiple?.let { it.move(intent.getIntExtra("network",VpnSession.WIFI));return restartPolicy() }
                 val p=VpnProfiles.preferences(this)
                 session?.startOrMigrate(intent.getIntExtra("network",VpnSession.WIFI),p.getString("endpoint","")!!,p.getString("hostname","")!!,"",100)
             }
-            return START_NOT_STICKY
+            return restartPolicy()
         }
-        if (session != null || multiple != null) return START_NOT_STICKY
+        if (session != null || multiple != null) return restartPolicy()
+        Diagnostics.event("vpn", JSONObject().put("event", if (intent == null) "system_restart" else "start_requested"))
         resetMetrics(VpnProfiles.preferences(this).getString("transport","quic")!!)
         transitEnabled = !VpnProfiles.preferences(this).getString("transit_endpoint", "").isNullOrBlank()
         connection = "—"
@@ -84,7 +85,7 @@ class LabVpnService : VpnService() {
                 active=true; multipleMode=true;transport="multiple";exitEnabled=false;status="Несколько VPN · ${plan.profiles.size} профилей"
                 multiple=MultipleVpnController(this,plan,tun!!.fd,runBudget)
                 updateRuntime=VpnProfileUpdateRuntime(plan.dnsProfile,runBudget,requireNotNull(tun)) {id-> handler.post {runCatching {multiple?.restart(id)}.onFailure {MultipleVpnState.record(id,JSONObject().put("event","operation_failed"))}}}
-                return START_NOT_STICKY
+                return restartPolicy()
             }
             multipleMode=false
             val prefs = VpnProfiles.preferences(this)
@@ -235,6 +236,14 @@ class LabVpnService : VpnService() {
             shutdown()
             stopSelf()
         }
+        return restartPolicy()
+    }
+
+    // Every start command updates ActivityManager policy, including notification actions.
+    // Explicit stop/revoke and failed starts must remain stopped.
+    private fun restartPolicy(): Int {
+        if (active) return START_STICKY
+        stopSelf()
         return START_NOT_STICKY
     }
 

@@ -33,6 +33,12 @@ class AppSettingsActivity:Activity(){
   box=ui.card(panel);box.addView(ui.text("Резервные сети",18f,true))
   for((key,title,default) in listOf(Triple("wifi_on","Проверять резерв Wi-Fi · экран включён",true),Triple("wifi_off","Проверять резерв Wi-Fi · экран выключен",true),Triple("cell_on","Готовить резерв LTE · экран включён",false),Triple("cell_off","Готовить резерв LTE · экран выключен",false),Triple("metered_wifi","Фоновые проверки лимитного Wi-Fi",false))){box.addView(Switch(this).apply{text=title;isChecked=reserve.getBoolean(key,default);setOnCheckedChangeListener{_,checked->reserve.edit().putBoolean(key,checked).apply()}})}
   box.addView(ui.text("Проверки расходуют трафик и батарею. При потере сети VPN может перейти на LTE даже без фонового резерва. При работе через LTE появившийся Wi-Fi проверяется перед возвратом."))
+  box=ui.card(panel);box.addView(ui.text("Фоновая работа VPN",18f,true))
+  box.addView(ui.text("На Xiaomi/MIUI разрешите автозапуск приложения в системных настройках. Очистка памяти может завершить VPN даже с постоянным уведомлением. При необходимости закрепите приложение в недавних и снимите ограничения батареи. Разрешение автозапуска не включает VPN после перезагрузки: подключение запускаете вы."))
+  box.addView(ui.button("Системные настройки приложения"){
+   runCatching{startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:$packageName")))}
+    .onFailure{Toast.makeText(this,"Откройте настройки Android → Приложения → QUIC Lab",Toast.LENGTH_LONG).show()}
+  })
   root.addView(ui.button("Сохранить",true){save{}});EditorViewState.assign(root);ui.install(root);handler.post{listOf(rtt,reserve,budget,meta).forEach{it.acceptInitialState()};initialising=false}
  }
  private fun dirty()=!initialising && (listOf(rtt,reserve,budget,meta).any{it.dirty} || limit.text.toString()!=initialLimit)
