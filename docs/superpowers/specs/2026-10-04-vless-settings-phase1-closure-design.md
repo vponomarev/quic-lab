@@ -1,7 +1,7 @@
 # VLESS settings and Phase 1 closure — design
 
 Date: 2026-10-04
-Status: scope approved in conversation; written design pending review.
+Status: scope and linked written design approved in conversation on 2026-10-04.
 
 ## Intent and scope
 
