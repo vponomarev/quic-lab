@@ -60,6 +60,25 @@
   const change=()=>{forms.forEach(f=>{f.elements.id.value=select.value;$('button',f).disabled=!select.value;});};select.addEventListener('change',change);change();
   if(!select.options.length)panel.append(el('p','field-note','Нет доступных устройств. Сначала зарегистрируйте устройство через приложение.'));
  }
+ function connectionGroups(connections){
+  const groups=new Map();
+  for(const raw of connections){
+   const line=raw.split('\n')[0],split=line.indexOf(' · ');
+   const protocol=(split<0?line:line.slice(0,split)).toUpperCase();
+   const source=split<0?'':line.slice(split+3);
+   // VLESS telemetry includes a source port. Other transports currently expose IP only.
+   const match=protocol==='VLESS'?source.match(/^(\[[^\]]+\]|\d+\.\d+\.\d+\.\d+):\d+$/):null;
+   const host=match?match[1]:source,key=JSON.stringify([protocol,host]);
+   if(!groups.has(key))groups.set(key,{key,protocol,host,items:[]});groups.get(key).items.push(raw);
+  }
+  return [...groups.values()].sort((a,b)=>a.key.localeCompare(b.key));
+ }
+ function connectionLabel(group){
+  const n=group.items.length;
+  const noun=n%100>=11&&n%100<=14?'соединений':n%10===1?'соединение':n%10>=2&&n%10<=4?'соединения':'соединений';
+  const count=group.protocol==='VLESS'?`${n} TCP-${noun}`:group.protocol==='AWG'?`активность: ${n}`:`${n} ${noun}`;
+  return [group.protocol,group.host,count].filter(Boolean).join(' · ');
+ }
  const table=$('#user-stats');
  const controllers=new Map();
  function setupRow(row) {
@@ -123,11 +142,22 @@
    const message=formAction(f)==='revoke'?'Отозвать приглашение? Уже зарегистрированные устройства продолжат работать.':`Отключить доступ «${target}»? Активные подключения будут разорваны.`;
    if(!confirm(message))e.preventDefault();
   }));
-  function refreshOverview(){const traffic=$('[data-stat=traffic]',row);if(row.dataset.measured!=='true')traffic.textContent='Не измеряется';else if(row.dataset.vless==='true')traffic.title='Счётчики QUIC / HTTPS / AWG. Трафик VLESS пока не измеряется.';overviewItems.get('access').textContent=accessState;overviewItems.get('expires').textContent=row.cells[4].textContent;for(const key of ['traffic','last'])overviewItems.get(key).textContent=$(`[data-stat="${key}"]`,row).textContent;overviewItems.get('connections').textContent=liveConnections.length?liveConnections.join('\n\n'):'Нет активных подключений';}
+  function refreshOverview(){const traffic=$('[data-stat=traffic]',row);if(row.dataset.measured!=='true')traffic.textContent='Не измеряется';else if(row.dataset.vless==='true')traffic.title='Счётчики QUIC / HTTPS / AWG. Трафик VLESS пока не измеряется.';overviewItems.get('access').textContent=accessState;overviewItems.get('expires').textContent=row.cells[4].textContent;for(const key of ['traffic','last'])overviewItems.get(key).textContent=$(`[data-stat="${key}"]`,row).textContent;overviewItems.get('connections').textContent=liveConnections.length?connectionGroups(liveConnections).map(connectionLabel).join('\n'):'Нет активных подключений';}
   function updateConnections(connections){
-   liveConnections=connections;const cell=$('[data-stat=connections]',row);cell.replaceChildren();cell.className=connections.length?'online':'muted';
-   if(!connections.length)cell.textContent='Нет подключений';else{const first=el('span','connection-primary',connections[0].split('\n')[0]);first.title=connections[0];cell.append(first);const state=el('span','connection-status',connections.some(c=>c.startsWith('AWG'))?'Активность AWG / подключения':'Подключений: '+connections.length);cell.append(state);if(connections.length>1){const b=button('Ещё '+(connections.length-1),'connection-more');b.onclick=()=>open('connections');cell.append(b);}}
-   connectionsPanel.replaceChildren();if(!connections.length)connectionsPanel.append(el('p','muted','Нет активных подключений'));connections.forEach(c=>{const p=el('p','',c);p.style.whiteSpace='pre-line';connectionsPanel.append(p);});refreshOverview();
+   liveConnections=connections;const groups=connectionGroups(connections),cell=$('[data-stat=connections]',row);
+   cell.replaceChildren();cell.className=connections.length?'online':'muted';
+   if(!connections.length)cell.textContent='Нет подключений';else{
+    groups.slice(0,2).forEach(g=>cell.append(el('span','connection-primary',connectionLabel(g))));
+    const b=button(groups.length>2?`Подробности · ещё групп: ${groups.length-2}`:'Подробности','connection-more');b.onclick=()=>open('connections');cell.append(b);
+   }
+   const expanded=new Set($$('details[open]',connectionsPanel).map(d=>d.dataset.group)),scroll=connectionsPanel.scrollTop;
+   connectionsPanel.replaceChildren();
+   if(!connections.length)connectionsPanel.append(el('p','muted','Нет активных подключений'));
+   else connectionsPanel.append(el('p','field-note','Это транспортные соединения, а не число устройств. Один VLESS-клиент может держать несколько TCP-соединений. Группировка по протоколу и внешнему IP; за одним IP могут находиться разные устройства.'));
+   groups.forEach(g=>{
+    const d=el('details','connection-group');d.dataset.group=g.key;d.open=expanded.has(g.key);d.append(el('summary','',connectionLabel(g)));
+    g.items.forEach(c=>{const p=el('p','connection-endpoint',c);d.append(p);});connectionsPanel.append(d);
+   });connectionsPanel.scrollTop=scroll;refreshOverview();
   }
   const initial=$$('p',$('[data-stat=connections]',row)).map(p=>p.innerText);updateConnections(initial);
   controllers.set(row.dataset.userId,{updateConnections,refreshOverview,open});

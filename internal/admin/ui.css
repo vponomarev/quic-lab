@@ -32,3 +32,5 @@ dialog.user-dialog[open]{display:flex;flex-direction:column}
 @media(max-width:700px){dialog.user-dialog{height:100dvh;max-height:100dvh}.user-quick-actions{gap:6px;margin-bottom:12px}.user-quick-actions>span{flex-basis:100%}.user-quick-actions button{padding:7px 9px}.user-dialog .tabs{margin-bottom:12px}}
 
 .connection-link{margin-top:18px;text-align:left}.connection-link textarea{width:100%;box-sizing:border-box;resize:vertical;font:12px monospace;padding:10px;border:1px solid #c4d1da;border-radius:8px}.connection-link [data-copy-status]{display:block;margin-top:8px;color:#087769}
+
+.connection-primary{display:block}.connection-group{margin:10px 0;border:1px solid var(--line);border-radius:9px;padding:12px}.connection-group summary{cursor:pointer;color:var(--ink);font-weight:600}.connection-endpoint{white-space:pre-line;font-size:13px;margin:10px 0 0;padding-top:8px;border-top:1px solid var(--line)}
