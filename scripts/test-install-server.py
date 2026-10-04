@@ -655,5 +655,15 @@ class UnifiedIngressTests(unittest.TestCase):
             self.assertIn('restart quic-lab-vless', lines)
             self.assertFalse(any('nginx' in line or 'xray' in line or 'x-ui' in line for line in lines))
 
+
+class ManagedRouteUpgradeTests(unittest.TestCase):
+    def test_changed_sni_preserves_manual_routes(self):
+        old=dict(server_name='old.example.org',listen='127.0.0.1:9444',accept_proxy_protocol=True)
+        new=dict(old,server_name='one.example.org',security='reality',reality_server_names=['one.example.org','two.example.org'])
+        manual=dict(server_names=['manual.example.org'],target='127.0.0.1:9555')
+        server=dict(tls_host='web.example.org',tls_routes=[dict(server_names=['old.example.org'],target=old['listen'],proxy_protocol=True),manual])
+        i.configure_vless_route(server,new,previous=old)
+        self.assertEqual(server['tls_routes'],[manual,dict(server_names=['one.example.org','two.example.org'],target=new['listen'],proxy_protocol=True)])
+
 if __name__ == '__main__':
     unittest.main()

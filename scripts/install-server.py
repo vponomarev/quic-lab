@@ -363,6 +363,8 @@ def vless_settings(args, cfg, data, ports, frontend, domain):
                 raise RuntimeError("Cannot inspect durable VLESS settings; repair identity state first") from None
         if not isinstance(saved, dict):
             saved = {}
+    if saved.get("vless_pending"):
+        raise RuntimeError("Pending VLESS settings recovery; start the current server to recover before upgrading")
     managed = bool(initial or saved.get("vless") or saved.get("vless_revision") or
                    (data / "vless").exists() or getattr(args, "enable_vless", False))
     durable = bool(saved.get("vless_revision") or "vless" in saved)
@@ -405,27 +407,35 @@ def vless_settings(args, cfg, data, ports, frontend, domain):
     return desired, managed
 
 
-def configure_vless_route(server, config):
-    name = domain_name(config["server_name"])
-    local_names = [server.get("tls_host", "")] + server.get("vpn_sni_names", [])
-    if name in [n.lower().rstrip(".") for n in local_names]:
+def configure_vless_route(server, config, previous=None):
+    names = config.get("reality_server_names", []) if config.get("security") == "reality" else [config["server_name"]]
+    names = [domain_name(n) for n in names]
+    local = {n.lower().rstrip('.') for n in [server.get("tls_host", "")] + server.get("vpn_sni_names", [])}
+    if not names or len(names) != len(set(names)) or any(n in local for n in names):
         raise ValueError("VLESS SNI collides with a local HTTPS/VPN name")
     host = config["listen"].rsplit(":", 1)[0]
-    try:
-        private = ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        private = False
+    try: private = ipaddress.ip_address(host).is_loopback
+    except ValueError: private = False
     if not private or not config.get("accept_proxy_protocol"):
         raise ValueError("Routed VLESS requires a numeric loopback listener with PROXY protocol enabled")
     if config["listen"] == server.get("tls_fallback"):
         raise ValueError("VLESS backend conflicts with the TLS fallback")
-    routes = list(server.get("tls_routes", []))
-    matching = [r for r in routes if name in [n.lower().rstrip(".") for n in r.get("server_names", [])]]
-    if matching:
-        if len(matching) != 1 or matching[0].get("target") != config["listen"] or not matching[0].get("proxy_protocol"):
+    old = previous or config
+    old_names = old.get("reality_server_names", []) if old.get("security") == "reality" else [old["server_name"]]
+    expected = {n.lower().rstrip('.') for n in old_names}
+    legacy = {old["server_name"].lower().rstrip('.')}
+    routes = []; removed = False
+    for route in server.get("tls_routes", []):
+        route_names = {n.lower().rstrip('.') for n in route.get("server_names", [])}
+        if route.get("target") == old.get("listen") and old.get("accept_proxy_protocol"):
+            if removed or not route.get("proxy_protocol") or route_names not in (expected, legacy):
+                raise ValueError("Ambiguous managed VLESS route; preserve and reconcile manual settings")
+            removed = True
+            continue
+        if route_names.intersection(names):
             raise ValueError("VLESS SNI conflicts with an existing manual TLS route")
-    else:
-        routes.append(dict(server_names=[name], target=config["listen"], proxy_protocol=True))
+        routes.append(route)
+    routes.append(dict(server_names=names, target=config["listen"], proxy_protocol=True))
     server["tls_routes"] = routes
 
 
@@ -789,7 +799,7 @@ def install(args):
     if vless_managed:
         validate_vless(vless_binary_source, desired_vless)
     if args.ingress == "unified" and desired_vless:
-        configure_vless_route(desired_server, desired_vless)
+        configure_vless_route(desired_server, desired_vless, previous=(cfg or {}).get("vless"))
     certificate_domains = [args.domain]
     if desired_vless and desired_vless.get("security") == "tls":
         certificate_domains = list(dict.fromkeys(certificate_domains + [domain_name(desired_vless["server_name"])]))

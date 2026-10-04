@@ -69,6 +69,9 @@ func (s *Store) ConfigureVLESS(c *vlessserver.Config, client *vlessserver.Contro
 		}
 	}
 	s.mu.Unlock()
+	if err := s.recoverVLESSConfig(context.Background()); err != nil {
+		return err
+	}
 	return s.SyncVLESS(context.Background())
 }
 func (s *Store) snapshotVLESSLocked() vlessserver.Snapshot {
@@ -135,6 +138,12 @@ func (s *Store) SyncVLESS(ctx context.Context) error {
 	s.mu.Unlock()
 	e = client.Apply(ctx, snapshot)
 	s.mu.Lock()
+	routes := s.vlessRoutes
+	s.mu.Unlock()
+	if e == nil && routes != nil {
+		e = routes.Apply(ctx, snapshot.Config, snapshot.Revision)
+	}
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.vlessError = e != nil
 	if e != nil {
@@ -165,7 +174,7 @@ func (s *Store) VLESSProfile(id string) (string, error) {
 	d, ok := s.state.Devices[id]
 	u, present := s.state.Users[d.UserID]
 	now := time.Now()
-	if !ok || !present || d.Disabled || d.VLESSRevoked || u.Disabled || !d.Expires.After(now) || !u.Expires.After(now) || !u.Allows("vless") || d.VLESSUUID == "" || s.vlessApplied == nil {
+	if s.state.VLESSPending != nil || !ok || !present || d.Disabled || d.VLESSRevoked || u.Disabled || !d.Expires.After(now) || !u.Expires.After(now) || !u.Allows("vless") || d.VLESSUUID == "" || s.vlessApplied == nil {
 		return "", errVLESS
 	}
 	for _, applied := range s.vlessApplied.Devices {
@@ -182,7 +191,7 @@ func (s *Store) StartVLESSAdmission(ctx context.Context) (func(), error) {
 		d, ok := s.state.Devices[id]
 		u, present := s.state.Users[d.UserID]
 		now := time.Now()
-		if ctx.Err() != nil || !ok || !present || d.Disabled || d.VLESSRevoked || u.Disabled || d.VLESSUUID != uuid || d.VLESSUUID == "" || !u.Allows("vless") || !d.Expires.After(now) || !u.Expires.After(now) {
+		if s.state.VLESSPending != nil || s.vlessError || ctx.Err() != nil || !ok || !present || d.Disabled || d.VLESSRevoked || u.Disabled || d.VLESSUUID != uuid || d.VLESSUUID == "" || !u.Allows("vless") || !d.Expires.After(now) || !u.Expires.After(now) {
 			return 0, errVLESS
 		}
 		ttl := min(2*time.Second, time.Until(d.Expires), time.Until(u.Expires))
@@ -200,32 +209,12 @@ func (s *Store) StartVLESSAdmission(ctx context.Context) (func(), error) {
 }
 
 func (s *Store) UpdateVLESSConfig(c vlessserver.Config) error {
-	if c.Validate() != nil {
-		return errVLESS
-	}
-	raw, _ := json.Marshal(c)
-	json.Unmarshal(raw, &c)
-	s.mu.Lock()
-	if s.vlessClient == nil {
-		s.mu.Unlock()
-		return errVLESS
-	}
-	old := s.state.VLESS
-	s.state.VLESS = &c
-	if e := s.save(); e != nil {
-		if !statePublished(e) {
-			s.state.VLESS = old
-		}
-		s.mu.Unlock()
-		return errVLESS
-	}
-	s.mu.Unlock()
-	return s.SyncVLESS(context.Background())
+	return s.ApplyVLESSConfig(context.Background(), c, 0)
 }
 func (s *Store) VLESSStatus() (configured, applied bool, revision uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.VLESS != nil, s.vlessApplied != nil && !s.vlessError, s.state.VLESSRevision
+	return s.state.VLESS != nil, s.vlessApplied != nil && !s.vlessError && s.state.VLESSPending == nil, s.state.VLESSRevision
 }
 func (s *Store) vlessConfig() vlessserver.Config {
 	s.mu.Lock()

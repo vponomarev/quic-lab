@@ -23,3 +23,11 @@ func (w *Web) uiStyle(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("Content-Type", "text/css; charset=utf-8")
 	rw.Write(uiCSS)
 }
+
+//go:embed vless_settings.js
+var vlessSettingsJS []byte
+
+func (w *Web) vlessSettingsScript(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	rw.Write(vlessSettingsJS)
+}

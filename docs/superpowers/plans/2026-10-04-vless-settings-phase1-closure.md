@@ -6,7 +6,7 @@
 **Architecture:** Existing admin/device store remains authoritative. A revisioned VLESS apply coordinator synchronizes worker settings and a runtime managed SNI route overlay; manual routes remain separate. Client export/import carries the selected short ID and SpiderX without silently discarding them.
 **Tech Stack:** Existing Go/Xray, Kotlin/Android, HTML/CSS/JS, Linux/systemd; no new framework.
 **Spec:** [Approved design](../specs/2026-10-04-vless-settings-phase1-closure-design.md).
-**Execution:** Inline implementation; independent final review. Scope/design approved by the user on 2026-10-04. Detailed implementation plan awaits review.
+**Execution:** Inline implementation; independent final review. Scope/design approved by the user on 2026-10-04. Detailed implementation plan approved by the user.
 
 ## Global Constraints
 
@@ -37,11 +37,11 @@ Files: android/app/build.gradle.kts; docs/phase1-progress.md.
 
 Files: internal/vlessserver/config.go, export.go and their tests; internal/vless/config.go, import.go and tests; mobile/vless_import.go, gateway.go, gateway_vless.go and tests; android/app/src/main/java/ru/vpnc/quiclab/VlessImport.kt and existing profile persistence adapters; matching Android import tests.
 Interfaces: server Config gains RealityExportShortID string and RealitySpiderX string (JSON reality_export_short_id/reality_spider_x); client vless.Config gains SpiderX string. Extend the existing mobile/profile JSON contract with vless_spider_x. Empty selected ID uses first allowed ID; empty SpiderX means `/`.
-- [ ] Add TestRealityExportSelectionAndSpiderXRoundTrip: legacy defaults, selected allowed ID, unknown ID rejected, path/query/percent-encoding preserved by URI and supported JSON import; no private key in export.
-- [ ] Run focused vless/vlessserver/mobile import tests on Linux; confirm new contract fails before implementation.
-- [ ] Implement normalization/validation and carry SpiderX through all persistence/native layers. Accept absolute-path references only; reject fragment/control characters and scheme/host substitutions. Keep existing security-mode validation.
-- [ ] Repeat focused Go tests and Android import/persistence instrumentation. Build native AAR when Go changes affect the client.
-- [ ] Commit the independently verified contract change.
+- [x] Add TestRealityExportSelectionAndSpiderXRoundTrip: legacy defaults, selected allowed ID, unknown ID rejected, path/query/percent-encoding preserved by URI and supported JSON import; no private key in export.
+- [x] Run focused vless/vlessserver/mobile import tests on Linux; confirm new contract fails before implementation.
+- [x] Implement normalization/validation and carry SpiderX through all persistence/native layers. Accept absolute-path references only; reject fragment/control characters and scheme/host substitutions. Keep existing security-mode validation.
+- [x] Repeat focused Go tests and Android import/persistence instrumentation. Build native AAR when Go changes affect the client.
+- [x] Commit the independently verified contract change.
 
 ## Task 2 — Runtime managed SNI route overlay
 
@@ -88,4 +88,4 @@ Interfaces: retain E5 report schema and isolated Linux fault/load harness. Recor
 
 ## Self-review
 
-All approved scope maps to Tasks 1–4; remaining acceptance maps to Task 5. Each review-focus failure has a named test. Task 0 is independently releasable and already functionally validated. No phase-two feature is a closure prerequisite. User approval of this detailed plan is the remaining Superpowers handoff before implementing Tasks 1–4.
+All approved scope maps to Tasks 1–4; remaining acceptance maps to Task 5. Each review-focus failure has a named test. Task 0 is independently releasable and already functionally validated. No phase-two feature is a closure prerequisite. User approved implementation; remaining gates are tracked above.

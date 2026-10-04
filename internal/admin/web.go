@@ -74,7 +74,11 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /users/awg-qr", w.awgQR)
 	m.HandleFunc("POST /users/vless-qr", w.vlessQR)
 	m.HandleFunc("GET /vless", w.vlessSettings)
+	m.HandleFunc("GET /vless-settings.js", w.vlessSettingsScript)
 	m.HandleFunc("POST /vless/config", w.vlessConfigure)
+	for _, path := range []string{"generate-key", "generate-short-id", "check-target"} {
+		m.HandleFunc("POST /vless/"+path, w.vlessTool)
+	}
 	m.HandleFunc("POST /users/config", w.downloadProfile)
 	m.HandleFunc("POST /users/delete", w.delete)
 	m.HandleFunc("POST /users/qr", w.qr)
@@ -391,7 +395,7 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 }
 
 type view struct {
-	ConnectionLink string
+	ConnectionLink                                      string
 	VisitorIP, VisitorAgent, VisitorLanguage            string
 	TLSVersion, TLSCipher, TLSALPN, TLSSNI, VisitorHTTP string
 	EnrollmentRecord                                    *Enrollment
@@ -414,7 +418,10 @@ type view struct {
 
 func (w *Web) page(rw http.ResponseWriter, v view) {
 	v.Base = w.base
-	if v.ConnectionLink != "" { rw.Header().Set("Cache-Control", "no-store"); rw.Header().Set("Referrer-Policy", "no-referrer") }
+	if v.ConnectionLink != "" {
+		rw.Header().Set("Cache-Control", "no-store")
+		rw.Header().Set("Referrer-Policy", "no-referrer")
+	}
 	v.CaptureAvailable = w.Capture != nil
 	if v.Admin {
 		v.Entries = w.entryPoints()

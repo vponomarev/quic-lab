@@ -1,8 +1,10 @@
 package admin
 
 import (
+	_ "embed"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -29,13 +31,22 @@ func (w *Web) vlessSettings(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := w.Store.vlessConfig()
+	publicKey, _ := c.PublicKey()
 	c.RealityPrivateKey = ""
 	configured, applied, revision := w.Store.VLESSStatus()
+	rw.Header().Set("Cache-Control", "no-store")
+	rw.Header().Set("Referrer-Policy", "no-referrer")
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-	vlessPage.Execute(rw, map[string]any{"Base": w.base, "CSRF": auth.CSRF, "Config": c, "Configured": configured, "Applied": applied, "Revision": revision, "Names": strings.Join(c.RealityServerNames, ","), "IDs": strings.Join(c.RealityShortIDs, ",")})
+	vlessPage.Execute(rw, map[string]any{"PublicKey": publicKey, "Base": w.base, "CSRF": auth.CSRF, "Config": c, "Configured": configured, "Applied": applied, "Revision": revision, "Names": strings.Join(c.RealityServerNames, ","), "IDs": strings.Join(c.RealityShortIDs, ",")})
 }
 func (w *Web) vlessConfigure(rw http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(rw, r.Body, 32*1024)
 	if _, ok := w.authorized(rw, r, true); !ok {
+		return
+	}
+	revision, err := strconv.ParseUint(r.Form.Get("expected_revision"), 10, 64)
+	if err != nil || revision == 0 {
+		http.Error(rw, "Обновите страницу настроек перед сохранением.", 409)
 		return
 	}
 	c := w.Store.vlessConfig()
@@ -58,10 +69,14 @@ func (w *Web) vlessConfigure(rw http.ResponseWriter, r *http.Request) {
 		c.RealityPrivateKey = ""
 		c.RealityServerNames = nil
 		c.RealityShortIDs = nil
+		c.RealityExportShortID = ""
+		c.RealitySpiderX = ""
 	} else {
 		c.TLSCertificateFile = ""
 		c.TLSKeyFile = ""
-		c.RealityTarget = r.Form.Get("reality_target")
+		c.RealityTarget = strings.TrimSpace(r.Form.Get("reality_target"))
+		c.RealityExportShortID = strings.TrimSpace(r.Form.Get("reality_export_short_id"))
+		c.RealitySpiderX = r.Form.Get("reality_spider_x")
 		c.RealityServerNames = strings.Split(r.Form.Get("reality_names"), ",")
 		c.RealityShortIDs = strings.Split(r.Form.Get("reality_ids"), ",")
 		for i := range c.RealityServerNames {
@@ -71,14 +86,20 @@ func (w *Web) vlessConfigure(rw http.ResponseWriter, r *http.Request) {
 			c.RealityShortIDs[i] = strings.TrimSpace(c.RealityShortIDs[i])
 		}
 		if key := r.Form.Get("reality_private_key"); key != "" {
+			if r.Form.Get("confirm_key_change") != "yes" {
+				http.Error(rw, "Подтвердите замену ключа: клиентам понадобится новый профиль.", 400)
+				return
+			}
 			c.RealityPrivateKey = key
 		}
 	}
-	if e := w.Store.UpdateVLESSConfig(c); e != nil {
-		http.Error(rw, "VLESS configuration rejected or application not confirmed; check server status", 409)
+	if e := w.Store.ApplyVLESSConfig(r.Context(), c, revision); e != nil {
+		http.Error(rw, e.Error(), 409)
 		return
 	}
 	http.Redirect(rw, r, w.base+"vless", 303)
 }
 
-var vlessPage = template.Must(template.New("vless").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>VLESS</title><style>body{font:16px system-ui;max-width:800px;margin:40px auto;padding:16px}label{display:block;margin:12px 0}input,select{display:block;min-width:350px;padding:6px}small{display:block}</style><a href="{{.Base}}users">Пользователи</a><h1>VLESS-сервер</h1>{{if .Config.AcceptProxyProtocol}}<p>Вход через общий TLS-порт: исходный IP и порт клиента передаются по PROXY protocol. Внутренний listener должен оставаться на loopback. При изменении адреса или SNI обновите также tls_routes в конфигурации основного сервера.</p>{{end}}{{if .Configured}}<p>Ревизия {{.Revision}} · {{if .Applied}}Применена{{else}}Применение не подтверждено{{end}}</p><p>Изменение входа может разорвать подключения. Отзыв устройства не затрагивает соседние устройства.</p><form method="post" action="{{.Base}}vless/config"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Адрес прослушивания<input name="listen" value="{{.Config.Listen}}" required></label><label>Публичный endpoint<input name="endpoint" value="{{.Config.Endpoint}}" required></label><label>Защита<select name="security"><option value="tls" {{if eq .Config.Security "tls"}}selected{{end}}>TLS</option><option value="reality" {{if eq .Config.Security "reality"}}selected{{end}}>REALITY</option></select></label><label>SNI клиента<input name="server_name" value="{{.Config.ServerName}}" required></label><label>Fingerprint<input name="fingerprint" value="{{.Config.Fingerprint}}"></label><label>Flow<select name="flow"><option value="">Без Vision</option><option value="xtls-rprx-vision" {{if eq .Config.Flow "xtls-rprx-vision"}}selected{{end}}>Vision</option></select></label><label>Режим<select name="mode"><option value="standalone" {{if eq .Config.Mode "standalone"}}selected{{end}}>Standalone</option><option value="demux-only" {{if eq .Config.Mode "demux-only"}}selected{{end}}>Только заданный demux</option></select></label><label>Demux endpoint<input name="demux_endpoint" value="{{.Config.DemuxEndpoint}}"></label><h2>TLS</h2><label>Файл сертификата<input name="certificate_file" value="{{.Config.TLSCertificateFile}}"></label><label>Файл закрытого ключа<input name="key_file" value="{{.Config.TLSKeyFile}}"></label><h2>REALITY</h2><label>Target<input name="reality_target" value="{{.Config.RealityTarget}}"></label><label>Server names через запятую<input name="reality_names" value="{{.Names}}"></label><label>Short IDs через запятую<input name="reality_ids" value="{{.IDs}}"></label><label>Новый закрытый ключ<input type="password" name="reality_private_key" autocomplete="new-password"><small>Оставьте пустым, чтобы сохранить текущий ключ.</small></label><button>Сохранить и применить</button></form>{{else}}<p>VLESS worker не настроен в установке сервера.</p>{{end}}</html>`))
+//go:embed vless_settings.html
+var vlessHTML string
+var vlessPage = template.Must(template.New("vless").Parse(vlessHTML))

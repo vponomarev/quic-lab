@@ -104,6 +104,7 @@ func main() {
 	var adminBase string
 	var captureManager *debugcapture.Manager
 	var managed *admin.Store
+	var vlessRoutes *managedRouteController
 	var uplink *transit.Config
 	var echoProbe func(context.Context) error
 	if *adminFile != "" {
@@ -123,6 +124,12 @@ func main() {
 		}
 		managed.ConfigureDeviceLimit(cfg.DeviceLimit)
 		if cfg.VLESS != nil {
+			vlessRoutes, e = newManagedRouteController(*tlsHost, opts.VPNSNINames, opts.TLSRoutes, *cfg.VLESS, []string{*publicHTTPS, *gatewayHTTPS, *fallback})
+			if e != nil {
+				log.Error("vless_routes", "error", e)
+				os.Exit(1)
+			}
+			managed.SetVLESSRouteController(vlessRoutes)
 			stopVLESSAdmission, err := managed.StartVLESSAdmission(ctx)
 			if err != nil {
 				log.Error("vless_admission_unavailable")
@@ -286,7 +293,7 @@ func main() {
 			}
 			defer hs.Close()
 			go func() {
-				if e := servePublicTLS(ctx, hs, *publicHTTPS == *gatewayHTTPS, *tlsHost, *fallback, opts.TLSRoutes, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
+				if e := servePublicTLSManaged(ctx, hs, *publicHTTPS == *gatewayHTTPS, *tlsHost, *fallback, opts.TLSRoutes, vlessRoutes, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
 					log.Error("gateway_https", "error", e)
 					cancel()
 				}
@@ -298,7 +305,7 @@ func main() {
 		defer ps.Close()
 		configurePublicTLS(ps, opts, log)
 		go func() {
-			if e := servePublicTLS(ctx, ps, true, *tlsHost, *fallback, opts.TLSRoutes, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
+			if e := servePublicTLSManaged(ctx, ps, true, *tlsHost, *fallback, opts.TLSRoutes, vlessRoutes, opts.VPNSNINames...); e != nil && e != http.ErrServerClosed {
 				log.Error("public_https", "error", e)
 				cancel()
 			}
@@ -338,14 +345,17 @@ func listenerPort(addr string) int {
 	return n
 }
 func servePublicTLS(ctx context.Context, s *http.Server, public bool, host, fallback string, routes []sniRoute, allowedNames ...string) error {
-	if !public || (fallback == "" && len(routes) == 0) {
+	return servePublicTLSManaged(ctx, s, public, host, fallback, routes, nil, allowedNames...)
+}
+func servePublicTLSManaged(ctx context.Context, s *http.Server, public bool, host, fallback string, routes []sniRoute, managed *managedRouteController, allowedNames ...string) error {
+	if !public || (fallback == "" && len(routes) == 0 && managed == nil) {
 		return s.ListenAndServeTLS("", "")
 	}
 	ln, e := net.Listen("tcp", s.Addr)
 	if e != nil {
 		return e
 	}
-	routed, e := newSNIRouterWithRoutes(ctx, ln, host, fallback, routes, allowedNames...)
+	routed, e := newSNIRouterWithManagedRoutes(ctx, ln, host, fallback, routes, managed, allowedNames...)
 	if e != nil {
 		ln.Close()
 		return fmt.Errorf("TLS frontend: %w", e)

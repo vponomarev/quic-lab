@@ -18,7 +18,8 @@ const maxControlMessage = 128 * 1024
 type ControlClient struct{ Dir string }
 type controlRequest struct {
 	Snapshot
-	Status bool
+	Preflight bool
+	Status    bool
 }
 type controlResponse struct {
 	Revision uint64 `json:"revision"`
@@ -189,7 +190,9 @@ func ServeControl(ctx context.Context, w *Worker) (func(), error) {
 		var s controlRequest
 		reply := controlResponse{}
 		if readMessage(c, &s) == nil {
-			if s.Status {
+			if s.Preflight {
+				reply.Applied = s.Config.Validate() == nil && preflightCertificate(s.Config) == nil
+			} else if s.Status {
 				w.mu.Lock()
 				reply = controlResponse{Revision: w.record.Desired.Revision, Applied: w.live != nil && !w.closed && !w.writeFailed && w.applied == w.record.Desired.Revision}
 				w.mu.Unlock()
@@ -216,6 +219,15 @@ func ServeAdmission(ctx context.Context, dir string, renew AdmissionFunc) (func(
 func (c ControlClient) CheckApplied(ctx context.Context, revision uint64) error {
 	var reply controlResponse
 	if revision == 0 || request(ctx, c.Dir, "vless-control.sock", time.Second, controlRequest{Status: true}, &reply) != nil || !reply.Applied || reply.Revision != revision {
+		return errApply
+	}
+	return nil
+}
+
+// Preflight runs in the worker's credential namespace, not the admin service's.
+func (c *ControlClient) Preflight(ctx context.Context, cfg Config) error {
+	var reply controlResponse
+	if c == nil || request(ctx, c.Dir, "vless-control.sock", 10*time.Second, controlRequest{Snapshot: Snapshot{Config: cfg}, Preflight: true}, &reply) != nil || !reply.Applied {
 		return errApply
 	}
 	return nil

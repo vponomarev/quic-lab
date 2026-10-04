@@ -68,7 +68,14 @@ func newSNIRouter(parent context.Context, ln net.Listener, host, fallback string
 	return newSNIRouterWithRoutes(parent, ln, host, fallback, nil, allowedNames...)
 }
 func newSNIRouterWithRoutes(parent context.Context, ln net.Listener, host, fallback string, routes []sniRoute, allowedNames ...string) (net.Listener, error) {
+	return newSNIRouterWithManagedRoutes(parent, ln, host, fallback, routes, nil, allowedNames...)
+}
+func newSNIRouterWithManagedRoutes(parent context.Context, ln net.Listener, host, fallback string, routes []sniRoute, managed *managedRouteController, allowedNames ...string) (net.Listener, error) {
 	targets, err := validateSNIRoutes(host, allowedNames, routes)
+	if managed != nil {
+		targets = managed.snapshot()
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +105,7 @@ func newSNIRouterWithRoutes(parent context.Context, ln net.Listener, host, fallb
 	ctx, cancel := context.WithCancel(parent)
 	r := &sniRouter{Listener: ln, ctx: ctx, cancel: cancel, local: make(chan net.Conn)}
 	go func() { <-ctx.Done(); r.Close() }()
-	go r.route(names, fallback, targets)
+	go r.route(names, fallback, targets, managed)
 	return r, nil
 }
 func (r *sniRouter) Close() error {
@@ -114,7 +121,7 @@ func (r *sniRouter) Accept() (net.Conn, error) {
 		return nil, net.ErrClosed
 	}
 }
-func (r *sniRouter) route(names map[string]bool, fallback string, targets map[string]sniRoute) {
+func (r *sniRouter) route(names map[string]bool, fallback string, targets map[string]sniRoute, managed *managedRouteController) {
 	slots := make(chan struct{}, 1024)
 	for {
 		c, e := r.Listener.Accept()
@@ -150,7 +157,11 @@ func (r *sniRouter) route(names map[string]bool, fallback string, targets map[st
 			defer stop()
 			defer c.Close()
 			target := sniRoute{Target: fallback}
-			if explicit, ok := targets[name]; ok {
+			current := targets
+			if managed != nil {
+				current = managed.snapshot()
+			}
+			if explicit, ok := current[name]; ok {
 				target = explicit
 			}
 			if target.Target == "" {

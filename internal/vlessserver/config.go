@@ -164,3 +164,6 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
+// PublicKey returns only the public component used by exported REALITY clients.
+func (c Config) PublicKey() (string, error) { return c.publicKey() }

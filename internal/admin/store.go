@@ -42,6 +42,7 @@ type User struct {
 	Key           string          `json:"key,omitempty"`
 }
 type diskState struct {
+	VLESSPending  *vlessPendingConfig   `json:"vless_pending,omitempty"`
 	VLESS         *vlessserver.Config   `json:"vless,omitempty"`
 	VLESSRevision uint64                `json:"vless_revision,omitempty"`
 	VLESSDigest   string                `json:"vless_digest,omitempty"`
@@ -54,6 +55,8 @@ type diskState struct {
 	Devices       map[string]Device     `json:"devices"`
 }
 type Store struct {
+	vlessApplyMu      sync.Mutex
+	vlessRoutes       VLESSRouteController
 	vlessPeers        map[vlessPeerKey]vlessPeer
 	vlessSyncMu       sync.Mutex
 	vlessClient       *vlessserver.ControlClient
