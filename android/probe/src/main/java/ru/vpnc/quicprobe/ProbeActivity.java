@@ -14,6 +14,7 @@ public class ProbeActivity extends Activity {
  @Override public void onCreate(Bundle b){super.onCreate(b);TextView text=new TextView(this);text.setText("TCP/UDP test probe");setContentView(text);
  final String host=getIntent().getStringExtra("host"),kind=getIntent().getStringExtra("kind"),id=getIntent().getStringExtra("id");final int port=getIntent().getIntExtra("port",39081);
  if(host==null||id==null||!id.matches("[a-zA-Z0-9_-]{1,64}")){finish();return;}
+ if("soak".equals(kind)){android.content.Intent i=new android.content.Intent(this,SoakService.class);i.putExtras(getIntent());startForegroundService(i);return;}
  new Thread(()->{JSONObject result=new JSONObject();try{
  result.put("id",id).put("kind",kind).put("uid",android.os.Process.myUid());
  android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);android.net.NetworkCapabilities caps=cm.getNetworkCapabilities(cm.getActiveNetwork());result.put("vpn",caps!=null&&caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN));
