@@ -59,11 +59,15 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 func publicDeviceConfigRoute(admin http.Handler) http.Handler {
 	const prefix = "/api/v1/devices/"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, prefix) || !strings.HasSuffix(r.URL.Path, "/config") {
+		suffix := "/config"
+		if r.Method == http.MethodPost {
+			suffix = "/diagnostics"
+		}
+		if (r.Method != http.MethodGet && r.Method != http.MethodPost) || !strings.HasPrefix(r.URL.Path, prefix) || !strings.HasSuffix(r.URL.Path, suffix) {
 			http.NotFound(w, r)
 			return
 		}
-		deviceID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), "/config")
+		deviceID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), suffix)
 		if deviceID == "" || strings.Contains(deviceID, "/") {
 			http.NotFound(w, r)
 			return

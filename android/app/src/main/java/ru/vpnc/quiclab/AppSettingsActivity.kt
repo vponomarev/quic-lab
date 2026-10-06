@@ -39,6 +39,7 @@ class AppSettingsActivity:Activity(){
    runCatching{startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:$packageName")))}
     .onFailure{Toast.makeText(this,"Откройте настройки Android → Приложения → QUIC Lab",Toast.LENGTH_LONG).show()}
   })
+  panel.addView(ui.button("Диагностика и отправка журналов"){startActivity(Intent(this,DiagnosticsSettingsActivity::class.java))})
   root.addView(ui.button("Сохранить",true){save{}});EditorViewState.assign(root);ui.install(root);handler.post{listOf(rtt,reserve,budget,meta).forEach{it.acceptInitialState()};initialising=false}
  }
  private fun dirty()=!initialising && (listOf(rtt,reserve,budget,meta).any{it.dirty} || limit.text.toString()!=initialLimit)

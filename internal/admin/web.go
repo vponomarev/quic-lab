@@ -25,6 +25,7 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	diagnosticSync func(string) error
 	// Serialize capture creation with identity changes and AWG address reuse.
 	userCaptureMu    sync.Mutex
 	Capture          *debugcapture.Manager
@@ -65,6 +66,8 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("GET /ui.js", w.uiScript)
 	m.HandleFunc("GET /ui.css", w.uiStyle)
 	m.HandleFunc("GET /diagnostics/echo", w.echoHome)
+	m.HandleFunc("GET /diagnostics/clients", w.clientDiagnosticsPage)
+	m.HandleFunc("POST /api/v1/devices/{id}/diagnostics", w.clientDiagnostics)
 	m.HandleFunc("POST /users/settings", w.userSettings)
 	m.HandleFunc("POST /users/add", w.add)
 	m.HandleFunc("POST /users/rename", w.rename)
@@ -99,7 +102,11 @@ func (w *Web) Handler() http.Handler {
 		// Preserve Origin on same-origin form POSTs; disclose no referrer cross-origin.
 		rw.Header().Set("Referrer-Policy", "same-origin")
 		rw.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-		r.Body = http.MaxBytesReader(rw, r.Body, 16384)
+		limit := int64(16384)
+		if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/v1/devices/") && strings.HasSuffix(r.URL.Path, "/diagnostics") {
+			limit = 262144
+		}
+		r.Body = http.MaxBytesReader(rw, r.Body, limit)
 		m.ServeHTTP(rw, r)
 	})
 }

@@ -158,6 +158,7 @@ func main() {
 		}
 		cfg.Capabilities = opts.Capabilities
 		ui := admin.NewWeb(cfg, managed)
+		ui.StartDiagnosticsMaintenance(ctx)
 		if cfg.Capture != nil {
 			portOf := func(addr string) int { _, p, _ := net.SplitHostPort(addr); n, _ := strconv.Atoi(p); return n }
 			echoTCP := portOf(cfg.Echo.HTTPS)

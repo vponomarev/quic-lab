@@ -9,7 +9,6 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.SystemClock
-import android.util.AtomicFile
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -18,73 +17,76 @@ import java.io.File
 import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import org.json.JSONArray
 import org.json.JSONObject
 
-/** Bounded, app-private journal. Configuration objects and credentials are never serialized. */
+/** Bounded local history, separate from the transport and upload lifetime. */
 internal object Diagnostics {
-    private val entries = ArrayDeque<String>()
-    private val routineAt = mutableMapOf<String,Long>()
-    private val ioLock = Any()
-    private var journal: AtomicFile? = null
-    private var revision = 0L
-    private var savedRevision = -1L
-    private const val LIMIT = 400
-
-    @Synchronized fun init(context: Context) {
-        if (journal != null) return
-        journal = AtomicFile(File(context.filesDir, "diagnostics.json"))
-        try {
-            val stored = JSONArray(String(journal!!.readFully(), Charsets.UTF_8))
-            for (i in maxOf(0, stored.length() - LIMIT) until stored.length()) entries.addLast(sanitize(stored.getString(i)))
-        } catch (_: Exception) { }
-        Executors.newSingleThreadScheduledExecutor().scheduleWithFixedDelay({ persist() }, 5, 5, TimeUnit.SECONDS)
-        val previous = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            event("app", JSONObject().put("event", "uncaught_exception").put("error", "${error.javaClass.name}: ${error.message}\n${error.stackTrace.take(12).joinToString("\n")}"))
-            persist()
-            if (previous != null) previous.uncaughtException(thread, error)
-            else android.os.Process.killProcess(android.os.Process.myPid())
-        }
+ private val entries=ArrayDeque<String>()
+ private val routineAt=mutableMapOf<String,Long>()
+ private const val LIMIT=400
+ private var app:Context?=null
+ private var journal:DiagnosticsJournal?=null
+ internal fun store():DiagnosticsJournal = checkNotNull(journal)
+ @Synchronized fun init(context:Context){
+  if(app!=null)return
+  val c=context.applicationContext;app=c
+  journal=DiagnosticsJournal(c)
+  journal!!.prune()
+  // Do not silently upload the old journal: it may contain destinations collected
+  // before detailed diagnostics consent existed.
+  // Legacy history remains local, outside the upload queue.
+  journal!!.recent().asReversed().forEach{entries.addLast(it.text)}
+  DiagnosticsDelivery.schedule(c)
+  Executors.newSingleThreadScheduledExecutor().scheduleWithFixedDelay({
+   runCatching {
+    if(DiagnosticsPolicy.enabled(c)){
+     val now=SystemClock.elapsedRealtime()
+     event("app",JSONObject().put("event","summary").put("transport",LabVpnService.transport)
+      .put("network",LabVpnService.network).put("enabled",LabVpnService.active)
+      .put("tx_bytes",LabVpnService.txBytes).put("rx_bytes",LabVpnService.rxBytes)
+      .put("detail","rtt_ms=${LabVpnService.rtt} reply_age_ms=${if(LabVpnService.lastEcho>0)now-LabVpnService.lastEcho else -1} ${LabVpnService.flowSummary}"))
     }
-
-    internal fun sanitize(value: String): String {
-        if (value.contains("PRIVATE KEY", true) || value.contains("BEGIN CERTIFICATE", true)) return "[credential material omitted]"
-        return value.replace(Regex("(?i)(password|token|authorization|certificate|private_key|key)[\\\"']?\\s*[:=]\\s*([\\\"'][^\\\"']*[\\\"']|[^\\s,}]+)"), "$1=[redacted]")
-            .replace(Regex("(?i)(/enroll#)[A-Za-z0-9_-]+"), "$1[redacted]")
-            .take(1000)
-    }
-
-    @Synchronized fun event(source: String, event: JSONObject) {
-        val kind = event.optString("event")
-        if (kind in listOf("echo", "transit_echo", "health")) return
-        if (kind in listOf("bond_stats", "traffic", "profile_traffic", "vless_tcp", "udp_rejected", "standby_ready", "standby_unavailable", "probe_unavailable")) {
-            val routineKey="$source/$kind/${event.optString("profile_id")}"
-            val time=SystemClock.elapsedRealtime()
-            if (time-(routineAt[routineKey] ?: -30000L)<30000) return
-            routineAt[routineKey]=time
-        }
-        val fields = listOf("tcp_state", "paths", "pending", "oldest_ms", "rescued", "duplicates", "expired", "cell_sent", "cell_blocked", "enabled", "interval_ms", "profile_id", "reason", "uid", "tx_bytes", "rx_bytes", "detail", "error", "ip", "connection_id", "local", "remote", "transport", "key", "network", "destination", "up", "down", "tcp_flows", "udp_flows", "udp_tx", "udp_rx", "udp_rejected", "datagram_drops")
-            .filter { event.has(it) && it != "key" }
-            .joinToString(" ") { "$it=${sanitize(event.optString(it))}" }
-        entries.addLast("${Instant.now()} +${SystemClock.elapsedRealtime()}ms ${sanitize(source)} ${sanitize(kind)} $fields".take(1400))
-        while (entries.size > LIMIT) entries.removeFirst()
-        revision++
-    }
-
-    private fun persist() = synchronized(ioLock) {
-        val snapshot = synchronized(this) {
-            val file = journal ?: return@synchronized null
-            if (savedRevision == revision) null else Triple(file, revision, JSONArray(entries.toList()).toString().toByteArray(Charsets.UTF_8))
-        } ?: return@synchronized
-        var stream: java.io.FileOutputStream? = null
-        try {
-            stream = snapshot.first.startWrite()
-            stream.write(snapshot.third)
-            snapshot.first.finishWrite(stream)
-            synchronized(this) { savedRevision = snapshot.second }
-        } catch (_: Exception) { stream?.let { snapshot.first.failWrite(it) } }
-    }
+    journal?.prune();DiagnosticsDelivery.pruneOutbox(c);File(c.filesDir,"diagnostics.json").let{if(it.exists()&&System.currentTimeMillis()-it.lastModified()>7*86400000L)it.delete()};DiagnosticsDelivery.automatic(c)
+   }
+  },30,30,TimeUnit.SECONDS)
+  val previous=Thread.getDefaultUncaughtExceptionHandler()
+  Thread.setDefaultUncaughtExceptionHandler{thread,error->
+   runCatching{event("app",JSONObject().put("event","uncaught_exception").put("error","${error.javaClass.name}: ${error.message}"))}
+   if(previous!=null)previous.uncaughtException(thread,error) else android.os.Process.killProcess(android.os.Process.myPid())
+  }
+ }
+ internal fun sanitize(value:String):String {
+  if(value.contains("PRIVATE KEY",true)||value.contains("BEGIN CERTIFICATE",true))return "[credential material omitted]"
+  return value.replace(Regex("(?i)(password|token|authorization|certificate|private_key|key)[\\\"']?\\s*[:=]\\s*([\\\"'][^\\\"']*[\\\"']|[^\\s,}]+)"),"$1=[redacted]")
+   .replace(Regex("(?i)(/enroll#)[A-Za-z0-9_-]+"),"$1[redacted]")
+   .replace(Regex("(?i)(vless|vmess|ss)://[^\\s]+"),"[connection link omitted]")
+   .replace(Regex("https?://[^\\s]+"),"[URL omitted]").take(1000)
+ }
+ @Synchronized fun event(source:String,event:JSONObject){
+  val c=app?:return
+  if(!DiagnosticsPolicy.enabled(c))return
+  val kind=event.optString("event")
+  if(kind in listOf("echo","transit_echo","health"))return
+  val detail=kind in listOf("flow_open","flow_closed","route_selected","vless_tcp","udp_rejected")
+  if(detail&&!DiagnosticsPolicy.detailed(c))return
+  val category=if(detail)"detail" else if(kind in listOf("summary","bond_stats","traffic","profile_traffic"))"summary" else "event"
+  if(category=="summary" || kind in listOf("standby_ready","standby_unavailable","probe_unavailable")){
+   val key="$source/$kind/${event.optString("profile_id")}"
+   val time=SystemClock.elapsedRealtime();if(time-(routineAt[key]?:-30000L)<30000)return;routineAt[key]=time
+  }
+  val fields=(listOf("tcp_state","paths","pending","oldest_ms","rescued","duplicates","expired","cell_sent","cell_blocked","enabled","interval_ms","reason","tx_bytes","rx_bytes","detail","error","connection_id","transport","network","up","down","tcp_flows","udp_flows","udp_tx","udp_rx","udp_rejected","datagram_drops")+if(detail)listOf("destination")else emptyList())
+   .filter{event.has(it)}.joinToString(" "){"$it=${sanitize(event.optString(it))}"}
+  val line="${Instant.now()} +${SystemClock.elapsedRealtime()}ms ${sanitize(source)} ${sanitize(kind)} $fields".take(1400)
+  entries.addLast(line);while(entries.size>LIMIT)entries.removeFirst()
+  val profile=event.optString("profile_id").ifBlank{VpnProfiles.current(c).id}
+  val target=runCatching{DiagnosticsDelivery.destination(c,profile).first}.getOrDefault("")
+  journal?.append(profile,target,category,line)
+  if(category=="event" && (kind.contains("fail")||kind.contains("error")||kind.contains("reconnect")))DiagnosticsDelivery.urgent()
+ }
+ @Synchronized fun clear(){
+  app?.let{DiagnosticsDelivery.clearPending(it);File(it.filesDir,"diagnostics.json").delete()}
+  journal?.clear();entries.clear()
+ }
 
     fun report(context: Context, echoSummary: String): String {
         val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)

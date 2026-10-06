@@ -48,6 +48,7 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                  (root / "docs/install-server.md", "README.md", 0o644),
                  (root / "docs/phase1-upgrade.md", "phase1-upgrade.md", 0o644),
                  (root / "docs/server-config.md", "server-config.md", 0o644),
+                 (root / "docs/client-diagnostics.md", "client-diagnostics.md", 0o644),
                  (root / "docs/vless-server.md", "vless-server.md", 0o644),
                  (root / "docs/unified-ingress.md", "unified-ingress.md", 0o644),
                  (root / "docs/vless-compatibility.md", "vless-compatibility.md", 0o644),

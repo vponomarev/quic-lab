@@ -103,7 +103,8 @@ func (s *Store) snapshot(id string, now time.Time) UserStats {
 // The byte window stays in memory; last connection metadata survives server restarts.
 func (s *Store) Track(cs tls.ConnectionState, transport string, peer func() string) (func(int, int), func()) {
 	s.mu.Lock()
-	id, e := s.allowed(cs)
+	device, e := s.deviceAllowed(cs)
+	id := device.UserID
 	if e != nil {
 		s.mu.Unlock()
 		return nil, func() {}
@@ -126,7 +127,11 @@ func (s *Store) Track(cs tls.ConnectionState, transport string, peer func() stri
 	if e := s.save(); e != nil {
 		slog.Error("save_connection_metadata", "error", e)
 	}
+	hook := s.diagnosticEvent
 	s.mu.Unlock()
+	if hook != nil {
+		hook(device.ID, "gateway_open transport="+transport+" session="+token)
+	}
 	var once sync.Once
 	return func(tx, rx int) {
 			s.mu.Lock()
@@ -138,6 +143,9 @@ func (s *Store) Track(cs tls.ConnectionState, transport string, peer func() stri
 			}
 		}, func() {
 			once.Do(func() {
+				if hook != nil {
+					defer hook(device.ID, "gateway_closed transport="+transport+" session="+token)
+				}
 				s.mu.Lock()
 				defer s.mu.Unlock()
 				delete(traffic.live, token)
