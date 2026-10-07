@@ -153,3 +153,26 @@ func TestDiagnosticsUserNavigation(t *testing.T) {
 		t.Fatal("unknown user")
 	}
 }
+
+func TestDeviceReportSummaryUsesClientReceipt(t *testing.T) {
+	_, w, d, token := updateFixture(t)
+	w.Config.DataDir = t.TempDir()
+	body := `{"version":1,"records":[{"id":"latest","time":1,"kind":"event","text":"test"}]}`
+	if r := diagnosticRequest(w, d.ID, token, body); r.Code != 200 {
+		t.Fatal(r.Code)
+	}
+	fs, _ := w.diagnosticFiles()
+	stamp := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(fs[0].path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	w.recordServerDiagnostic(d.ID, "server-only-event")
+	rw := httptest.NewRecorder()
+	w.page(rw, view{Admin: true, Users: w.Store.List()})
+	if !strings.Contains(rw.Body.String(), `data-last-report="2026-10-07T00:00:00Z"`) {
+		t.Fatal("missing client receipt timestamp")
+	}
+	if !strings.Contains(rw.Body.String(), "Регистрация:") {
+		t.Fatal("missing registration date")
+	}
+}

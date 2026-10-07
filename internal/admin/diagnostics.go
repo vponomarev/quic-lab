@@ -385,3 +385,35 @@ func (w *Web) recordServerDiagnostic(device, text string) {
 		os.Rename(name, filepath.Join(dir, "server-"+batch.Records[0].ID+".json"))
 	}
 }
+
+func (w *Web) deviceReportTimes(users []User) map[string]string {
+	result := make(map[string]string)
+	if len(users) == 0 || w.Config.DataDir == "" {
+		return result
+	}
+	diagnosticDiskMu.Lock()
+	defer diagnosticDiskMu.Unlock()
+	files, err := w.diagnosticFiles()
+	if err != nil {
+		return result
+	}
+	byHash := make(map[string]time.Time)
+	for _, f := range files {
+		if strings.HasPrefix(filepath.Base(f.path), "server-") {
+			continue
+		}
+		hash := filepath.Base(filepath.Dir(f.path))
+		if f.modified.After(byHash[hash]) {
+			byHash[hash] = f.modified
+		}
+	}
+	for _, u := range users {
+		for _, d := range u.Devices {
+			hash := sha256.Sum256([]byte(d.ID))
+			if stamp := byHash[hex.EncodeToString(hash[:])]; !stamp.IsZero() {
+				result[d.ID] = stamp.UTC().Format(time.RFC3339)
+			}
+		}
+	}
+	return result
+}

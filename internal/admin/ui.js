@@ -55,7 +55,7 @@
  }
  function chooseDevice(panel, forms, devices, protocol) {
   const label=el('label','','Устройство'),select=el('select','device-select');select.setAttribute('aria-label','Устройство для '+protocol);
-  devices.filter(d=>d.dataset.disabled!=='true'&&(protocol!=='AmneziaWG'||d.dataset.awg==='true')).forEach(d=>{const o=el('option','',$('strong',d).textContent);o.value=d.dataset.deviceId;select.append(o);});
+  devices.filter(d=>d.dataset.disabled!=='true'&&(protocol!=='AmneziaWG'||d.dataset.awg==='true')).forEach(d=>{const o=el('option','',$('strong',d).textContent+' · '+d.dataset.deviceId.slice(0,8));o.value=d.dataset.deviceId;select.append(o);});
   label.append(select);panel.append(label);
   const change=()=>{forms.forEach(f=>{f.elements.id.value=select.value;$('button',f).disabled=!select.value;});};select.addEventListener('change',change);change();
   if(!select.options.length)panel.append(el('p','field-note','Нет доступных устройств. Сначала зарегистрируйте устройство через приложение.'));
@@ -99,7 +99,22 @@
   if(toggle){toggle.classList.add('subtle-danger');access.append(toggle);}
   const deletion=$('form[action$="/delete"]',access);
   const danger=el('div','danger-actions');if(toggle){toggle.classList.remove('subtle-danger');$('button',toggle).textContent=toggle.elements.disabled.value==='true'?'Приостановить доступ':'Возобновить доступ';danger.append(toggle);}if(deletion)danger.append(deletion);$$('hr',access).forEach(h=>h.remove());access.append(danger);
-  const journalLink=el('a','','Журналы устройств пользователя');journalLink.href='diagnostics/clients?user='+encodeURIComponent(row.dataset.userId);sections.panels.get('diagnostics').append(journalLink);overview.append(journalLink.cloneNode(true));
+  const journalLink=el('a','action-link','Журналы устройств пользователя');journalLink.href='diagnostics/clients?user='+encodeURIComponent(row.dataset.userId);sections.panels.get('diagnostics').append(journalLink);overview.append(journalLink.cloneNode(true));
+  const reports=el('div','device-reports');sections.panels.get('diagnostics').append(reports);
+  reports.append(el('p','field-note','Последний отчёт — время получения журналов клиента сервером. Время показано в часовом поясе браузера; обновляется при обновлении страницы.'));
+  const reportList=el('div','device-report-list');reports.append(reportList);
+  const formatTime=raw=>raw?new Date(raw).toLocaleString(undefined,{timeZoneName:'short'}):'Отчётов пока нет';
+  const orderedDevices=[...devices].sort((a,b)=>(b.dataset.lastReport||'').localeCompare(a.dataset.lastReport||''));
+  for(const device of orderedDevices){
+   const entry=el('div','device-report'),title=el('strong','',$('strong',device).textContent),meta=el('small','muted','ID: '+device.dataset.deviceId.slice(0,8)+(device.dataset.disabled==='true'?' · отозвано':''));
+   const link=el('a','action-link secondary','Открыть журнал');link.href=journalLink.href+'&device='+encodeURIComponent(device.dataset.deviceId);
+   const stamp=el('span','report-time','Последний отчёт: '+formatTime(device.dataset.lastReport));entry.append(title,meta,stamp,link);reportList.append(entry);
+   const status=el('small','device-report-stamp','Последний отчёт: '+formatTime(device.dataset.lastReport));device.append(status);
+  }
+  if(!devices.length)reportList.append(el('p','muted','Устройств пока нет.'));
+  const groups=new Map();
+  for(const device of devices){if(device.dataset.legacy==='true')continue;const label=$('strong',device).textContent;if(!groups.has(label))groups.set(label,[]);groups.get(label).push(device);}
+  for(const [label,items] of groups){if(items.length<2)continue;const group=el('details','device-registrations');group.append(el('summary','',label+' · регистраций: '+items.length),el('p','field-note','Одинаковая модель может означать повторную регистрацию или разные телефоны. Каждая запись имеет отдельные ключи.'));items[0].before(group);items.sort((a,b)=>(b.dataset.lastReport||'').localeCompare(a.dataset.lastReport||'')||(b.dataset.created||'').localeCompare(a.dataset.created||'')).forEach(item=>group.append(item));}
   const capture=$('.user-capture',actions);if(capture)sections.panels.get('diagnostics').append(capture);else sections.panels.get('diagnostics').append(el('p','muted','Захват трафика недоступен на этом сервере.'));
   settingsForm($('form[action$="/settings"]',access),user.dialog);
   const connectionsPanel=sections.panels.get('connections');connectionsPanel.classList.add('detail-connections');

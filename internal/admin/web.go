@@ -402,6 +402,7 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 }
 
 type view struct {
+	DeviceReports                                       map[string]string
 	ConnectionLink                                      string
 	VisitorIP, VisitorAgent, VisitorLanguage            string
 	TLSVersion, TLSCipher, TLSALPN, TLSSNI, VisitorHTTP string
@@ -425,6 +426,7 @@ type view struct {
 
 func (w *Web) page(rw http.ResponseWriter, v view) {
 	v.Base = w.base
+	v.DeviceReports = w.deviceReportTimes(v.Users)
 	if v.ConnectionLink != "" {
 		rw.Header().Set("Cache-Control", "no-store")
 		rw.Header().Set("Referrer-Policy", "no-referrer")
