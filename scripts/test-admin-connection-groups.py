@@ -64,4 +64,22 @@ with sync_playwright() as p:
  page.add_style_tag(content=(root/'internal/admin/ui.css').read_text())
  page.screenshot(path='/tmp/quic-diagnostics-ui.png')
  assert not errors,errors
+ page.on('dialog',lambda dialog:dialog.accept())
+ page.evaluate("""() => {window.fetch=async url=>({ok:false,url:String(url),text:async()=>'Temporary failure'})}""")
+ page.locator('.device-table form[action$="/disable"]').evaluate("""f=>f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))""")
+ page.wait_for_function("document.querySelector('.revoke-status')?.textContent==='Temporary failure'")
+ assert page.locator('.device-table form[action$="/disable"] button').is_enabled()
+ assert page.locator('.device-table [data-device-id="device-one"]').get_attribute('data-disabled')=='false'
+ page.evaluate("""() => {window.revokes=[];window.fetch=async(url,opts)=>{window.revokes.push({url:String(url),body:opts.body.toString()});return {ok:true,url:String(url),text:async()=>'<html></html>'}}}""")
+ prevented=page.locator('.device-table form[action$="/disable"]').evaluate("""f=>!f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))""")
+ assert prevented,'Device revocation must prevent page navigation'
+ page.wait_for_function("""document.querySelector('.device-table [data-device-id="device-one"]')?.dataset.disabled==='true'""")
+ assert page.locator('.device-table [data-device-id="device-one"] .device-actions').inner_text()=='Отозвано'
+ assert page.locator('.user-dialog').evaluate('(e)=>e.open')
+ page.get_by_role('tab',name='Приглашения',exact=True).click()
+ prevented=page.locator('.enrollment-table form[action$="/revoke"]').evaluate("""f=>!f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))""")
+ assert prevented,'Invitation revocation must prevent page navigation'
+ page.wait_for_function("document.querySelector('.enrollment-table').textContent.includes('Отозвано')")
+ assert len(page.evaluate('window.revokes'))==2
+ assert page.get_by_role('tab',name='Приглашения',exact=True).get_attribute('aria-selected')=='true'
  print('Grouped connections, live updates, preserved expansion, offline PASS');b.close()

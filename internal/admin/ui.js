@@ -193,6 +193,24 @@
    const message=formAction(f)==='revoke'?'Отозвать приглашение? Уже зарегистрированные устройства продолжат работать.':`Отключить доступ «${target}»? Активные подключения будут разорваны.`;
    if(!confirm(message))e.preventDefault();
   }));
+  // Keep the current dialog, tab and scroll position during sequential cleanup.
+  $$('form',user.dialog).filter(f=>['disable','revoke'].includes(formAction(f))).forEach(f=>f.addEventListener('submit',async e=>{
+   const cancelled=e.defaultPrevented;e.preventDefault();if(cancelled||f.dataset.pending)return;
+   f.dataset.pending='true';const controls=$$('button',f);controls.forEach(b=>b.disabled=true);
+   let status=$('.revoke-status',f);if(!status){status=el('span','revoke-status');status.setAttribute('role','status');f.append(status);}status.textContent='Отзываем…';
+   try{
+    await post(f);
+    const entry=f.closest('tr'),cell=f.closest('td');
+    if(formAction(f)==='disable'){
+     const id=f.elements.id.value;entry.dataset.disabled='true';
+     const original=devices.find(d=>d.dataset.deviceId===id);if(original)original.dataset.disabled='true';
+     $$('select.device-select',connect.dialog).forEach(select=>{[...select.options].filter(o=>o.value===id).forEach(o=>o.remove());select.dispatchEvent(new Event('change'));});
+     const report=reportList.children[orderedDevices.findIndex(d=>d.dataset.deviceId===id)];if(report){const meta=$('small',report);if(meta)meta.textContent+=' · отозвано';}
+    }else{entry.cells[2].textContent='Отозвано';entry.cells[2].className='muted';}
+    cell.replaceChildren(el('span','muted','Отозвано'));
+   }catch(err){status.setAttribute('role','alert');status.textContent=err.message;controls.forEach(b=>b.disabled=false);}
+   finally{delete f.dataset.pending;}
+  }));
   function refreshOverview(){const traffic=$('[data-stat=traffic]',row);if(row.dataset.measured!=='true')traffic.textContent='Не измеряется';else if(row.dataset.vless==='true')traffic.title='Счётчики QUIC / HTTPS / AWG. Трафик VLESS пока не измеряется.';overviewItems.get('access').textContent=accessState;overviewItems.get('expires').textContent=row.cells[4].textContent;for(const key of ['traffic','last'])overviewItems.get(key).textContent=$(`[data-stat="${key}"]`,row).textContent;overviewItems.get('connections').textContent=liveConnections.length?connectionGroups(liveConnections).map(connectionLabel).join('\n'):'Нет активных подключений';}
   function updateConnections(connections){
    liveConnections=connections;const groups=connectionGroups(connections),cell=$('[data-stat=connections]',row);
