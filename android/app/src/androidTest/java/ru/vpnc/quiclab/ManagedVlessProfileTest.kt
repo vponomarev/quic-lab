@@ -180,4 +180,45 @@ class ManagedVlessProfileTest {
         assertFalse(diff.toString().contains(uuid)); assertFalse(diff.toString().contains(changedUuid))
         assertFalse(diff.toString().contains("vless://"))
     }
+
+    @Test fun reimportUpdatesSameProfileAndPreservesLocalPolicy() = withContext { c ->
+        ProfileImport.save(c,profile())
+        val id=VpnProfiles.current(c).id
+        val before=VpnProfiles.list(c)
+        local(c,id).edit().putInt("mode",3).putString("routes","192.168.88.0/24")
+            .putBoolean("global_apps",false).putStringSet("apps",setOf("org.telegram.messenger"))
+            .putBoolean("max_availability",true).putInt("quic_pool_size",4).commit()
+        val incoming=profile().put("vless_uri",uri("new.example"))
+            .put("device_id","33333333-3333-4333-8333-333333333333")
+            .put("config_url","https://control.example/api/v1/devices/33333333-3333-4333-8333-333333333333/config")
+        ProfileImport.replace(c,incoming,id)
+        assertEquals(before,VpnProfiles.list(c));assertEquals(id,VpnProfiles.current(c).id)
+        val actual=VpnProfiles.preferences(c,id)
+        assertEquals("new.example:443",actual.getString("endpoint",null))
+        assertEquals(3,actual.getInt("mode",0))
+        assertEquals("192.168.88.0/24",actual.getString("routes",null))
+        assertEquals(setOf("org.telegram.messenger"),VpnProfiles.apps(c,id))
+        assertTrue(actual.getBoolean("max_availability",false))
+        assertEquals(4,actual.getInt("quic_pool_size",0))
+        assertEquals(incoming.getString("device_id"),VpnIdentity.load(c,id).getString("device_id"))
+        val saved=VpnIdentity.load(c,id).toString()
+        try {ProfileImport.replace(c,JSONObject(incoming.toString()).put("vless_uri","invalid"),id);fail("Invalid replacement accepted")}catch(_:IllegalArgumentException){}
+        assertEquals(saved,VpnIdentity.load(c,id).toString())
+    }
+    @Test fun reimportRegistersLegacyProfileWithoutChangingSelection() = withContext { c ->
+        val target=VpnProfiles.create(c,"Legacy")
+        local(c,target.id).edit().putString("transport","vless").putInt("mode",3)
+            .putString("routes","10.0.0.0/8").putBoolean("global_apps",true).commit()
+        VpnIdentity.writeBundle(c,target.id,JSONObject().put("vless_config",mobile.Mobile.importVLESSConfig(uri())))
+        VpnProfiles.setGlobalApps(c,setOf("org.telegram.messenger"))
+        val other=VpnProfiles.create(c,"Other")
+        val count=VpnProfiles.list(c).size
+        ProfileImport.replace(c,profile(),target.id)
+        assertEquals(count,VpnProfiles.list(c).size)
+        assertEquals(other.id,VpnProfiles.current(c).id)
+        assertTrue(VpnProfiles.preferences(c,target.id).getBoolean("managed_profile",false))
+        assertEquals(3,VpnProfiles.preferences(c,target.id).getInt("mode",0))
+        assertEquals(setOf("org.telegram.messenger"),VpnProfiles.apps(c,target.id))
+        assertTrue(DiagnosticsDelivery.destination(c,target.id).first.endsWith("/diagnostics"))
+    }
 }

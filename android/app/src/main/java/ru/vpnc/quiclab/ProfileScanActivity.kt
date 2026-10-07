@@ -59,11 +59,36 @@ class ProfileScanActivity : Activity() {
             return
         }
         val address=if(kind=="echo")p.getString("endpoint") else ProfileImport.reviewAddress(p)
-        AlertDialog.Builder(this).setTitle(if(kind=="echo")"Настройки echo" else "VPN: ${p.optString("name")}")
-            .setMessage("$address\nTLS: ${p.getString("hostname")}\n${if(kind=="vpn") "Добавить новый VPN-профиль?" else "Заменить настройки echo?"}")
-            .setNegativeButton("Отмена"){_,_->finish()}.setPositiveButton("Сохранить"){_,_->try{
-                val saved=ProfileImport.save(this,p);enrollmentURL?.let { ProfileImport.completeEnrollment(this,it) };setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
-            }catch(_:Exception){fail(IllegalArgumentException("Проверьте формат и параметры профиля"))}}.show()
+        val canReplace=kind=="vpn" && p.optString("config_url").isNotEmpty() && p.optString("device_id").isNotEmpty()
+        val dialog=AlertDialog.Builder(this).setTitle(if(kind=="echo")"Настройки echo" else "VPN: ${p.optString("name")}")
+            .setMessage("$address\nTLS: ${p.getString("hostname")}\n"+when {
+                canReplace -> "Обновить существующее подключение или добавить новое? При обновлении выбор приложений, маршруты и локальные настройки сохранятся."
+                kind=="vpn" -> "Добавить новый VPN-профиль?"
+                else -> "Заменить настройки echo?"
+            })
+            .setNegativeButton("Отмена"){_,_->finish()}
+            .setPositiveButton(if(canReplace)"Обновить…" else "Сохранить"){_,_->if(canReplace)chooseReplacement(p)else saveReviewed(p)}
+        if(canReplace)dialog.setNeutralButton("Добавить новое"){_,_->saveReviewed(p)}
+        dialog.show()
+    }
+    private fun chooseReplacement(p:JSONObject){
+        val profiles=VpnProfiles.list(this)
+        var selected=profiles.indexOfFirst{it.id==VpnProfiles.current(this).id}.coerceAtLeast(0)
+        val labels=profiles.map{profile->
+            val host=runCatching{VpnProfiles.preferences(this,profile.id).getString("hostname","")}.getOrDefault("")
+            profile.name+if(host.isNullOrBlank())"" else "\n$host"
+        }.toTypedArray()
+        AlertDialog.Builder(this).setTitle("Какое подключение обновить?")
+            .setSingleChoiceItems(labels,selected){_,position->selected=position}
+            .setNegativeButton("Отмена"){_,_->review(p)}
+            .setPositiveButton("Обновить"){_,_->saveReviewed(p,profiles[selected].id)}.show()
+    }
+    private fun saveReviewed(p:JSONObject,id:String?=null){
+        try{
+            val saved=if(id==null)ProfileImport.save(this,p)else ProfileImport.replace(this,p,id)
+            enrollmentURL?.let{ProfileImport.completeEnrollment(this,it)}
+            setResult(RESULT_OK,Intent().putExtra("kind",saved));finish()
+        }catch(_:Exception){fail(IllegalArgumentException("Не удалось сохранить профиль. Проверьте настройки и остановите VPN."))}
     }
     override fun onSaveInstanceState(out:Bundle){out.putString("enrollment_url",enrollmentURL);super.onSaveInstanceState(out)}
     private fun fail(e:Exception){if(isFinishing)return;AlertDialog.Builder(this).setTitle("Импорт не выполнен").setMessage(e.message ?: "Ошибка профиля").setPositiveButton("OK"){_,_->finish()}.show()}

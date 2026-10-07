@@ -117,6 +117,16 @@ internal object ProfileImport {
             return JSONObject(out.toString("UTF-8")).also{require(validate(it)==(if(u.path.endsWith("/capture/enroll")) "capture" else "vpn")) { "Неожиданный тип профиля" }}
         } finally { c.disconnect() }
     }
+    /** Explicit replacement: one encrypted commit; never overwrite local routing policy. */
+    @Synchronized fun replace(context:Context,p:JSONObject,id:String):String {
+        check(!LabVpnService.active) {"Сначала остановите VPN"}
+        require(VpnProfiles.list(context).any{it.id==id}) {"Профиль не найден"}
+        require(p.optString("config_url").isNotEmpty() && p.optString("device_id").isNotEmpty()) {"Нужен регистрационный QR устройства"}
+        val bundle=VpnIdentity.bundleFromProfile(p)
+        require(bundle.has("server_config"))
+        VpnIdentity.writeBundle(context,id,bundle)
+        return "vpn"
+    }
     fun save(context:Context,p:JSONObject):String {
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         val kind=validate(p)

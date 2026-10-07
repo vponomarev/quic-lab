@@ -28,10 +28,13 @@ internal object VpnConfiguration {
         require(id == "default" || id.matches(Regex("[a-f0-9-]{36}")))
         val local = context.getSharedPreferences(if (id == "default") "vpn" else "vpn_$id", Context.MODE_PRIVATE)
         val identityFile=VpnProfiles.identityFile(context,id)
-        if (!local.getBoolean("managed_profile",false)) return local
-        val bundle=VpnIdentity.load(context,id)
+        if (!local.getBoolean("managed_profile",false) && !identityFile.exists()) return local
+        val bundle=try {VpnIdentity.load(context,id)} catch(e:Exception) {
+            if(local.getBoolean("managed_profile",false)) throw e
+            return local // Legacy settings remain editable even if their key file needs repair.
+        }
         val server=bundle.optJSONObject("server_config") ?: return local
-        val values=mutableMapOf<String,Any?>()
+        val values=mutableMapOf<String,Any?>("managed_profile" to true)
         val allowed=ProfileImport.transports(server)
         val selected=local.getString("transport","quic").orEmpty().let {if(it in allowed) it else allowed.first()}
         values["transport"]=selected;values["available_transports"]=allowed.toSet()

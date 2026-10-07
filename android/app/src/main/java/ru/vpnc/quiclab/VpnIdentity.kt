@@ -42,7 +42,7 @@ internal object VpnIdentity {
 
     private fun requireManualImport(context: Context) {
         val id=VpnProfiles.current(context).id
-        val local=context.getSharedPreferences(if(id=="default") "vpn" else "vpn_$id",Context.MODE_PRIVATE)
+        val local=VpnProfiles.preferences(context,id)
         require(!local.getBoolean("managed_profile",false)) {"Сертификат управляемого профиля задаёт сервер; создайте отдельный профиль"}
         check(!LabVpnService.active) {"Сначала остановите VPN"}
     }
@@ -114,6 +114,10 @@ internal object VpnIdentity {
 
     fun importBundle(context: Context, profile: JSONObject) {
         requireManualImport(context)
+        save(context, bundleFromProfile(profile).toString().toByteArray())
+    }
+
+    internal fun bundleFromProfile(profile: JSONObject): JSONObject {
         require(ProfileImport.validate(profile) == "vpn") { "Нужен профиль VPN" }
         val content = if (profile.has("certificate")) certificateBundle(profile)
             else JSONObject().put("subject", if (profile.has("vless_uri")) "VLESS" else "AmneziaWG")
@@ -131,7 +135,7 @@ internal object VpnIdentity {
  content.put("server_config",server)
  }
  require(content.has("certificate") || content.has("awg_config") || content.has("vless_config")) { "В профиле нет ключей" }
-        save(context, content.toString().toByteArray())
+        return content
     }
 
     fun importAWG(context: Context, raw: String) {
