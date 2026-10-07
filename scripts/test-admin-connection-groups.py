@@ -6,10 +6,16 @@ root=Path(sys.argv[1])
 form=lambda path: f'<form action="https://example.test/users/{path}"><input name="id" value="test"><input name="csrf" value="test"><input name="name" value="Test"><label>TTL<input name="ttl_hours" value="24"></label><label>Limit<input name="max_devices" value="5"></label><button>Submit</button></form>'
 fixture='<main><section class="card"><table><thead><tr>'+''.join('<th>Column</th>' for _ in range(6))+'</tr></thead><tbody id="user-stats"><tr data-user-id="test" data-vless="true" data-measured="false"><td><strong data-stat="name">Test</strong></td><td data-stat="connections"></td><td data-stat="last"></td><td data-stat="traffic"></td><td>Expiry</td><td><div class="user-actions"><details class="export"><summary>Connect</summary>'+form('qr')+form('config')+'</details><details class="user-settings"><summary>Settings</summary>'+form('settings')+'</details></div></td></tr></tbody></table></section></main>'
 fixture=fixture.replace('<details class="export">','<details class="devices"><summary>Устройства</summary><div class="device" data-device-id="device-one" data-disabled="false" data-legacy="false" data-created="2026-10-03T10:00:00Z" data-last-report="2026-10-07T08:00:00Z"><strong>Xiaomi</strong><small>Регистрация: 03.10.2026 · ID: device-o</small></div><div class="device" data-device-id="device-two" data-disabled="false" data-legacy="false" data-created="2026-10-07T10:00:00Z" data-last-report=""><strong>Xiaomi</strong><small>Регистрация: 07.10.2026 · ID: device-t</small></div></details><details class="export">')
+fixture=fixture.replace('</small></div>', '</small><form class="inline" action="https://example.test/devices/disable"><input type="hidden" name="id" value="device-one"><button class="danger">Отозвать устройство</button></form></div>', 1)
 with sync_playwright() as p:
  b=p.chromium.launch(headless=True,executable_path='/root/.cache/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell',args=['--no-sandbox'])
  page=b.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
  page.set_content(fixture);page.add_script_tag(content=(root/'internal/admin/ui.js').read_text())
+ assert not errors,errors
+ revoke=page.locator('.device-table form[action$="/disable"]')
+ assert revoke.count()==1
+ assert revoke.locator('[name=id]').input_value()=='device-one'
+ assert revoke.locator('xpath=ancestor::tr[1]').get_attribute('data-device-id')=='device-one'
  links=page.locator('a',has_text='Журналы устройств пользователя');assert links.count()==2
  for link in links.all(): assert link.get_attribute('href')=='diagnostics/clients?user=test'
  def update(values):
@@ -27,13 +33,16 @@ with sync_playwright() as p:
  update(peers+['vless · 203.0.113.4:2000\nС now','QUIC · 198.51.100.1\nС now'])
  assert page.locator('.detail-connections details').count()==3
  update([]);assert 'Нет подключений' in cell.inner_text()
- assert page.locator('.device-registrations').count()==1
+ assert page.locator('.device-registrations').count()==0
+ assert page.locator('.device-table tbody tr').count()==2
+ assert page.locator('.device-table th').all_text_contents()==['Устройство / ключ','Регистрация','Последний отчёт','Действия']
+ assert 'Нет данных' in page.locator('.device-table').inner_text()
  assert page.locator('.device-report').count()==2
  assert '2026' in page.locator('.device-report').first.inner_text()
  assert 'Отчётов пока нет' in page.locator('.device-report').last.inner_text()
  assert page.locator('.device-report a').first.get_attribute('href').endswith('&device=device-one')
  assert page.locator('a.action-link',has_text='Журналы устройств пользователя').count()==2
- page.get_by_role('tab',name='Диагностика',exact=True).click()
+ page.get_by_role('tab',name='Устройства · 2',exact=True).click()
  page.add_style_tag(content=(root/'internal/admin/web.html').read_text().split('<style>',1)[1].split('</style>',1)[0])
  page.add_style_tag(content=(root/'internal/admin/ui.css').read_text())
  page.screenshot(path='/tmp/quic-diagnostics-ui.png')

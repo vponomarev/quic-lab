@@ -112,9 +112,25 @@
    const status=el('small','device-report-stamp','Последний отчёт: '+formatTime(device.dataset.lastReport));device.append(status);
   }
   if(!devices.length)reportList.append(el('p','muted','Устройств пока нет.'));
-  const groups=new Map();
-  for(const device of devices){if(device.dataset.legacy==='true')continue;const label=$('strong',device).textContent;if(!groups.has(label))groups.set(label,[]);groups.get(label).push(device);}
-  for(const [label,items] of groups){if(items.length<2)continue;const group=el('details','device-registrations');group.append(el('summary','',label+' · регистраций: '+items.length),el('p','field-note','Одинаковая модель может означать повторную регистрацию или разные телефоны. Каждая запись имеет отдельные ключи.'));items[0].before(group);items.sort((a,b)=>(b.dataset.lastReport||'').localeCompare(a.dataset.lastReport||'')||(b.dataset.created||'').localeCompare(a.dataset.created||'')).forEach(item=>group.append(item));}
+  const devicePanel=sections.panels.get('devices');
+  if(devices.length){
+   const wrap=el('div','device-table-scroll'),table=el('table','device-table'),head=el('thead'),headRow=el('tr'),body=el('tbody');
+   ['Устройство / ключ','Регистрация','Последний отчёт','Действия'].forEach(text=>headRow.append(el('th','',text)));head.append(headRow);table.append(head,body);wrap.append(table);
+   devicePanel.append(el('p','field-note','Каждая строка — отдельная регистрация и ключ. Время — в часовом поясе браузера. Отсутствие отчётов не означает, что ключ не используется.'),wrap);
+   const rows=[...devices].sort((a,b)=>(b.dataset.lastReport||'').localeCompare(a.dataset.lastReport||'')||(b.dataset.created||'').localeCompare(a.dataset.created||''));
+   for(const device of rows){
+    const row=el('tr','device device-row');Object.assign(row.dataset,device.dataset);
+    const identity=el('td','device-identity');identity.append(el('strong','',$('strong',device).textContent),el('small','muted','ID: '+device.dataset.deviceId.slice(0,8)));
+    const address=$('code',device);if(address)identity.append(el('code','',address.textContent));
+    if(device.dataset.legacy==='true')identity.append(el('small','muted','Общий ключ'));
+    const created=el('td','device-created',device.dataset.created?formatTime(device.dataset.created):'Нет данных');
+    const report=el('td','device-last-report',device.dataset.lastReport?formatTime(device.dataset.lastReport):'Нет данных');
+    const log=el('a','','Открыть журнал');log.href=journalLink.href+'&device='+encodeURIComponent(device.dataset.deviceId);report.append(log);
+    const actions=el('td','device-actions');if(device.dataset.disabled==='true')actions.append(el('span','muted','Отозвано'));
+    for(const form of $$('form',device))actions.append(form);
+    row.append(identity,created,report,actions);body.append(row);device.remove();
+   }
+  }
   const capture=$('.user-capture',actions);if(capture)sections.panels.get('diagnostics').append(capture);else sections.panels.get('diagnostics').append(el('p','muted','Захват трафика недоступен на этом сервере.'));
   settingsForm($('form[action$="/settings"]',access),user.dialog);
   const connectionsPanel=sections.panels.get('connections');connectionsPanel.classList.add('detail-connections');
@@ -182,7 +198,7 @@
   $$('#user-stats > tr[data-user-id]').forEach(setupRow);
   const tools=el('div','table-tools'),search=el('input');search.type='search';search.placeholder='Найти пользователя…';search.setAttribute('aria-label','Найти пользователя');tools.append(search);
   const columns=el('details','columns');columns.append(el('summary','','Столбцы'));const menu=el('div','columns-menu');columns.append(menu);tools.append(columns);table.closest('.card').before(tools);
-  const stored=load('columns',{});$$('thead th',table.closest('table')).forEach((th,i)=>{if(i===0||i===5)return;const l=el('label'),c=el('input');c.type='checkbox';c.checked=stored[i]!==false;const apply=()=>{$$('tr',table.closest('table')).forEach(tr=>{if(tr.cells.length===6)tr.cells[i].hidden=!c.checked;});};c.onchange=()=>{stored[i]=c.checked;save('columns',stored);apply();};l.append(c,document.createTextNode(th.textContent));menu.append(l);apply();});
+  const stored=load('columns',{});$$(':scope > thead > tr > th',table.closest('table')).forEach((th,i)=>{if(i===0||i===5)return;const l=el('label'),c=el('input');c.type='checkbox';c.checked=stored[i]!==false;const apply=()=>{$$(':scope > thead > tr, :scope > tbody > tr',table.closest('table')).forEach(tr=>{if(tr.cells.length===6)tr.cells[i].hidden=!c.checked;});};c.onchange=()=>{stored[i]=c.checked;save('columns',stored);apply();};l.append(c,document.createTextNode(th.textContent));menu.append(l);apply();});
   search.oninput=()=>{$$('tr[data-user-id]',table).forEach(r=>{r.hidden=!$('[data-stat=name]',r).textContent.toLocaleLowerCase().includes(search.value.toLocaleLowerCase());});};
   const reopen=load('reopen',null);if(reopen){save('reopen',null);controllers.get(reopen.id)?.open(reopen.tab);}
  }
