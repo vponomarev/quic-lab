@@ -11,7 +11,7 @@ import org.json.JSONObject
 
 class LabVpnService : VpnService() {
     internal class UpdateConsentRequired: IllegalStateException("Нужно разрешение на служебную загрузку сверх LTE-бюджета")
-    internal val budgetRun by lazy { VpnBudgetRun.forContext(this) }
+    internal val budgetRun by lazy { VpnBudgetRun.sharedForContext(this) }
     private var session: VpnSession? = null
     private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
@@ -346,7 +346,6 @@ class LabVpnService : VpnService() {
                 }
             }
         }
-        private val offlineBudget = VpnBudgetRun()
 
         @Volatile internal var updateRuntime: VpnProfileUpdateRuntime? = null
         internal fun isActiveDnsExit(context:android.content.Context,id:String):Boolean = updateRuntime?.dnsExitId==id
@@ -354,9 +353,9 @@ class LabVpnService : VpnService() {
         internal fun fetchUpdate(context:android.content.Context,id:String,kind:String,output:java.io.File,
             allowOverBudget:Boolean=false,authenticatedAPKURL:String?=null) {
             val service=liveService?.takeIf {active}
-            val budget=service?.budgetRun?.current ?: synchronized(offlineBudget) {
-                offlineBudget.start(VpnBudgetSettings.limitBytes(context))
-            }
+            val owner=VpnBudgetRun.sharedForContext(context)
+            val budget=owner.acquireControl(VpnBudgetSettings.limitBytes(context))
+            try {
             val cm=context.getSystemService(ConnectivityManager::class.java)
             val networks=cm.allNetworks.mapNotNull {n->cm.getNetworkCapabilities(n)?.let {n to it}}
                 .filter { !it.second.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) }
@@ -373,6 +372,7 @@ class LabVpnService : VpnService() {
                 if(cell && !allowOverBudget && e.message?.contains("budget",true)==true) throw UpdateConsentRequired()
                 throw e
             }
+            } finally { owner.releaseControl() }
         }
         @Volatile var multipleMode = false
         @Volatile var exitEnabled = true

@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- VPN app selector must include apps without launcher activities. -->
@@ -22,6 +24,12 @@
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
             <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false" />
         </service>
+        <service android:name=".MdmService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-consented application configuration management, independent of VPN, with persistent pause control" />
+        </service>
+        <receiver android:name=".MdmBootReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.USER_UNLOCKED" /></intent-filter>
+        </receiver>
         <activity android:name=".ProfileScanActivity" android:exported="false" />
         <activity android:name=".AppSelectionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MultipleVpnActivity" android:exported="false" />

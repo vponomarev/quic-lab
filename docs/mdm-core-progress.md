@@ -12,3 +12,5 @@ Task 1 server foundation implemented in bc3669b:
 Observed missing-contract RED, then Linux race PASS (three repeats), vet PASS. Failed-write rollback, corrupt store and restart covered.
 The module is not wired into server bootstrap/admin yet; no Android MDM agent exists. Full document schema validation is Task 4; periodic pruning/bootstrap belongs to Task 6.
 Next: Task 2 independent Android transport/service and shared-budget adapter, followed by voluntary client lifecycle (Task 3).
+
+Task 2 implemented: independent Android HTTPS transport, network-loss cancellation, separate FGS, shared durable LTE accounting (including offline config/APK fetch). Native race/vet and Android build/lint pass. Dedicated Redmi API30: 18 tests PASS, including actual Wi-Fi off/on and HTTPS recovery. API34/35 FGS runtime remains unverified. Service remains test-owned until voluntary lifecycle (Task3); no production deployment.
