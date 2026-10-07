@@ -29,6 +29,15 @@ class ApplicationUpdateUiTest {
     views(a.window.decorView).filterIsInstance<Button>().first{it.text=="Обновить"&&it.visibility==View.VISIBLE}.performClick()
     assertTrue(views(a.window.decorView).filterIsInstance<TextView>().any{it.text.contains("На сервере test.example")})
     assertTrue(views(a.window.decorView).filterIsInstance<Button>().count{it.text=="Обновить"&&it.visibility==View.VISIBLE}==2)
+    val busyField=ApplicationUpdates::class.java.getDeclaredField("busy").apply{isAccessible=true}
+    val busy=busyField.get(ApplicationUpdates) as java.util.concurrent.atomic.AtomicBoolean
+    assertFalse(busy.get())
+    try{
+     busy.set(true)
+     views(a.window.decorView).filterIsInstance<Button>().first{it.text=="Проверить обновления"}.performClick()
+     assertTrue(views(a.window.decorView).filterIsInstance<Button>().any{it.text=="Проверяем…"&&!it.isEnabled})
+     assertTrue(views(a.window.decorView).filterIsInstance<android.widget.ProgressBar>().any{it.visibility==View.VISIBLE})
+    }finally{busy.set(false)}
     prefs.edit().putString("offers",offer(BuildConfig.VERSION_CODE)).commit()
     views(a.window.decorView).filterIsInstance<Button>().first{it.text=="VPN"}.performClick()
     assertFalse(views(a.window.decorView).filterIsInstance<Button>().any{it.text=="Обновить"&&it.visibility==View.VISIBLE})

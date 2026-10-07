@@ -16,6 +16,9 @@ class VpnActivity:Activity() {
  private lateinit var content:LinearLayout
  private lateinit var scroll:ScrollView
  private lateinit var updateButton:Button
+ private var updateStatus:TextView?=null
+ private var updateCheck:Button?=null
+ private var updateProgress:ProgressBar?=null
  private lateinit var heading:TextView
  private val handler=Handler(Looper.getMainLooper())
  private var page="VPN"
@@ -47,7 +50,7 @@ class VpnActivity:Activity() {
  private fun action(block:()->Unit){try{block()}catch(e:Exception){AlertDialog.Builder(this).setTitle("Не удалось выполнить действие").setMessage(e.message ?: "Повторите попытку").setPositiveButton("Понятно",null).show()}}
  private fun showPage(next:String,remember:Boolean=true){
   if(remember)positions[page]=scroll.scrollY
-  page=next;heading.text=page;content.removeAllViews();status=null;control=null;budget=null;exits=null;logs=null;radioSummary=null;metricViews.clear()
+  page=next;heading.text=page;content.removeAllViews();status=null;control=null;budget=null;exits=null;logs=null;radioSummary=null;metricViews.clear();updateStatus=null;updateCheck=null;updateProgress=null
   nav.forEach{(name,b)->b.setTextColor(if(name==page)ui.accent else ui.muted);b.alpha=if(name==page)1f else .7f}
   action{when(page){"VPN"->home();"Подключения"->connections();"Диагностика"->diagnostics();else->settings()}}
   scroll.post{scroll.scrollTo(0,positions[page] ?: 0)};refreshStatus()
@@ -106,12 +109,13 @@ class VpnActivity:Activity() {
  private fun settings(){
   val updates=ui.card(content);updates.addView(ui.text("Обновление приложения",18f,true))
   updates.addView(ui.text("Установлено: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"))
-  updates.addView(ui.text(ApplicationUpdates.status(this)))
+  updateStatus=ui.text(ApplicationUpdates.status(this)).apply{accessibilityLiveRegion=android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE};updates.addView(updateStatus)
   for(offer in ApplicationUpdates.offers(this)){
    updates.addView(ui.text("На сервере ${offer.server}: ${offer.name} (${offer.code})"))
    if(offer.code>BuildConfig.VERSION_CODE)ui.add(updates,ui.button("Обновить",true){action{startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(offer.url)))}})
   }
-  ui.add(updates,ui.button("Проверить обновления"){checkUpdates(true)})
+  updateProgress=ProgressBar(this).apply{isIndeterminate=true;contentDescription="Проверяем обновления"};updates.addView(updateProgress,LinearLayout.LayoutParams(ui.dp(28),ui.dp(28)))
+  updateCheck=ui.button("Проверить обновления"){checkUpdates(true)};ui.add(updates,updateCheck!!);refreshUpdateStatus()
 
   val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
   ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
@@ -121,9 +125,16 @@ class VpnActivity:Activity() {
  }
  private fun setText(view:TextView?,value:String){if(view?.text?.toString()!=value)view?.text=value}
  private fun checkUpdates(force:Boolean=false){
-  ApplicationUpdates.check(this,force){runOnUiThread{if(!isFinishing&&!isDestroyed){updateButton.visibility=if(ApplicationUpdates.newer(this))android.view.View.VISIBLE else android.view.View.GONE;if(page=="Настройки")showPage(page,false)}}}
+  ApplicationUpdates.check(this,force){runOnUiThread{if(!isFinishing&&!isDestroyed){updateButton.visibility=if(ApplicationUpdates.newer(this))android.view.View.VISIBLE else android.view.View.GONE;if(page=="Настройки")showPage(page,false)}}};refreshUpdateStatus()
+ }
+ private fun refreshUpdateStatus(){
+  val running=ApplicationUpdates.checking()
+  setText(updateStatus,ApplicationUpdates.status(this))
+  updateCheck?.apply{isEnabled=!running;text=if(running)"Проверяем…" else "Проверить обновления"}
+  updateProgress?.visibility=if(running)android.view.View.VISIBLE else android.view.View.GONE
  }
  private fun refreshStatus(){
+  refreshUpdateStatus()
   updateButton.visibility=if(ApplicationUpdates.newer(this))android.view.View.VISIBLE else android.view.View.GONE
 
   setText(status,if(!LabVpnService.active)"Отключено" else LabVpnService.status)
