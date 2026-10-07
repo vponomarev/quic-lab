@@ -176,3 +176,37 @@ func TestDeviceReportSummaryUsesClientReceipt(t *testing.T) {
 		t.Fatal("missing registration date")
 	}
 }
+
+func TestDiagnosticClientVersion(t *testing.T) {
+	_, w, d, token := updateFixture(t)
+	w.Config.DataDir = t.TempDir()
+	body := `{"version":1,"records":[{"id":"versioned","time":1791320000000,"kind":"event","text":"connected","app_version":"0.8.1-pre.3","app_version_code":36}]}`
+	if r := diagnosticRequest(w, d.ID, token, body); r.Code != 200 {
+		t.Fatalf("versioned upload: %d %s", r.Code, r.Body.String())
+	}
+	body = strings.ReplaceAll(body, "0.8.1-pre.3", strings.Repeat("x", 129))
+	if r := diagnosticRequest(w, d.ID, token, body); r.Code != 400 {
+		t.Fatalf("invalid version accepted: %d", r.Code)
+	}
+}
+
+func TestDiagnosticVersionDoesNotRegressOnDelayedUpload(t *testing.T) {
+	s, w, d, token := updateFixture(t)
+	w.Config.DataDir = t.TempDir()
+	for _, b := range []string{
+		`{"version":1,"records":[{"id":"new","time":2000,"kind":"event","text":"new","app_version":"new","app_version_code":36}]}`,
+		`{"version":1,"records":[{"id":"old","time":1000,"kind":"event","text":"old","app_version":"old","app_version_code":35}]}`,
+		`{"version":1,"records":[{"id":"legacy","time":3000,"kind":"event","text":"legacy"}]}`,
+	} {
+		if r := diagnosticRequest(w, d.ID, token, b); r.Code != 200 {
+			t.Fatal(r.Code, r.Body.String())
+		}
+	}
+	versions, counts := w.deviceVersions(s.List())
+	if versions[d.ID] != "new (36)" || counts["new (36)"] != 1 {
+		t.Fatalf("%v %v", versions, counts)
+	}
+	if diagnosticVersionText(diagnosticRecord{AppVersion: "old", AppVersionCode: 35, Text: "test"}) != "[App old (35)] test" {
+		t.Fatal("missing historical version")
+	}
+}

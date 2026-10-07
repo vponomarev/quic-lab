@@ -23,10 +23,12 @@ const diagnosticBodyLimit = 1 << 20
 var diagnosticDiskMu sync.Mutex
 
 type diagnosticRecord struct {
-	ID   string `json:"id"`
-	Time int64  `json:"time"`
-	Kind string `json:"kind"`
-	Text string `json:"text"`
+	AppVersion     string `json:"app_version,omitempty"`
+	AppVersionCode int    `json:"app_version_code,omitempty"`
+	ID             string `json:"id"`
+	Time           int64  `json:"time"`
+	Kind           string `json:"kind"`
+	Text           string `json:"text"`
 }
 type diagnosticBatch struct {
 	Version int                `json:"version"`
@@ -143,7 +145,7 @@ func (w *Web) clientDiagnostics(rw http.ResponseWriter, r *http.Request) {
 	}
 	seen := map[string]bool{}
 	for _, v := range batch.Records {
-		if len(v.ID) < 1 || len(v.ID) > 64 || seen[v.ID] || v.Time <= 0 || len(v.Text) > 2048 || (v.Kind != "event" && v.Kind != "summary" && v.Kind != "detail") {
+		if len(v.AppVersion) > 128 || v.AppVersionCode < 0 || (v.AppVersionCode == 0) != (v.AppVersion == "") || len(v.ID) < 1 || len(v.ID) > 64 || seen[v.ID] || v.Time <= 0 || len(v.Text) > 2048 || (v.Kind != "event" && v.Kind != "summary" && v.Kind != "detail") {
 			http.Error(rw, "Invalid record", 400)
 			return
 		}
@@ -209,6 +211,10 @@ func (w *Web) clientDiagnostics(rw http.ResponseWriter, r *http.Request) {
 			http.Error(rw, "Storage unavailable", 503)
 			return
 		}
+	}
+	if e := saveDeviceVersion(directory, batch.Records); e != nil {
+		http.Error(rw, "Storage unavailable", 503)
+		return
 	}
 	// Repeat directory sync even on identical retries after a previous sync error.
 	for _, dirPath := range []string{directory, filepath.Dir(directory), w.Config.DataDir} {
@@ -310,7 +316,7 @@ func (w *Web) clientDiagnosticsPage(rw http.ResponseWriter, r *http.Request) {
 			for _, v := range batch.Records {
 				if !seen[v.ID] {
 					seen[v.ID] = true
-					data.Rows = append(data.Rows, row{time.UnixMilli(v.Time).UTC().Format(time.RFC3339), info.ModTime().UTC().Format(time.RFC3339), v.Kind, v.Text, source})
+					data.Rows = append(data.Rows, row{time.UnixMilli(v.Time).UTC().Format(time.RFC3339), info.ModTime().UTC().Format(time.RFC3339), v.Kind, diagnosticVersionText(v), source})
 				}
 			}
 		}
@@ -416,4 +422,82 @@ func (w *Web) deviceReportTimes(users []User) map[string]string {
 		}
 	}
 	return result
+}
+
+type deviceVersion struct {
+	Name string `json:"name"`
+	Code int    `json:"code"`
+	Time int64  `json:"time"`
+}
+
+func diagnosticVersionText(v diagnosticRecord) string {
+	if v.AppVersion == "" {
+		return v.Text
+	}
+	return fmt.Sprintf("[App %s (%d)] %s", v.AppVersion, v.AppVersionCode, v.Text)
+}
+func saveDeviceVersion(directory string, records []diagnosticRecord) error {
+	path := filepath.Join(directory, "version.meta")
+	var latest deviceVersion
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		if err = json.Unmarshal(raw, &latest); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	changed := false
+	for _, v := range records {
+		if v.AppVersionCode > 0 && v.Time > latest.Time {
+			latest = deviceVersion{v.AppVersion, v.AppVersionCode, v.Time}
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	raw, err = json.Marshal(latest)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(directory, ".version-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(raw)
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+func (w *Web) deviceVersions(users []User) (map[string]string, map[string]int) {
+	result := map[string]string{}
+	counts := map[string]int{}
+	diagnosticDiskMu.Lock()
+	defer diagnosticDiskMu.Unlock()
+	for _, u := range users {
+		for _, d := range u.Devices {
+			label := "Неизвестна"
+			hash := sha256.Sum256([]byte(d.ID))
+			raw, err := os.ReadFile(filepath.Join(w.Config.DataDir, "client-diagnostics", hex.EncodeToString(hash[:]), "version.meta"))
+			var v deviceVersion
+			if err == nil && json.Unmarshal(raw, &v) == nil && v.Code > 0 {
+				label = fmt.Sprintf("%s (%d)", v.Name, v.Code)
+			}
+			result[d.ID] = label
+			if !d.Disabled && !d.Legacy {
+				counts[label]++
+			}
+		}
+	}
+	return result, counts
 }

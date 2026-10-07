@@ -14,24 +14,24 @@ internal object DiagnosticsPolicy {
  fun enabled(c:Context)=preferences(c).getBoolean("enabled",DEFAULT_ENABLED)
  fun detailed(c:Context)=preferences(c).getBoolean("detailed",false)
 }
-internal class DiagnosticsJournal(c:Context,name:String="diagnostics-v2.db"):SQLiteOpenHelper(c,name,null,1) {
- data class Record(val id:String,val time:Long,val kind:String,val text:String){
-  fun json()=JSONObject().put("id",id).put("time",time).put("kind",kind).put("text",text)
+internal class DiagnosticsJournal(c:Context,name:String="diagnostics-v2.db"):SQLiteOpenHelper(c,name,null,2) {
+ data class Record(val id:String,val time:Long,val kind:String,val text:String,val appVersion:String="",val appVersionCode:Int=0){
+  fun json()=JSONObject().put("id",id).put("time",time).put("kind",kind).put("text",text).also{if(appVersionCode>0)it.put("app_version",appVersion).put("app_version_code",appVersionCode)}
  }
  override fun onCreate(db:SQLiteDatabase){
-  db.execSQL("CREATE TABLE records(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,profile TEXT NOT NULL,target TEXT NOT NULL,time INTEGER NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,size INTEGER NOT NULL,acked INTEGER NOT NULL DEFAULT 0)")
+  db.execSQL("CREATE TABLE records(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,profile TEXT NOT NULL,target TEXT NOT NULL,time INTEGER NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,size INTEGER NOT NULL,acked INTEGER NOT NULL DEFAULT 0,app_version TEXT NOT NULL DEFAULT '',app_version_code INTEGER NOT NULL DEFAULT 0)")
   db.execSQL("CREATE INDEX pending ON records(profile,target,acked,seq)")
  }
- override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int){}
+ override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int){if(old<2){db.execSQL("ALTER TABLE records ADD COLUMN app_version TEXT NOT NULL DEFAULT ''");db.execSQL("ALTER TABLE records ADD COLUMN app_version_code INTEGER NOT NULL DEFAULT 0")}}
  @Synchronized fun append(profile:String,target:String,kind:String,text:String,time:Long=System.currentTimeMillis()){
   require(kind in listOf("event","summary","detail"))
   var bounded=text.take(1800);while(bounded.toByteArray(Charsets.UTF_8).size>2000)bounded=bounded.dropLast(1)
-  val v=ContentValues().apply {put("id",UUID.randomUUID().toString());put("profile",profile);put("target",target);put("time",time);put("kind",kind);put("text",bounded);put("size",bounded.toByteArray().size+256)}
+  val v=ContentValues().apply {put("id",UUID.randomUUID().toString());put("profile",profile);put("target",target);put("time",time);put("kind",kind);put("text",bounded);put("app_version",BuildConfig.VERSION_NAME);put("app_version_code",BuildConfig.VERSION_CODE);put("size",bounded.toByteArray().size+256)}
   writableDatabase.insertOrThrow("records",null,v)
  }
  private fun query(where:String,args:Array<String>,limit:Int):List<Record>{
   val result=mutableListOf<Record>()
-  readableDatabase.rawQuery("SELECT id,time,kind,text FROM records $where LIMIT $limit",args).use{while(it.moveToNext()) result.add(Record(it.getString(0),it.getLong(1),it.getString(2),it.getString(3)))}
+  readableDatabase.rawQuery("SELECT id,time,kind,text,app_version,app_version_code FROM records $where LIMIT $limit",args).use{while(it.moveToNext()) result.add(Record(it.getString(0),it.getLong(1),it.getString(2),it.getString(3),it.getString(4),it.getInt(5)))}
   return result
  }
  @Synchronized fun pending(profile:String,target:String)=query("WHERE profile=? AND target=? AND acked=0 ORDER BY seq",arrayOf(profile,target),128)

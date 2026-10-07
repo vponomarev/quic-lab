@@ -15,6 +15,7 @@ class VpnActivity:Activity() {
  private lateinit var ui:ClientUi
  private lateinit var content:LinearLayout
  private lateinit var scroll:ScrollView
+ private lateinit var updateButton:Button
  private lateinit var heading:TextView
  private val handler=Handler(Looper.getMainLooper())
  private var page="VPN"
@@ -37,7 +38,7 @@ class VpnActivity:Activity() {
   super.onCreate(savedInstanceState);Diagnostics.init(applicationContext);ui=ClientUi(this)
   page=savedInstanceState?.getString("page") ?: "VPN"
   for(name in listOf("VPN","Подключения","Диагностика","Настройки")) positions[name]=savedInstanceState?.getInt("scroll_$name") ?: 0
-  val root=ui.column();heading=ui.text(page,25f,true).apply{setPadding(ui.dp(20),ui.dp(14),ui.dp(20),ui.dp(12))};root.addView(heading)
+  val root=ui.column();heading=ui.text(page,25f,true).apply{setPadding(ui.dp(20),ui.dp(14),ui.dp(20),ui.dp(12))};val top=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL;setPadding(0,0,ui.dp(16),0)};top.addView(heading,LinearLayout.LayoutParams(0,-2,1f));updateButton=ui.button("Обновить",true){showPage("Настройки")};top.addView(updateButton);root.addView(top)
   content=ui.column().apply{setPadding(ui.dp(16),0,ui.dp(16),ui.dp(20))};scroll=ScrollView(this).apply{isFillViewport=true;addView(content)};root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
   val bottom=LinearLayout(this).apply{setPadding(ui.dp(6),ui.dp(6),ui.dp(6),ui.dp(6))}
   for(name in listOf("VPN","Подключения","Диагностика","Настройки")){val b=ui.button(name){showPage(name)}.apply{textSize=10f;setSingleLine();setPadding(ui.dp(2),ui.dp(8),ui.dp(2),ui.dp(8))};nav[name]=b;bottom.addView(b,LinearLayout.LayoutParams(0,ui.dp(54),1f))}
@@ -102,6 +103,15 @@ class VpnActivity:Activity() {
   content.addView(ui.text("Последние события",16f,true));logs=ui.text("");content.addView(logs)
  }
  private fun settings(){
+  val updates=ui.card(content);updates.addView(ui.text("Обновление приложения",18f,true))
+  updates.addView(ui.text("Установлено: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"))
+  updates.addView(ui.text(ApplicationUpdates.status(this)))
+  for(offer in ApplicationUpdates.offers(this)){
+   updates.addView(ui.text("На сервере ${offer.server}: ${offer.name} (${offer.code})"))
+   if(offer.code>BuildConfig.VERSION_CODE)ui.add(updates,ui.button("Обновить",true){action{startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(offer.url)))}})
+  }
+  ui.add(updates,ui.button("Проверить обновления"){checkUpdates(true)})
+
   val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
   ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
   ui.add(card,ui.button("Разрешить сведения о сети"){requestPermissions(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION,android.Manifest.permission.ACCESS_FINE_LOCATION),21)})
@@ -109,7 +119,12 @@ class VpnActivity:Activity() {
   val about=ui.card(content);about.addView(ui.text("О приложении",18f,true));about.addView(ui.text("Версия ${BuildConfig.VERSION_NAME}\nIPv4 · IPv6 для трафика VPN блокируется\nЗакрытие экрана не отключает работающий VPN."))
  }
  private fun setText(view:TextView?,value:String){if(view?.text?.toString()!=value)view?.text=value}
+ private fun checkUpdates(force:Boolean=false){
+  ApplicationUpdates.check(this,force){runOnUiThread{if(!isFinishing&&!isDestroyed){updateButton.visibility=if(ApplicationUpdates.newer(this))android.view.View.VISIBLE else android.view.View.GONE;if(page=="Настройки")showPage(page,false)}}}
+ }
  private fun refreshStatus(){
+  updateButton.visibility=if(ApplicationUpdates.newer(this))android.view.View.VISIBLE else android.view.View.GONE
+
   setText(status,if(!LabVpnService.active)"Отключено" else LabVpnService.status)
   setText(control,if(LabVpnService.active)"Отключить" else "Подключить")
   setText(budget,VpnDashboardText.budget(VpnDashboardEvents.budget()))
@@ -130,7 +145,7 @@ class VpnActivity:Activity() {
    setText(v,VpnDashboardText.card(card,names[card.exitId] ?: "Подключение",SystemClock.elapsedRealtime(),VpnRttSettings.interval(this),"",labels))
   }
  }
- override fun onResume(){super.onResume();showPage(page,false);handler.removeCallbacks(ticker);handler.post(ticker);radios=RadioMonitor(this,{wifi,cell->wifiRadio=wifi;cellRadio=cell;refreshStatus()},{_,_->}).also{it.start()}}
+ override fun onResume(){super.onResume();checkUpdates();showPage(page,false);handler.removeCallbacks(ticker);handler.post(ticker);radios=RadioMonitor(this,{wifi,cell->wifiRadio=wifi;cellRadio=cell;refreshStatus()},{_,_->}).also{it.start()}}
  override fun onPause(){positions[page]=scroll.scrollY;handler.removeCallbacks(ticker);radios?.close();radios=null;super.onPause()}
  override fun onSaveInstanceState(out:Bundle){out.putString("page",page);positions[page]=scroll.scrollY;positions.forEach{(name,pos)->out.putInt("scroll_$name",pos)};super.onSaveInstanceState(out)}
  @Deprecated("Legacy back dispatch") override fun onBackPressed(){if(page!="VPN")showPage("VPN") else super.onBackPressed()}

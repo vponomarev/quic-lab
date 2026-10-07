@@ -147,7 +147,7 @@ func (c serverConfig) validate() error {
 			return errors.New("vpn_sni_names requires exact TLS hostnames")
 		}
 	}
-	if c.Capabilities.ControlVersion < 1 || c.Capabilities.DataVersion < 1 || c.Capabilities.MinAndroidVersionCode < 0 {
+	if c.Capabilities.ControlVersion < 1 || c.Capabilities.DataVersion < 1 || c.Capabilities.MinAndroidVersionCode < 0 || c.Capabilities.AndroidVersionCode < 0 || len(c.Capabilities.AndroidVersionName) > 128 {
 		return errors.New("invalid capabilities versions")
 	}
 	if c.BondDisconnectGraceSeconds < 0 || c.BondDisconnectGraceSeconds > 3600 {

@@ -122,6 +122,7 @@
     const row=el('tr','device device-row');Object.assign(row.dataset,device.dataset);
     const identity=el('td','device-identity');identity.append(el('strong','',$('strong',device).textContent),el('small','muted','ID: '+device.dataset.deviceId.slice(0,8)));
     const address=$('code',device);if(address)identity.append(el('code','',address.textContent));
+    identity.append(el('small','muted','Версия: '+(device.dataset.appVersion||'Неизвестна')));
     if(device.dataset.legacy==='true')identity.append(el('small','muted','Общий ключ'));
     const created=el('td','device-created',device.dataset.created?formatTime(device.dataset.created):'Нет данных');
     const report=el('td','device-last-report',device.dataset.lastReport?formatTime(device.dataset.lastReport):'Нет данных');

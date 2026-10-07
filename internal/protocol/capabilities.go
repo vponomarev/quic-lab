@@ -17,6 +17,8 @@ type Capabilities struct {
 	DataVersion           int      `json:"data_version"`
 	MinAndroidVersionCode int      `json:"min_android_version_code"`
 	Features              []string `json:"features,omitempty"`
+	AndroidVersionCode    int      `json:"android_version_code,omitempty"`
+	AndroidVersionName    string   `json:"android_version_name,omitempty"`
 	APKURL                string   `json:"apk_url,omitempty"`
 	APKSHA256             string   `json:"apk_sha256,omitempty"`
 }
