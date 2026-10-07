@@ -4,6 +4,24 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.json.JSONObject
 class ApplicationUpdatesTest {
+ @Test fun updateCheckUsesInternetInsteadOfImsOnRealPhone(){
+  val c=InstrumentationRegistry.getInstrumentation().targetContext
+  org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveUpdates")=="true")
+  val done=java.util.concurrent.CountDownLatch(1)
+  ApplicationUpdates.check(c,true){done.countDown()}
+  assertTrue(done.await(60,java.util.concurrent.TimeUnit.SECONDS))
+  val status=ApplicationUpdates.status(c)
+  assertFalse(status,status.contains("DNS"))
+  assertTrue(status,ApplicationUpdates.offers(c).any{it.server=="quic-demo.vpnc.ru"})
+ }
+
+ @Test fun validatedImsIsNotAnInternetNetwork(){
+  assertFalse(ApplicationUpdates.usableNetwork(false,true,false,false)) // operator IMS
+  assertTrue(ApplicationUpdates.usableNetwork(true,true,true,false)) // public LTE / Wi-Fi
+  assertFalse(ApplicationUpdates.usableNetwork(true,true,true,true)) // VPN
+  assertFalse(ApplicationUpdates.usableNetwork(true,false,true,false)) // no validated internet
+  assertFalse(ApplicationUpdates.usableNetwork(true,true,false,false)) // restricted network
+ }
  @Test fun optionalVersionsAndHttpsOnly(){
   assertNull(ApplicationUpdates.parse("p","s",JSONObject()))
   val caps=JSONObject().put("android_version_code",36).put("android_version_name","0.8.1-pre.3").put("apk_url","https://server.test/lab/download/quic-lab.apk")

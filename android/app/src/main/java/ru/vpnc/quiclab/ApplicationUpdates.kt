@@ -43,7 +43,7 @@ internal object ApplicationUpdates {
   executor.execute {
    try {
     val cm=c.getSystemService(ConnectivityManager::class.java)
-    val network=cm.allNetworks.firstOrNull{n->cm.getNetworkCapabilities(n)?.let{!it.hasTransport(NetworkCapabilities.TRANSPORT_VPN)&&it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}==true}
+    val network=cm.allNetworks.filter{n->cm.getNetworkCapabilities(n)?.let{usableNetwork(it)}==true}.sortedBy{n->if(cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true)0 else 1}.firstOrNull()
       ?:error("Нет доступной сети")
     val result=JSONArray();var checked=0;val failures=mutableListOf<String>()
     for(profile in VpnProfiles.list(c)){
@@ -69,6 +69,13 @@ internal object ApplicationUpdates {
    finally{busy.set(false);done()}
   }
  }
+ // IMS can be VALIDATED while offering neither public internet nor DNS.
+ internal fun usableNetwork(caps:NetworkCapabilities)=usableNetwork(
+  caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+  caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+  caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED),
+  caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))
+ internal fun usableNetwork(internet:Boolean,validated:Boolean,unrestricted:Boolean,vpn:Boolean)=internet&&validated&&unrestricted&&!vpn
  private fun checkTime()=java.time.Instant.now().atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm:ss"))
  private class UpdateHttpException(val code:Int):Exception()
  internal fun failureReason(e:Exception):String=when(e){
