@@ -26,3 +26,7 @@
 
 Найденный сценарий OneKeyClean предотвращён системным разрешением на проверенном Redmi; долгосрочное подтверждение на основном Xiaomi ещё требуется. Гарантия восстановления после аварийного завершения процесса на MIUI не достигнута: исследовать отдельно, сохраняя ручное отключение и отсутствие запуска VPN после загрузки телефона. Автоматический перезапуск создаёт новый период счётчика LTE, как полный запуск службы; перенос бюджета через гибель процесса не реализован и должен быть оценён в этом lifecycle gate.
 Независимое узкое ревью: важных регрессий не найдено. Тест проверяет системную restart policy и stop, а не реальное восстановление/revoke/failed-start; эти различия сохранены в отчёте. SHA256 pre.11 APK: f3698ef920fb4bccee58db4bdd9bcbe0ea8ed724a1ea33f01fe86520159b3234.
+
+## Update 2026-10-07
+
+The historical LTE-reset limitation above is superseded by durable checkpoints. Actual SIGKILL + activity reopening, preserved nonzero usage and HTTPS/UDP probes are verified; MIUI unattended restart remains limited. See [release reliability evidence](superpowers/plans/2026-10-07-release-reliability.md).

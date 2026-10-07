@@ -220,3 +220,7 @@ ContentIntent уведомления VPN теперь открывает VpnActi
 ### 2026-10-04 — промежуточная фаза 1″ / 0.8.0
 
 По решению владельца текущее состояние выделено в промежуточную фазу 1″. Полная фаза 1 остаётся открытой: B4/E2/E5 и перечисленные выше ограничения не закрываются номером релиза. Сервер и APK обновлены до 0.8.0, Android versionCode33. Состав и ограничения: [release-v0.8.0.md](release-v0.8.0.md); фактическая финальная регрессия и квалификация race/checkptr: [отчёт](release-v0.8.0-regression.md). MDM остаётся отложен до полного завершения стадий VPN-сервера.
+
+## Release reliability follow-up — 2026-10-07
+
+[Tasks 1 and 2 evidence](superpowers/plans/2026-10-07-release-reliability.md): durable LTE accounting and same-boot foreground recovery implemented and tested. Background restart remains subject to MIUI. Road QUIC stall with live RTT remains open: historical client evidence misses the incident; same-path MTU experiment does not match the symptom. Phase 1 and release gates are not closed.

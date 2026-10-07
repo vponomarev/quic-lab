@@ -11,7 +11,7 @@ import org.json.JSONObject
 
 class LabVpnService : VpnService() {
     internal class UpdateConsentRequired: IllegalStateException("Нужно разрешение на служебную загрузку сверх LTE-бюджета")
-    internal val budgetRun = VpnBudgetRun()
+    internal val budgetRun by lazy { VpnBudgetRun.forContext(this) }
     private var session: VpnSession? = null
     private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
@@ -34,7 +34,7 @@ class LabVpnService : VpnService() {
         }
         if (intent?.action == "stop") {
             Diagnostics.event("vpn", JSONObject().put("event", "stop_requested"))
-            shutdown()
+            shutdown(clearBudget=true)
             val local = getSharedPreferences("vpn_lifecycle", MODE_PRIVATE)
             if (!local.getBoolean("stop_notice_shown", false)) {
                 android.widget.Toast.makeText(this, "VPN остановлен. Блокировка снята: приложения могут подключаться напрямую.", android.widget.Toast.LENGTH_LONG).show()
@@ -52,6 +52,7 @@ class LabVpnService : VpnService() {
             return restartPolicy()
         }
         if (session != null || multiple != null) return restartPolicy()
+        if(intent==null && !budgetRun.shouldResume())return restartPolicy()
         Diagnostics.event("vpn", JSONObject().put("event", if (intent == null) "system_restart" else "start_requested"))
         resetMetrics(VpnProfiles.preferences(this).getString("transport","quic")!!)
         transitEnabled = !VpnProfiles.preferences(this).getString("transit_endpoint", "").isNullOrBlank()
@@ -75,6 +76,7 @@ class LabVpnService : VpnService() {
         try {
             // One shared meter survives every exit reconnect in this VPN run.
             val runBudget = budgetRun.start(VpnBudgetSettings.limitBytes(this))
+            if(budgetRun.restored)Diagnostics.event("vpn",JSONObject().put("event","budget_restored").put("snapshot",JSONObject(runBudget.snapshot())))
             val dashboardRunId=JSONObject(runBudget.snapshot()).getString("epoch")
             if (VpnProfiles.multiple(this)) {
                 val plan=MultipleVpnPlan.load(this)
@@ -82,6 +84,7 @@ class LabVpnService : VpnService() {
                 tun=Builder().setSession("QUIC Lab · multiple").setMtu(1280).addAddress("10.254.254.1",32)
                     .addRoute("0.0.0.0",0).addDnsServer(plan.dns).addDisallowedApplication(packageName)
                     .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
+                budgetRun.setResumeEligible(true)
                 active=true; multipleMode=true;transport="multiple";exitEnabled=false;status="Несколько VPN · ${plan.profiles.size} профилей"
                 multiple=MultipleVpnController(this,plan,tun!!.fd,runBudget)
                 updateRuntime=VpnProfileUpdateRuntime(plan.dnsProfile,runBudget,requireNotNull(tun)) {id-> handler.post {runCatching {multiple?.restart(id)}.onFailure {MultipleVpnState.record(id,JSONObject().put("event","operation_failed"))}}}
@@ -224,6 +227,7 @@ class LabVpnService : VpnService() {
             exits = controller
             controller.start(exitId)
             session = controller.session(exitId)
+            budgetRun.setResumeEligible(true)
             active = true
             updateRuntime=VpnProfileUpdateRuntime(exitId,runBudget,requireNotNull(tun)) {id->handler.post {
                 if(id==exitId && active) try {singleRouter?.blockExit(id);starting=false;controller.start(id);session=controller.session(id);status="Переподключаем обновлённый выход…"}
@@ -233,6 +237,7 @@ class LabVpnService : VpnService() {
         } catch (e: Exception) {
             status = "Ошибка: ${e.message}"
             Diagnostics.event("vpn", JSONObject().put("event","start_failed").put("error",e.toString()))
+            runCatching{budgetRun.setResumeEligible(false)}
             shutdown()
             stopSelf()
         }
@@ -250,6 +255,7 @@ class LabVpnService : VpnService() {
     private val notificationTick = object : Runnable {
         override fun run() {
             if (!active) return
+            runCatching{budgetRun.checkpoint()}.onFailure{Diagnostics.event("vpn",JSONObject().put("event","budget_checkpoint_failed"))}
             getSystemService(NotificationManager::class.java).notify(42, vpnNotification())
             handler.postDelayed(this, 2000)
         }
@@ -275,12 +281,12 @@ class LabVpnService : VpnService() {
 
     override fun onRevoke() {
         Diagnostics.event("vpn", JSONObject().put("event","permission_revoked"))
-        shutdown()
+        shutdown(clearBudget=true)
         stopSelf()
     }
 
     // Android may keep VpnService bound after stopSelf; release the VPN explicitly.
-    private fun shutdown() {
+    private fun shutdown(clearBudget:Boolean=false) {
         if (active) Diagnostics.event("vpn", JSONObject().put("event","stopped"))
         updateRuntime=null
         active = false
@@ -298,7 +304,7 @@ class LabVpnService : VpnService() {
         exits = null
         session = null
         VpnDashboardEvents.clearRun()
-        budgetRun.stop()
+        if(clearBudget)budgetRun.stop() else runCatching{budgetRun.release()}.onFailure{Diagnostics.event("vpn",JSONObject().put("event","budget_checkpoint_failed"))}
         runCatching { tun?.close() }
         tun = null
         starting = false

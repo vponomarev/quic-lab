@@ -46,6 +46,7 @@ class VpnActivity:Activity() {
   val bottom=LinearLayout(this).apply{setPadding(ui.dp(6),ui.dp(6),ui.dp(6),ui.dp(6))}
   for(name in listOf("VPN","Подключения","Диагностика","Настройки")){val b=ui.button(name){showPage(name)}.apply{textSize=10f;setSingleLine();setPadding(ui.dp(2),ui.dp(8),ui.dp(2),ui.dp(8))};nav[name]=b;bottom.addView(b,LinearLayout.LayoutParams(0,ui.dp(54),1f))}
   root.addView(bottom);ui.install(root);showPage(page,false)
+  if(!LabVpnService.active && VpnBudgetRun.forContext(this).shouldResume() && VpnService.prepare(this)==null)action{startForegroundService(Intent(this,LabVpnService::class.java))}
  }
  private fun action(block:()->Unit){try{block()}catch(e:Exception){AlertDialog.Builder(this).setTitle("Не удалось выполнить действие").setMessage(e.message ?: "Повторите попытку").setPositiveButton("Понятно",null).show()}}
  private fun showPage(next:String,remember:Boolean=true){

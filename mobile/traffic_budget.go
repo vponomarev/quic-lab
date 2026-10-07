@@ -98,3 +98,39 @@ func (b *TrafficBudget) discardPendingGrant(id string) {
 	delete(b.grants, id)
 	b.transferMu.Unlock()
 }
+
+// RestoreTrafficBudget resumes committed usage. In-flight reservations die with
+// the process; one-shot service-transfer grants are deliberately not restored.
+func RestoreTrafficBudget(raw string) (*TrafficBudget, error) {
+	var s trafficbudget.Snapshot
+	if e := json.Unmarshal([]byte(raw), &s); e != nil {
+		return nil, e
+	}
+	if s.Epoch == "" || s.Limit > uint64(1<<63-1) || s.Used > uint64(1<<63-1) {
+		return nil, errors.New("invalid budget checkpoint")
+	}
+	var sum uint64
+	for k, n := range s.ByClass {
+		switch k {
+		case trafficbudget.User, trafficbudget.Control, trafficbudget.Copy, trafficbudget.Config, trafficbudget.APK:
+		default:
+			return nil, errors.New("invalid budget class")
+		}
+		if n > s.Used-sum {
+			return nil, errors.New("invalid budget totals")
+		}
+		sum += n
+	}
+	b, e := NewTrafficBudget(s.Epoch, int64(s.Limit))
+	if e != nil {
+		return nil, e
+	}
+	for k, n := range s.ByClass {
+		b.ledger.ObserveReceived(n, k)
+	}
+	b.ledger.ObserveReceived(s.Used-sum, trafficbudget.User)
+	if s.Blocked {
+		b.meter.Block()
+	}
+	return b, nil
+}

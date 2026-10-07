@@ -73,3 +73,7 @@ func (m *Meter) Reserve(n uint64, class Class) (uint64, bool) {
 }
 func (m *Meter) Commit(ticket, n uint64)       { m.Ledger.Commit(ticket, n); m.Check() }
 func (m *Meter) Receive(n uint64, class Class) { m.Ledger.ObserveReceived(n, class); m.Check() }
+
+// Block restores a previously exhausted meter, including a final packet that
+// did not fit while used was still slightly below the configured limit.
+func (m *Meter) Block(){m.stop()}

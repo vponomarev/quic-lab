@@ -50,7 +50,7 @@ internal object VpnDashboardText {
     fun budget(snapshot: JSONObject?): String {
         if (snapshot == null) return "Общий LTE бюджет: VPN выключен"
         val used = bytes(snapshot.optLong("used")); val limit = snapshot.optLong("limit")
-        return "LTE за запуск: $used · ${if (limit == 0L) "без ограничения" else "лимит ${bytes(limit)}"}" +
+        return "LTE за период: $used · ${if (limit == 0L) "без ограничения" else "лимит ${bytes(limit)}"}" +
             if (snapshot.optBoolean("blocked")) "\nЛимит исчерпан · остаётся Wi-Fi" else ""
     }
 }
