@@ -236,18 +236,48 @@ func (w *Web) clientDiagnosticsPage(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type row struct{ Time, Received, Kind, Text, Source string }
-	type device struct{ ID, Name string }
+	type device struct{ ID, Name, UserID, UserName string }
 	data := struct {
-		Base, Selected string
-		Devices        []device
-		Rows           []row
-	}{Base: w.base, Selected: r.URL.Query().Get("device")}
+		Base, Selected, UserID, UserName, SelectedName string
+		Devices                                        []device
+		Rows                                           []row
+	}{Base: w.base, Selected: r.URL.Query().Get("device"), UserID: r.URL.Query().Get("user")}
 	w.Store.mu.Lock()
+	validUser := data.UserID == ""
+	if u, ok := w.Store.state.Users[data.UserID]; ok {
+		validUser = true
+		data.UserName = u.Name
+	}
+	validDevice := data.Selected == ""
 	for id, d := range w.Store.state.Devices {
-		data.Devices = append(data.Devices, device{id, d.Name})
+		if data.UserID != "" && d.UserID != data.UserID {
+			continue
+		}
+		name := w.Store.state.Users[d.UserID].Name
+		if name == "" {
+			name = d.UserID
+		}
+		data.Devices = append(data.Devices, device{id, d.Name, d.UserID, name})
+		if id == data.Selected {
+			validDevice = true
+			data.SelectedName = name + " · " + d.Name
+		}
 	}
 	w.Store.mu.Unlock()
-	sort.Slice(data.Devices, func(i, j int) bool { return data.Devices[i].Name < data.Devices[j].Name })
+	if !validUser || !validDevice {
+		http.NotFound(rw, r)
+		return
+	}
+	sort.Slice(data.Devices, func(i, j int) bool {
+		a, b := data.Devices[i], data.Devices[j]
+		if a.UserName != b.UserName {
+			return a.UserName < b.UserName
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.ID < b.ID
+	})
 	diagnosticDiskMu.Lock()
 	e := w.pruneDiagnostics(0)
 	if e == nil && data.Selected != "" {
@@ -292,7 +322,7 @@ func (w *Web) clientDiagnosticsPage(rw http.ResponseWriter, r *http.Request) {
 	}
 	sort.SliceStable(data.Rows, func(i, j int) bool { return data.Rows[i].Time > data.Rows[j].Time })
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-	template.Must(template.New("diagnostics").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>Журналы клиентов</title><link rel="stylesheet" href="{{.Base}}ui.css"><main style="padding:24px"><a href="{{.Base}}users">Пользователи</a><h1>Журналы клиентов</h1><p>Время UTC. Последние 2000 событий выбранного устройства; время приёма помогает сопоставить задержанную доставку. Содержимое прислал клиент.</p><form method="get"><select name="device"><option value="">Выберите устройство</option>{{range .Devices}}<option value="{{.ID}}" {{if eq $.Selected .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button>Показать</button></form><table><thead><tr><th>Событие UTC</th><th>Принято UTC</th><th>Источник</th><th>Тип</th><th>Данные</th></tr></thead><tbody>{{range .Rows}}<tr><td>{{.Time}}</td><td>{{.Received}}</td><td>{{.Source}}</td><td>{{.Kind}}</td><td style="white-space:pre-wrap;overflow-wrap:anywhere">{{.Text}}</td></tr>{{end}}</tbody></table></main></html>`)).Execute(rw, data)
+	template.Must(template.New("diagnostics").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>Журналы клиентов</title><link rel="stylesheet" href="{{.Base}}ui.css"><main style="padding:24px"><a href="{{.Base}}users">Пользователи</a><h1>Журналы клиентов{{if .UserID}} · {{.UserName}}{{end}}</h1>{{if .UserID}}<p><a href="{{.Base}}diagnostics/clients">Все пользователи</a></p>{{end}}{{if .SelectedName}}<h2>{{.SelectedName}}</h2>{{end}}<p>Время UTC. Последние 2000 событий выбранного устройства; время приёма помогает сопоставить задержанную доставку. Содержимое прислал клиент.</p><form method="get">{{if .UserID}}<input type="hidden" name="user" value="{{.UserID}}">{{end}}<select name="device"><option value="">Выберите устройство</option>{{range .Devices}}<option value="{{.ID}}" {{if eq $.Selected .ID}}selected{{end}}>{{.UserName}} · {{.Name}} · {{.ID}}</option>{{end}}</select><button>Показать</button></form>{{if .UserID}}<h2>Устройства пользователя</h2><ul>{{range .Devices}}<li><a href="{{$.Base}}diagnostics/clients?user={{$.UserID}}&amp;device={{.ID}}">{{.Name}}</a> <small>{{.ID}}</small></li>{{else}}<li>Устройств пока нет.</li>{{end}}</ul>{{end}}<table><thead><tr><th>Событие UTC</th><th>Принято UTC</th><th>Источник</th><th>Тип</th><th>Данные</th></tr></thead><tbody>{{range .Rows}}<tr><td>{{.Time}}</td><td>{{.Received}}</td><td>{{.Source}}</td><td>{{.Kind}}</td><td style="white-space:pre-wrap;overflow-wrap:anywhere">{{.Text}}</td></tr>{{end}}</tbody></table></main></html>`)).Execute(rw, data)
 }
 
 func (w *Web) StartDiagnosticsMaintenance(ctx context.Context) {

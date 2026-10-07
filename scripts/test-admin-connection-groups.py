@@ -9,6 +9,8 @@ with sync_playwright() as p:
  b=p.chromium.launch(headless=True,executable_path='/root/.cache/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell',args=['--no-sandbox'])
  page=b.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
  page.set_content(fixture);page.add_script_tag(content=(root/'internal/admin/ui.js').read_text())
+ links=page.locator('a',has_text='Журналы устройств пользователя');assert links.count()==2
+ for link in links.all(): assert link.get_attribute('href')=='diagnostics/clients?user=test'
  def update(values):
   page.evaluate('(connections)=>AdminUI.update(document.querySelector("[data-user-id]"),{connections})',values)
  peers=[f'vless · 198.51.100.1:{1000+i}\nС 04.10 10:00:00 UTC' for i in range(18)]

@@ -121,3 +121,35 @@ func TestDiagnosticsRetryMustResyncDirectory(t *testing.T) {
 		t.Fatalf("retry skipped parent directory sync: %d", count)
 	}
 }
+
+func TestDiagnosticsUserNavigation(t *testing.T) {
+	s, w, d, _ := updateFixture(t)
+	w.Config.DataDir = t.TempDir()
+	u := s.state.Users[d.UserID]
+	u.Name = "Owner <Alice>"
+	s.state.Users[d.UserID] = u
+	s.state.Users["other"] = User{ID: "other", Name: "Other owner"}
+	s.state.Devices["other-device"] = Device{ID: "other-device", UserID: "other", Name: "Foreign phone"}
+	w.sessions["nav"] = session{Until: time.Now().Add(time.Hour)}
+	get := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.AddCookie(&http.Cookie{Name: "quiclab_admin", Value: "nav"})
+		rw := httptest.NewRecorder()
+		w.Handler().ServeHTTP(rw, r)
+		return rw
+	}
+	all := get("/diagnostics/clients")
+	if all.Code != 200 || !strings.Contains(all.Body.String(), "Owner &lt;Alice&gt;") || !strings.Contains(all.Body.String(), "Other owner") {
+		t.Fatal("missing escaped user labels")
+	}
+	own := get("/diagnostics/clients?user=" + d.UserID)
+	if own.Code != 200 || strings.Contains(own.Body.String(), "Foreign phone") || !strings.Contains(own.Body.String(), d.ID) || !strings.Contains(own.Body.String(), `name="user"`) {
+		t.Fatal("user filter/navigation missing")
+	}
+	if get("/diagnostics/clients?user="+d.UserID+"&device=other-device").Code != 404 {
+		t.Fatal("device outside selected user")
+	}
+	if get("/diagnostics/clients?user=missing").Code != 404 {
+		t.Fatal("unknown user")
+	}
+}

@@ -99,7 +99,7 @@
   if(toggle){toggle.classList.add('subtle-danger');access.append(toggle);}
   const deletion=$('form[action$="/delete"]',access);
   const danger=el('div','danger-actions');if(toggle){toggle.classList.remove('subtle-danger');$('button',toggle).textContent=toggle.elements.disabled.value==='true'?'Приостановить доступ':'Возобновить доступ';danger.append(toggle);}if(deletion)danger.append(deletion);$$('hr',access).forEach(h=>h.remove());access.append(danger);
-  const journalLink=el('a','','Журналы клиентов');journalLink.href='diagnostics/clients';sections.panels.get('diagnostics').append(journalLink);
+  const journalLink=el('a','','Журналы устройств пользователя');journalLink.href='diagnostics/clients?user='+encodeURIComponent(row.dataset.userId);sections.panels.get('diagnostics').append(journalLink);overview.append(journalLink.cloneNode(true));
   const capture=$('.user-capture',actions);if(capture)sections.panels.get('diagnostics').append(capture);else sections.panels.get('diagnostics').append(el('p','muted','Захват трафика недоступен на этом сервере.'));
   settingsForm($('form[action$="/settings"]',access),user.dialog);
   const connectionsPanel=sections.panels.get('connections');connectionsPanel.classList.add('detail-connections');
