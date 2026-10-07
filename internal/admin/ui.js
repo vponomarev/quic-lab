@@ -165,9 +165,24 @@
   user.body.querySelector('.client-name').after(quick);
   const invites=sections.panels.get('enrollments'),intro=el('div','invitation-intro');intro.append(el('h3','','Регистрация в QUIC Lab'),el('p','field-note','Эти приглашения добавляют устройства в приложение QUIC Lab. Для стороннего клиента используйте QR VLESS или QR AmneziaWG над вкладками.'),el('p','field-note','Старый QR повторно показать нельзя: сервер хранит только хеш его токена. Создайте новое приглашение и сохраните QR после создания. Старые приглашения продолжат действовать до истечения срока или отзыва.'));
   const createInvite=button('Создать новое приглашение','');createInvite.onclick=()=>openConnect('app');intro.append(createInvite);invites.prepend(intro);
+  const help=el('details','invitation-help');help.append(el('summary','','Как работают приглашения'));
+  $$('p',intro).forEach(p=>help.append(p));intro.append(help);
+  const entries=$$('.enrollment-item',invites);
+  if(entries.length){
+   const wrap=el('div','device-table-scroll'),list=el('table','enrollment-table'),head=el('thead'),header=el('tr'),body=el('tbody');
+   ['Действует до','Регистрации','Статус','Действия'].forEach(label=>header.append(el('th','',label)));head.append(header);list.append(head,body);wrap.append(list);invites.append(wrap);
+   entries.sort((a,b)=>(b.dataset.expires||'').localeCompare(a.dataset.expires||''));
+   for(const entry of entries){
+    const d=entry.dataset,expired=new Date(d.expires).getTime()<=Date.now(),exhausted=Number(d.used)>=Number(d.limit);
+    const state=d.revoked==='true'?'Отозвано':expired?'Истекло':exhausted?'Исчерпано':'Действует';
+    const tr=el('tr'),action=el('td');
+    for(const form of $$('form',entry)){$('button',form).textContent='Отозвать';action.append(form);}
+    tr.append(el('td','',formatTime(d.expires)),el('td','',d.used+' / '+d.limit),el('td',state==='Действует'?'':'muted',state),action);body.append(tr);entry.remove();
+   }
+  }
 
   actions.append(connectButton,settingsButton,more,user.dialog,connect.dialog);
-  $$('form[action$="/vless-qr"]',user.dialog).forEach(f=>{const result=el('div','qr-result');f.after(result);qrForm(f,user.dialog,result);});
+  $$('form[action$="/vless-qr"],form[action$="/awg-qr"]',user.dialog).forEach(f=>{const result=el('div','qr-result');f.after(result);qrForm(f,user.dialog,result);});
   $$('form',user.dialog).filter(f=>['disable','revoke','delete'].includes(formAction(f))||formAction(f)==='toggle').forEach(f=>f.addEventListener('submit',e=>{
    if(formAction(f)==='toggle'&&f.elements.disabled.value==='false')return;
    const target=f.closest('.device')?.querySelector('strong')?.textContent || openUser.textContent;
