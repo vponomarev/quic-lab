@@ -88,6 +88,7 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /enroll", w.enroll)
 	m.HandleFunc("GET /api/v1/devices/{id}/config", w.deviceConfig)
 	m.HandleFunc("POST /enrollments/revoke", w.revokeEnrollment)
+	m.HandleFunc("POST /enrollments/show", w.showEnrollment)
 	m.HandleFunc("POST /echo/awg", func(rw http.ResponseWriter, r *http.Request) {
 		if w.PublicAWG == nil {
 			http.NotFound(rw, r)
@@ -452,3 +453,23 @@ func (w *Web) page(rw http.ResponseWriter, v view) {
 }
 
 var page = template.Must(template.New("page").Parse(pageHTML))
+
+func (w *Web) showEnrollment(rw http.ResponseWriter, r *http.Request) {
+	session, ok := w.authorized(rw, r, true)
+	if !ok {
+		return
+	}
+	rw.Header().Set("Cache-Control", "no-store")
+	en, token, err := w.Store.EnrollmentInvitation(r.Form.Get("id"))
+	if err != nil {
+		http.Error(rw, "Приглашение недоступно: истекло, отозвано, исчерпано или создано без сохранения QR.", http.StatusGone)
+		return
+	}
+	link := w.Config.PublicURL + "enroll#" + token
+	img, err := qrImage(link)
+	if err != nil {
+		http.Error(rw, "QR unavailable", 500)
+		return
+	}
+	w.page(rw, view{Title: "Приглашение", Admin: true, CSRF: session.CSRF, QR: img, ConnectionLink: link, Enrollment: true, EnrollmentRecord: &en})
+}

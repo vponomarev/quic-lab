@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,21 +15,29 @@ const DefaultEnrollmentTTL = 24 * time.Hour
 const DefaultEnrollmentLimit = 5
 
 type Enrollment struct {
-	ID         string            `json:"id"`
-	UserID     string            `json:"user_id"`
-	Expires    time.Time         `json:"expires"`
-	MaxDevices int               `json:"max_devices"`
-	Used       int               `json:"used"`
-	Revoked    bool              `json:"revoked,omitempty"`
-	TokenHash  string            `json:"token_hash,omitempty"`
-	Requests   map[string]string `json:"requests,omitempty"`
+	ID          string            `json:"id"`
+	UserID      string            `json:"user_id"`
+	Expires     time.Time         `json:"expires"`
+	MaxDevices  int               `json:"max_devices"`
+	Used        int               `json:"used"`
+	Revoked     bool              `json:"revoked,omitempty"`
+	CanDisplay  bool              `json:"-"`
+	TokenCipher string            `json:"token_cipher,omitempty"`
+	TokenHash   string            `json:"token_hash,omitempty"`
+	Requests    map[string]string `json:"requests,omitempty"`
 }
 
 func enrollmentHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
-func enrollmentMetadata(en Enrollment) Enrollment { en.TokenHash = ""; en.Requests = nil; return en }
+func enrollmentMetadata(en Enrollment) Enrollment {
+	en.CanDisplay = en.TokenCipher != "" && !en.Revoked && en.Expires.After(time.Now()) && en.Used < en.MaxDevices
+	en.TokenCipher = ""
+	en.TokenHash = ""
+	en.Requests = nil
+	return en
+}
 func (s *Store) NewEnrollment(userID string, ttl time.Duration, maxDevices int) (Enrollment, string, error) {
 	if ttl == 0 {
 		ttl = DefaultEnrollmentTTL
@@ -55,6 +65,10 @@ func (s *Store) NewEnrollment(userID string, ttl time.Duration, maxDevices int) 
 		return Enrollment{}, "", e
 	}
 	en := Enrollment{ID: id, UserID: userID, Expires: now.Add(ttl), MaxDevices: maxDevices, TokenHash: enrollmentHash(token), Requests: map[string]string{}}
+	en.TokenCipher, e = s.sealEnrollmentToken(en.ID, token)
+	if e != nil {
+		return Enrollment{}, "", e
+	}
 	if en.Expires.After(u.Expires) {
 		en.Expires = u.Expires
 	}
@@ -153,6 +167,7 @@ func (s *Store) RevokeEnrollment(id string) error {
 	}
 	en := previous
 	en.Revoked = true
+	en.TokenCipher = ""
 	s.state.Enrollments[id] = en
 	if e := s.save(); e != nil {
 		if !statePublished(e) {
@@ -192,4 +207,51 @@ func (s *Store) enrollmentProfileUser(d Device) (User, error) {
 	u.Key = d.Key
 	u.AWG = d.AWG
 	return u, nil
+}
+
+// Domain-separated key derivation; the CA private key is already protected by
+// the identity store's 0600 permissions. This is not protection from full store compromise.
+func (s *Store) enrollmentCipher() (cipher.AEAD, error) {
+	key := sha256.Sum256([]byte("quic-lab/enrollment-display/v1\x00" + s.state.Key))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+func (s *Store) sealEnrollmentToken(id, token string) (string, error) {
+	a, err := s.enrollmentCipher()
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, a.NonceSize())
+	if _, err = rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(a.Seal(nonce, nonce, []byte(token), []byte(id))), nil
+}
+func (s *Store) EnrollmentInvitation(id string) (Enrollment, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	en, ok := s.state.Enrollments[id]
+	u, present := s.state.Users[en.UserID]
+	if !ok || !present || u.Disabled || !u.Expires.After(time.Now()) || !enrollmentMetadata(en).CanDisplay {
+		return Enrollment{}, "", errors.New("invitation unavailable")
+	}
+	a, err := s.enrollmentCipher()
+	if err != nil {
+		return Enrollment{}, "", err
+	}
+	raw, err := hex.DecodeString(en.TokenCipher)
+	if err != nil || len(raw) < a.NonceSize() {
+		return Enrollment{}, "", errors.New("invalid invitation")
+	}
+	token, err := a.Open(nil, raw[:a.NonceSize()], raw[a.NonceSize():], []byte(id))
+	if err != nil {
+		return Enrollment{}, "", err
+	}
+	if enrollmentHash(string(token)) != en.TokenHash {
+		return Enrollment{}, "", errors.New("invalid invitation")
+	}
+	return enrollmentMetadata(en), string(token), nil
 }

@@ -190,3 +190,78 @@ func TestEnrollmentAdminControls(t *testing.T) {
 		t.Fatal("QR revoke not persisted")
 	}
 }
+
+func TestRedisplayEnrollmentDoesNotRegisterOrExtend(t *testing.T) {
+	s, u := enrollmentStore(t)
+	en, token, err := s.NewEnrollment(u.ID, time.Hour, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(config(t), s)
+	w.sessions["test-session"] = session{CSRF: "csrf", Until: time.Now().Add(time.Hour)}
+	cookie := &http.Cookie{Name: "quiclab_admin", Value: "test-session"}
+	form := url.Values{"csrf": {"csrf"}, "id": {en.ID}}.Encode()
+	for i := 0; i < 2; i++ {
+		r := call(w.Handler(), "POST", "/enrollments/show", form, cookie)
+		if r.Code != 200 || !strings.Contains(r.Body.String(), "enroll#"+token) {
+			t.Fatalf("redisplay failed: %d", r.Code)
+		}
+		if r.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("secret response cacheable")
+		}
+	}
+	after := s.Enrollments(u.ID)[0]
+	if after.Used != en.Used || !after.Expires.Equal(en.Expires) || len(s.Enrollments(u.ID)) != 1 {
+		t.Fatal("redisplay mutated enrollment")
+	}
+	if r := call(w.Handler(), "POST", "/enrollments/show", url.Values{"id": {en.ID}}.Encode(), cookie); r.Code != 403 {
+		t.Fatal("missing CSRF accepted")
+	}
+	if r := call(w.Handler(), "POST", "/enrollments/show", form, nil); r.Code == 200 {
+		t.Fatal("anonymous disclosure")
+	}
+	if err = s.RevokeEnrollment(en.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := call(w.Handler(), "POST", "/enrollments/show", form, cookie); r.Code != 410 {
+		t.Fatal("revoked invitation shown")
+	}
+}
+
+func TestEnrollmentDisplayPersistenceAndLegacy(t *testing.T) {
+	s, u := enrollmentStore(t)
+	en, token, err := s.NewEnrollment(u.ID, time.Hour, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(s.path)
+	if strings.Contains(string(raw), token) {
+		t.Fatal("plaintext token persisted")
+	}
+	reopened, err := OpenStore(s.admissionDirectory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, got, err := reopened.EnrollmentInvitation(en.ID)
+	if err != nil || got != token || metadata.TokenCipher != "" || metadata.TokenHash != "" {
+		t.Fatal("encrypted redisplay failed")
+	}
+	if _, err = reopened.Enroll(token, "once", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = reopened.EnrollmentInvitation(en.ID); err == nil {
+		t.Fatal("exhausted invitation shown")
+	}
+	en2, _, err := s.NewEnrollment(u.ID, time.Hour, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	legacy := s.state.Enrollments[en2.ID]
+	legacy.TokenCipher = ""
+	s.state.Enrollments[en2.ID] = legacy
+	s.mu.Unlock()
+	if _, _, err = s.EnrollmentInvitation(en2.ID); err == nil {
+		t.Fatal("legacy invitation regenerated")
+	}
+}

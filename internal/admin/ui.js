@@ -32,14 +32,14 @@
   if(!r.ok)throw new Error($('.alert',doc)?.textContent || doc.body.textContent.trim() || 'Запрос не выполнен');
   return doc;
  }
- function qrForm(form, dialog, result) {
+ function qrForm(form, dialog, result, copyLink=false) {
   let generation=0;
   dialog.addEventListener('close',()=>{generation++;result.replaceChildren();});
   dialog.addEventListener('change',()=>{generation++;result.replaceChildren();});
   dialog.addEventListener('qr-reset',()=>{generation++;result.replaceChildren();});
   form.addEventListener('submit',async e=>{
    e.preventDefault();const g=++generation,b=$('button',form);b.disabled=true;result.setAttribute('role','status');result.textContent='Готовим QR…';
-   try {const doc=await post(form),qr=$('.card.qr',doc);if(!qr)throw new Error('Сервер не вернул QR-код.');if(g===generation&&dialog.open){result.replaceChildren(document.importNode(qr,true));const image=$('img',result);if(image){const download=el('a','download','Сохранить QR');download.href=image.src;download.download='connection-qr.png';result.append(download);}result.scrollIntoView({block:'nearest'});}}
+   try {const doc=await post(form),qr=$('.card.qr',doc);if(!qr)throw new Error('Сервер не вернул QR-код.');if(g===generation&&dialog.open){result.replaceChildren(document.importNode(qr,true));const image=$('img',result);if(image){const download=el('a','download','Сохранить QR');download.href=image.src;download.download='connection-qr.png';result.append(download);}if(copyLink){const input=$('[data-connection-link]',result),status=$('[data-copy-status]',result);if(input){try{await navigator.clipboard.writeText(input.value);if(status)status.textContent='Ссылка скопирована';}catch{if(status)status.textContent='Нажмите «Копировать» ниже или скопируйте ссылку вручную';input.focus();input.select();}}}result.scrollIntoView({block:'nearest'});}}
    catch(err){if(g===generation&&dialog.open){result.setAttribute('role','alert');result.textContent=err.message;}}
    finally{b.disabled=false;}
   });
@@ -164,7 +164,7 @@
   const quick=el('div','user-quick-actions'),quickTitle=el('span','muted','Подключить клиента:');quick.append(quickTitle);
   [['app','QR QUIC Lab'],['vless','QR VLESS'],['awg','QR AmneziaWG']].forEach(([key,label])=>{if(!methods.panels.has(key))return;const b=button(label);b.onclick=()=>openConnect(key);quick.append(b);});
   user.body.querySelector('.client-name').after(quick);
-  const invites=sections.panels.get('enrollments'),intro=el('div','invitation-intro');intro.append(el('h3','','Регистрация в QUIC Lab'),el('p','field-note','Эти приглашения добавляют устройства в приложение QUIC Lab. Для стороннего клиента используйте QR VLESS или QR AmneziaWG над вкладками.'),el('p','field-note','Старый QR повторно показать нельзя: сервер хранит только хеш его токена. Создайте новое приглашение и сохраните QR после создания. Старые приглашения продолжат действовать до истечения срока или отзыва.'));
+  const invites=sections.panels.get('enrollments'),intro=el('div','invitation-intro');intro.append(el('h3','','Регистрация в QUIC Lab'),el('p','field-note','Эти приглашения добавляют устройства в приложение QUIC Lab. Для стороннего клиента используйте QR VLESS или QR AmneziaWG над вкладками.'),el('p','field-note','Действующее приглашение можно показать повторно без изменения срока и лимита. Для приглашений, созданных до поддержки повторного показа, сохранён только хеш: восстановить их QR нельзя. Обновляйте настройки зарегистрированного телефона кнопкой «Обновить настройки» в приложении.'));
   const createInvite=button('Создать новое приглашение','');createInvite.onclick=()=>openConnect('app');intro.append(createInvite);invites.prepend(intro);
   const help=el('details','invitation-help');help.append(el('summary','','Как работают приглашения'));
   $$('p',intro).forEach(p=>help.append(p));intro.append(help);
@@ -177,12 +177,15 @@
     const d=entry.dataset,expired=new Date(d.expires).getTime()<=Date.now(),exhausted=Number(d.used)>=Number(d.limit);
     const state=d.revoked==='true'?'Отозвано':expired?'Истекло':exhausted?'Исчерпано':'Действует';
     const tr=el('tr'),action=el('td');
-    for(const form of $$('form',entry)){$('button',form).textContent='Отозвать';action.append(form);}
+    for(const form of $$('form',entry)){if(formAction(form)==='revoke')$('button',form).textContent='Отозвать';action.append(form);}
+    const unavailable=$('.invitation-unavailable',entry);if(unavailable)action.append(unavailable);
     tr.append(el('td','',formatTime(d.expires)),el('td','',d.used+' / '+d.limit),el('td',state==='Действует'?'':'muted',state),action);body.append(tr);entry.remove();
    }
   }
 
   actions.append(connectButton,settingsButton,more,user.dialog,connect.dialog);
+  const invitation=modal('Приглашение',nameText,'connect-dialog'),invitationResult=el('div','qr-result');invitation.body.append(invitationResult);actions.append(invitation.dialog);
+  $$('form.enrollment-show',user.dialog).forEach(f=>{f.addEventListener('submit',()=>{invitationResult.replaceChildren();invitation.dialog.dispatchEvent(new Event('qr-reset'));invitation.dialog.showModal();});qrForm(f,invitation.dialog,invitationResult,f.hasAttribute('data-copy-invitation'));});
   $$('form[action$="/vless-qr"],form[action$="/awg-qr"]',user.dialog).forEach(f=>{const result=el('div','qr-result');f.after(result);qrForm(f,user.dialog,result);});
   $$('form',user.dialog).filter(f=>['disable','revoke','delete'].includes(formAction(f))||formAction(f)==='toggle').forEach(f=>f.addEventListener('submit',e=>{
    if(formAction(f)==='toggle'&&f.elements.disabled.value==='false')return;

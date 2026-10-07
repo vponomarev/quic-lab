@@ -9,6 +9,7 @@ fixture=fixture.replace('<details class="export">','<details class="devices"><su
 fixture=fixture.replace('</small></div>', '</small><form class="inline" action="https://example.test/devices/disable"><input type="hidden" name="id" value="device-one"><button class="danger">Отозвать устройство</button></form></div>', 1)
 fixture=fixture.replace('<details class="export">','<details class="enrollments"><summary>Invites</summary><div data-expires="2020-01-01T00:00:00Z" data-used="1" data-limit="5" data-revoked="false"><small>Old invitation</small><form action="https://example.test/enrollments/revoke"><input type="hidden" name="id" value="invite-one"><button>Revoke</button></form></div></details><details class="export">')
 fixture=fixture.replace('<button class="danger">Отозвать устройство</button></form>','<button class="danger">Отозвать устройство</button></form><form class="inline" action="https://example.test/users/awg-qr"><input type="hidden" name="id" value="device-one"><button>QR AWG</button></form>')
+fixture=fixture.replace('</details><details class="export">','<div data-expires="2099-01-01T00:00:00Z" data-used="0" data-limit="5" data-revoked="false"><form class="inline enrollment-show" action="https://example.test/enrollments/show"><input type="hidden" name="id" value="active-invite"><button>Показать QR</button></form><form class="inline enrollment-show" data-copy-invitation action="https://example.test/enrollments/show"><input type="hidden" name="id" value="active-invite"><button>Копировать ссылку</button></form></div></details><details class="export">')
 with sync_playwright() as p:
  b=p.chromium.launch(headless=True,executable_path='/root/.cache/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell',args=['--no-sandbox'])
  page=b.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -18,9 +19,9 @@ with sync_playwright() as p:
  assert revoke.count()==1
  assert revoke.locator('[name=id]').input_value()=='device-one'
  assert revoke.locator('xpath=ancestor::tr[1]').get_attribute('data-device-id')=='device-one'
- assert page.locator('.enrollment-table tbody tr').count()==1
+ assert page.locator('.enrollment-table tbody tr').count()==2
  assert 'Истекло' in page.locator('.enrollment-table').inner_text()
- assert page.locator('.enrollment-table form [name=id]').input_value()=='invite-one'
+ assert page.locator('.enrollment-table form[action$="/revoke"] [name=id]').input_value()=='invite-one'
  assert page.locator('.device-table form[action$="/awg-qr"] [name=id]').input_value()=='device-one'
  links=page.locator('a',has_text='Журналы устройств пользователя');assert links.count()==2
  for link in links.all(): assert link.get_attribute('href')=='diagnostics/clients?user=test'
@@ -48,6 +49,16 @@ with sync_playwright() as p:
  assert 'Отчётов пока нет' in page.locator('.device-report').last.inner_text()
  assert page.locator('.device-report a').first.get_attribute('href').endswith('&device=device-one')
  assert page.locator('a.action-link',has_text='Журналы устройств пользователя').count()==2
+ page.get_by_role('tab',name='Приглашения',exact=True).click()
+ page.evaluate("""() => {window.fetch=async (url,opts)=>{window.sentInvitation=opts.body.toString();return {ok:true,url:String(url),text:async()=>'<section class="card qr"><div class="connection-link"><textarea data-connection-link>https://example.test/enroll#test-token</textarea><span data-copy-status></span></div></section>'}};Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedInvitation=text}}});}""")
+ page.get_by_role('button',name='Показать QR',exact=True).click()
+ page.wait_for_function("document.querySelector('dialog[open] textarea[data-connection-link]')?.value.includes('test-token')")
+ assert page.evaluate("window.sentInvitation")=='id=active-invite'
+ page.locator('dialog[open]').last.locator('[data-close]').click()
+ page.wait_for_function("document.querySelectorAll('textarea[data-connection-link]').length===0")
+ page.get_by_role('button',name='Копировать ссылку',exact=True).click()
+ page.wait_for_function("window.copiedInvitation==='https://example.test/enroll#test-token'")
+ page.locator('dialog[open]').last.locator('[data-close]').click()
  page.get_by_role('tab',name='Устройства · 2',exact=True).click()
  page.add_style_tag(content=(root/'internal/admin/web.html').read_text().split('<style>',1)[1].split('</style>',1)[0])
  page.add_style_tag(content=(root/'internal/admin/ui.css').read_text())

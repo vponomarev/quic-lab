@@ -79,6 +79,7 @@ class VpnActivity:Activity() {
    card.addView(ui.text(if(p.id==selected)"Выбрано для запуска" else "Сохранённое подключение"))
    val row=LinearLayout(this);card.addView(row)
    row.addView(ui.button("Настроить"){openEditor(p.id)},LinearLayout.LayoutParams(0,-2,1f))
+   if(prefs.getBoolean("managed_profile",false))ui.add(card,ui.button("Обновить настройки"){startActivity(Intent(this,ProfileEditorActivity::class.java).putExtra("profile_id",p.id).putExtra("update_profile",true))})
    row.addView(ui.button(if(selected==p.id)"Выбрано" else "Выбрать"){action{check(!LabVpnService.active){"Для смены подключения сначала отключите VPN"};VpnProfiles.select(this,p.id);VpnProfiles.setMultiple(this,false);showPage(page,false)}},LinearLayout.LayoutParams(0,-2,1f))
    ui.add(card,ui.button("Действия с подключением"){AlertDialog.Builder(this).setTitle(p.name).setItems(arrayOf("Переименовать","Удалить")){_,i->if(i==0)rename(p) else delete(p)}.show()})
   }

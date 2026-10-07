@@ -147,6 +147,10 @@ class ProfileEditorActivity : Activity() {
         draftGlobalApps = VpnProfiles.globalApps(this)
         pendingIdentity = lastNonConfigurationInstance as? org.json.JSONObject
         buildEditor()
+        if(savedInstanceState==null && intent.getBooleanExtra("update_profile",false)){
+            intent.removeExtra("update_profile")
+            if(prefs.getBoolean("managed_profile",false))handler.post{updateProfile(profileId)}
+        }
     }
 
     private fun buildEditor() {
