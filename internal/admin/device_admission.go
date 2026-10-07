@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const DefaultDeviceLimit = 15
+const DefaultDeviceLimit = 30
 const MaxDeviceLimit = 512
 
 type Admission struct {

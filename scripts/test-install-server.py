@@ -444,7 +444,7 @@ class ReleaseArchiveTests(unittest.TestCase):
             (root / 'scripts/build-server-release.py').write_bytes(builder.read_bytes())
             for name in ('install-transit.py', 'transit-network.py', 'install-awg.py', 'awg-network.py', 'install-server.py', 'reload-certificate.py', 'publish-apk.sh'):
                 (root / 'scripts' / name).write_text('fixture\n')
-            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md', 'unified-ingress.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
+            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'client-diagnostics.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md', 'unified-ingress.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
                 (root / folder).mkdir()
                 for name in names: (root / folder / name).write_text('fixture\n')
             (root / 'THIRD_PARTY_NOTICES.md').write_text('fixture\n')

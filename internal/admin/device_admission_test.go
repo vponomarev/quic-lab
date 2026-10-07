@@ -127,3 +127,15 @@ func TestAdmissionStoreRegistrationAndRevoke(t *testing.T) {
 		t.Fatal("admission cleanup not idempotent")
 	}
 }
+
+func TestDefaultDeviceCapAtLeastThirty(t *testing.T) {
+	a := NewAdmission(0)
+	for d := 0; d < 30; d++ {
+		if _, err := a.Acquire(fmt.Sprint(d)); err != nil {
+			t.Fatalf("default rejected device %d: %v", d+1, err)
+		}
+	}
+	if _, err := a.Acquire("31"); err == nil {
+		t.Fatal("default must remain bounded at 30")
+	}
+}

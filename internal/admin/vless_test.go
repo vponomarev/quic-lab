@@ -214,8 +214,8 @@ func TestVLESSSharesAdmissionAndRevokesDemux(t *testing.T) {
 	}
 }
 func TestConfiguredAdmissionLimitDefaultsAndMaximum(t *testing.T) {
-	if a := NewAdmission(0); a.limit != 15 {
-		t.Fatal("default admission is not 15")
+	if a := NewAdmission(0); a.limit != 30 {
+		t.Fatal("default admission is not 30")
 	}
 	if a := NewAdmission(100); a.limit != 100 {
 		t.Fatal("configured capacity above 30 was reduced")
