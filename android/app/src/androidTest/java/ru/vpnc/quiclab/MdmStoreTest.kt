@@ -26,4 +26,30 @@ class MdmStoreTest {
   val f=File(c.noBackupFilesDir,"mdm-corrupt-"+System.nanoTime())
   try{f.writeText("broken");assertTrue(runCatching{MdmStore(f,"unused-mdm-key").read()}.isFailure)}finally{f.delete()}
  }
+ @Test fun repeatedPreferenceReadsStayBelowFrameBlockingBudget(){
+  val c=InstrumentationRegistry.getInstrumentation().targetContext
+  val f=File(c.noBackupFilesDir,"mdm-read-budget-"+System.nanoTime());val alias="mdm-read-budget-"+System.nanoTime()
+  try{
+   MdmStore(f,alias).edit{it.put("generation",7).put("payload","x".repeat(8192))}
+   val started=android.os.SystemClock.elapsedRealtime()
+   repeat(100){assertEquals(7L,MdmStore(f,alias).read().localGeneration)}
+   val elapsed=android.os.SystemClock.elapsedRealtime()-started
+   InstrumentationRegistry.getInstrumentation().sendStatus(0,android.os.Bundle().apply{putLong("repeated_read_ms",elapsed)})
+   assertTrue("100 preference reads blocked for $elapsed ms",elapsed<1000)
+  }finally{f.delete();java.security.KeyStore.getInstance("AndroidKeyStore").apply{load(null);deleteEntry(alias)}}
+ }
+ @Test fun returnedDocumentIsDetachedAndExternalCorruptionFailsClosed(){
+  val c=InstrumentationRegistry.getInstrumentation().targetContext
+  val f=File(c.noBackupFilesDir,"mdm-cache-integrity-"+System.nanoTime());val alias="mdm-cache-integrity-"+System.nanoTime()
+  try{
+   val store=MdmStore(f,alias);store.edit{it.put("generation",7)}
+   store.document().put("generation",999)
+   assertEquals(7L,MdmStore(f,alias).read().localGeneration)
+   val original=f.readBytes();val broken=original.copyOf();broken[broken.lastIndex]=(broken.last().toInt() xor 1).toByte();f.writeBytes(broken)
+   assertTrue("Changed ciphertext must never use cached plaintext",runCatching{MdmStore(f,alias).read()}.isFailure)
+   f.writeBytes(original);assertEquals(7L,MdmStore(f,alias).read().localGeneration)
+   store.edit{it.put("generation",8)};assertEquals(8L,MdmStore(f,alias).read().localGeneration)
+  }finally{f.delete();java.security.KeyStore.getInstance("AndroidKeyStore").apply{load(null);deleteEntry(alias)}}
+ }
+
 }

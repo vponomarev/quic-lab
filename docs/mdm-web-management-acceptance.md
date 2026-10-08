@@ -33,3 +33,16 @@ Implemented: optional VPN user ownership of MDM bindings/invitations; user-card 
 
 Ruling: stage the backward-compatible server before live phone acceptance so production enrollment/report/control APIs are available. Client publication remains gated on actual remote VPN/config acceptance. Private invitation is excluded from Git.
 
+
+## Live acceptance and ANR correction (2026-10-08, final session)
+
+This section supersedes the earlier pending-consent and unpublished-APK status.
+
+- User explicitly enabled MDM rights on the dedicated Redmi. Remote VPN start and stop, reports while VPN was off, and current-mode configuration revisions were exercised against production. Inventory contains 494 application entries.
+- Revision 1 changed profile label, selected applications, DNS mode and budget; revision 2 restored the original configuration. Raw UDP DNS and HTTPS to an IP succeeded through the selected VPN probe application; the separately installed direct probe completed HTTPS. The system-DNS hostname probe did not complete before being stopped: do not count that case as a successful DNS acceptance test. The original tunnel-DNS configuration passed hostname HTTPS.
+- The user reported an ANR at 23:29:06 MSK. Official Android bugreport confirms main waiting for MdmConfiguration.lock from LabVpnService.onStartCommand; mdm-control held that lock while repeatedly loading AndroidKeyStore during configuration snapshot. Sensitive raw bugreport remains local/ignored.
+- Added a bounded process-local decoded-document cache. Every load still reads and compares complete ciphertext; changed bytes require authenticated decryption. Returned JSON is detached. No plaintext is written to disk. Cache lifetime is process-local; it does not replace durable configuration state.
+- Regression RED: 100 reads took 3241 ms (limit 1000 ms). GREEN: 167 ms, all 4 store tests pass, including same-length ciphertext corruption, caller mutation and cross-instance changes. Build and lint PASS (44s). Additional lifecycle/apply/runtime/config/store/report/command regression: 31 tests PASS (26.663s). Focused independent review found no blockers.
+- Fixed candidate installed on Redmi. Remote start and revision 3 (original configuration) succeeded; server acknowledged revision and running VPN. Original observed configuration equals the backup exactly. HTTPS example.com probe returned vpn=true/ok=true. Normal launcher opened VpnActivity in 246 ms. Last-ANR timestamp remained the original 23:29:06 throughout these checks; this is a bounded reproduction check, not a long-duration soak.
+- Published 0.9.1-pre.9 (49). Public capabilities and downloaded APK verified. SHA256: f60460f39bc601ee15e958e7ca013b1b3fe0e2b0f5daed8070acfd7753f5c673. Server service restarted for version metadata; MDM report after restart confirms original settings and VPN running.
+- Remaining acceptance: two-editor/responsive browser checks (CDP stalled around native confirm), system-DNS hostname probe investigation, and Note12Pro/API34+ live acceptance. No claim of full phase completion.
