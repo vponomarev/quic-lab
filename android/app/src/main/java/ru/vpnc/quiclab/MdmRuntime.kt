@@ -20,8 +20,9 @@ internal object MdmRuntime {
    }
    override fun close(){synchronized(this){closed.set(true);transfer?.close()}}
   }},{
-   // Task4 adapter exists; live VPN cleanup/recovery must be wired before enabling polling actions.
-  }).also{it.recover();instance=it}
+   MdmTelemetry.stop(app,true)
+   // Remote configuration application remains gated until live cleanup is wired.
+  },{MdmTelemetry.rightsChanged(app)}).also{it.recover();instance=it}
  }
  fun restore(context:Context){
   runCatching{if(controller(context).read().active)MdmService.start(context)}
@@ -35,8 +36,13 @@ internal object MdmRuntime {
    override fun isActive()=!closed.get() && c.read().active
    override fun sync(){
     var pending=false
-    if(!c.poll{_,response->pending=response.desiredConfig!=null || response.commands.isNotEmpty()})
+    if(!c.poll{_,response->
+     MdmTelemetry.setServerEnabled(context,response.telemetryEnabled)
+     pending=response.desiredConfig!=null || response.commands.isNotEmpty()
+    })
      throw InterruptedException("MDM paused")
+    MdmTelemetry.reconcile(context)
+    runCatching{MdmTelemetry.upload(context)}
     // Do not acknowledge unsupported actions. Avoid a tight loop until their consumers are wired.
     if(pending)Thread.sleep(1000)
    }

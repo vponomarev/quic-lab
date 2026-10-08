@@ -72,6 +72,7 @@ type SyncRequest struct {
 	GrantedRights   *Rights `json:"grantedRights,omitempty"`
 }
 type SyncResponse struct {
+	Telemetry     TelemetryPolicy `json:"telemetry"`
 	Version       int             `json:"version"`
 	Epoch         int64           `json:"epoch"`
 	DesiredConfig *ConfigRevision `json:"desiredConfig,omitempty"`

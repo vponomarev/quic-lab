@@ -24,6 +24,7 @@ import (
 	"quiclab/internal/echoawg"
 	"quiclab/internal/gateway"
 	"quiclab/internal/labcert"
+	"quiclab/internal/mdm"
 	"quiclab/internal/protocol"
 	"quiclab/internal/servertls"
 	"quiclab/internal/transit"
@@ -158,6 +159,12 @@ func main() {
 		}
 		cfg.Capabilities = opts.Capabilities
 		ui := admin.NewWeb(cfg, managed)
+		ui.MDM, err = mdm.OpenStore(filepath.Join(cfg.DataDir, "mdm"))
+		if err != nil {
+			log.Error("mdm_store", "error", err)
+			os.Exit(1)
+		}
+		ui.StartMDMMaintenance(ctx)
 		ui.StartDiagnosticsMaintenance(ctx)
 		if cfg.Capture != nil {
 			portOf := func(addr string) int { _, p, _ := net.SplitHostPort(addr); n, _ := strconv.Atoi(p); return n }

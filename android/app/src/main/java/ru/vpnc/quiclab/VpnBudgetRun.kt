@@ -51,7 +51,11 @@ internal class VpnBudgetRun(private val file:File?=null,private val bootCount:In
      savedState.put("limit",limitBytes)
      savedState.put("blocked",limitBytes>0 && savedState.getLong("used")>=limitBytes)
     }
-    Mobile.restoreTrafficBudget(savedState.toString())
+    Mobile.restoreTrafficBudget(savedState.toString()).also{
+     // MDM may acquire the shared meter before the VPN restart check.
+     // Preserve an interrupted VPN only in the same OS boot.
+     resumeEligible=bootCount>=0 && savedState.optInt("boot_count",-2)==bootCount && savedState.optBoolean("resume",false)
+    }
    }
   }catch(e:Exception){throw IllegalStateException("Не удалось восстановить LTE-бюджет. В общих настройках можно явно начать новый период.",e)}
   current=meter;restored=raw!=null

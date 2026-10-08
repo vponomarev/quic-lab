@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"quiclab/internal/debugcapture"
+	"quiclab/internal/mdm"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	MDM            *mdm.Store
 	diagnosticSync func(string) error
 	// Serialize capture creation with identity changes and AWG address reuse.
 	userCaptureMu    sync.Mutex
@@ -51,6 +53,13 @@ func NewWeb(c Config, s *Store) *Web {
 func (w *Web) Handler() http.Handler {
 	m := http.NewServeMux()
 	w.captureRoutes(m)
+	m.HandleFunc("GET /mdm", w.mdmPage)
+	m.HandleFunc("POST /mdm/invite", w.mdmInvite)
+	m.HandleFunc("POST /mdm/policy", w.mdmPolicy)
+	m.HandleFunc("POST /mdm/delete-telemetry", w.mdmDeleteTelemetry)
+	if w.MDM != nil {
+		m.Handle("/mdm/v1/", mdm.NewHandler(w.MDM))
+	}
 	m.HandleFunc("GET /{$}", w.home)
 	m.HandleFunc("GET /download/quic-lab.apk", w.downloadAPK)
 	m.HandleFunc("GET /login", w.loginPage)
@@ -104,6 +113,9 @@ func (w *Web) Handler() http.Handler {
 		rw.Header().Set("Referrer-Policy", "same-origin")
 		rw.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		limit := int64(16384)
+		if strings.HasPrefix(r.URL.Path, "/mdm/v1/") {
+			limit = 1 << 20
+		}
 		if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/v1/devices/") && strings.HasSuffix(r.URL.Path, "/diagnostics") {
 			limit = 262144
 		}

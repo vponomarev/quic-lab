@@ -82,6 +82,7 @@ class MdmService:Service(){
   @Volatile internal var owner:((Context)->MdmSession?)?=null
   @Volatile internal var status="MDM выключено"
   fun start(context:Context){
+   status="MDM запускается…"
    try{context.startForegroundService(Intent(context,MdmService::class.java))}
    catch(e:RuntimeException){status="Android запретил фоновый запуск MDM";throw e}
   }

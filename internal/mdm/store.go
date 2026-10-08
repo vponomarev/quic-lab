@@ -24,12 +24,14 @@ type auditEntry struct {
 	ReceivedAt time.Time
 }
 type bindingState struct {
-	Binding    Binding
-	SecretHash string
-	Desired    *ConfigRevision
-	Commands   []Command
-	Audit      []auditEntry
-	Seen       map[string]time.Time
+	TelemetryDropped int64
+	Telemetry        TelemetryPolicy
+	Binding          Binding
+	SecretHash       string
+	Desired          *ConfigRevision
+	Commands         []Command
+	Audit            []auditEntry
+	Seen             map[string]time.Time
 }
 type snapshot struct {
 	Version     int

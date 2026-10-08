@@ -23,7 +23,7 @@ internal data class MdmBinding(val id:String,val endpoint:String,val epoch:Long,
    (u.path.isEmpty() || u.path=="/") && (u.port==-1 || u.port in 1..65535)) { "Неверный адрес MDM" }
  }
  fun url(operation:String):String {
-  require(operation in listOf("enroll","activate","sync","pause"))
+  require(operation in listOf("enroll","activate","sync","pause","telemetry"))
   return endpoint.trimEnd('/')+"/mdm/v1/"+operation
  }
 }
@@ -37,7 +37,7 @@ internal data class MdmConfigRevision(val revision:Long,val mode:String,val docu
 internal data class MdmCommand(val id:String,val bindingId:String,val epoch:Long,val issuedAt:Instant,
  val expiresAt:Instant,val kind:String)
 internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRevision?,val commands:List<MdmCommand>,
- val serverTime:Instant) {
+ val serverTime:Instant,val telemetryEnabled:Boolean=false) {
  companion object {
   fun parse(raw:String):MdmSyncResponse {
    val j=JSONObject(raw);require(j.getInt("version")==1)
@@ -50,7 +50,7 @@ internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRe
     val c=commands.getJSONObject(i);val kind=c.getString("kind");require(kind=="vpn_start"||kind=="vpn_stop")
     MdmCommand(c.getString("id"),c.getString("bindingId"),c.getLong("epoch"),
      Instant.parse(c.getString("issuedAt")),Instant.parse(c.getString("expiresAt")),kind)
-   },Instant.parse(j.getString("serverTime")))
+   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true)
   }
  }
 }

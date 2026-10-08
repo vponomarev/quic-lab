@@ -61,7 +61,7 @@ func (c *MDMChannel) Exchange(endpoint, secret, body string, binder SocketBinder
 	if e != nil {
 		return "", e
 	}
-	if u.Path != "/mdm/v1/enroll" && u.Path != "/mdm/v1/activate" && u.Path != "/mdm/v1/sync" && u.Path != "/mdm/v1/pause" {
+	if u.Path != "/mdm/v1/enroll" && u.Path != "/mdm/v1/activate" && u.Path != "/mdm/v1/sync" && u.Path != "/mdm/v1/pause" && u.Path != "/mdm/v1/telemetry" {
 		return "", errors.New("invalid MDM operation")
 	}
 	if len(secret) > 4096 || strings.ContainsAny(secret, "\r\n") || len(body) > 1<<20 || !json.Valid([]byte(body)) {

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** One serialized exchange; network loss retires its native channel immediately.
  * Uses neither a VPN permission nor a process-global network binding. */
-internal class MdmTransport(context:Context,private val secret:()->String,private val certificateAuthority:String=""):Closeable {
+internal class MdmTransport(context:Context,private val secret:()->String,private val certificateAuthority:String="",private val wifiOnly:()->Boolean={false}):Closeable {
  private val app=context.applicationContext
  private val cm=app.getSystemService(ConnectivityManager::class.java)
  private val owner=VpnBudgetRun.sharedForContext(app)
@@ -33,7 +33,8 @@ internal class MdmTransport(context:Context,private val secret:()->String,privat
    cm.getNetworkCapabilities(n)?.let { c ->
     c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
     !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-    (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)||c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))
+    (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)||c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) &&
+    MdmTelemetryPolicy.allows(wifiOnly(),c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),!c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
    }==true
   }.sortedBy { n -> if(cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true)0 else 1 }
    .firstOrNull()?:error("Нет физической сети для MDM")
@@ -44,6 +45,9 @@ internal class MdmTransport(context:Context,private val secret:()->String,privat
   var registered=false
   val lost=AtomicBoolean(false)
   val callback=object:ConnectivityManager.NetworkCallback(){
+   override fun onCapabilitiesChanged(n:Network,c:NetworkCapabilities){
+    if(n==network && wifiOnly() && !c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)){lost.set(true);synchronized(lock){channel?.close()}}
+   }
    override fun onLost(n:Network){if(n==network){lost.set(true);synchronized(lock){channel?.close()}}}
   }
   try {
@@ -65,6 +69,7 @@ internal class MdmTransport(context:Context,private val secret:()->String,privat
    val binder=object:SocketBinder{
     override fun bind(fd:Long){
      check(!closed.get())
+     check(!wifiOnly() || cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true)
      ParcelFileDescriptor.fromFd(fd.toInt()).use{network.bindSocket(it.fileDescriptor)}
     }
    }

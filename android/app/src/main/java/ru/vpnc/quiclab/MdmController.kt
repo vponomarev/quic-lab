@@ -39,6 +39,7 @@ internal class MdmController(
  private val store:MdmStore,
  private val gateways:()->MdmGateway,
  private val cleanup:()->Unit,
+ private val rightsChanged:()->Unit={},
 ) {
  private val calls=ConcurrentHashMap<MdmGateway,Boolean>()
  fun read()=store.read()
@@ -116,7 +117,7 @@ internal class MdmController(
    check(j.has("binding")){"Нет привязки MDM"}
    j.put("rights",rights.json()).put("generation",Math.addExact(j.getLong("generation"),1))
   }
-  cancelCalls()
+  cancelCalls();rightsChanged()
  }
  fun authorize(generation:Long,right:MdmRight):Boolean {
   val s=store.read()

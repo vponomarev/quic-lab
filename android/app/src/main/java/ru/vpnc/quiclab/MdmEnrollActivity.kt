@@ -12,6 +12,19 @@ class MdmEnrollActivity:Activity(){
  private lateinit var ui:ClientUi
  private lateinit var panel:LinearLayout
  private lateinit var status:TextView
+ private val statusHandler=android.os.Handler(android.os.Looper.getMainLooper())
+ private val statusTick=object:Runnable{
+  override fun run(){
+   if(::status.isInitialized && !busy && status.text.startsWith("MDM")){
+    runCatching{MdmRuntime.controller(this@MdmEnrollActivity).read()}.getOrNull()?.let{
+     if(it.active)status.text=MdmService.status
+    }
+   }
+   statusHandler.postDelayed(this,1000)
+  }
+ }
+ override fun onResume(){super.onResume();statusHandler.post(statusTick)}
+ override fun onPause(){statusHandler.removeCallbacks(statusTick);super.onPause()}
  private var busy=false
  private var invitation:MdmInvitation?=null
  private val checks=mutableMapOf<MdmRight,CheckBox>()
@@ -44,6 +57,7 @@ class MdmEnrollActivity:Activity(){
     }
    })
    panel.addView(ui.text("Пауза полностью отключает управление. Привязка сохранится; вы сможете возобновить её."))
+   panel.addView(ui.button("Данные Wi-Fi и сот"){startActivity(Intent(this,MdmTelemetryActivity::class.java))})
    rights(state.rights)
    panel.addView(ui.button("Сохранить права"){val selected=selectedRights();work{controller.setRights(selected)}})
    panel.addView(ui.button("Удалить MDM"){

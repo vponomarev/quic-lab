@@ -130,3 +130,7 @@ generation. Fixed by carrying the original generation in saved draft state and
 rejecting stale state across repeated recreation. Stale values are not restored.
 Final PreferenceDraft + AndroidNavigation: 3 tests PASS / 6.480s.
 No production release or Note12Pro change.
+
+### 2026-10-08 — accelerated radio telemetry slice
+
+User brought Wi-Fi/cell telemetry forward. Implementation and acceptance: docs/mdm-radio-telemetry.md; separate plan docs/superpowers/plans/2026-10-08-mdm-radio-telemetry.md. Core task4/5 remote apply/commands remain unfinished and are not exposed as working actions in admin. Server MDM routes/admin are wired for enrollment, lifecycle and telemetry. Default delivery now includes LTE; local Wi-Fi-only prohibition takes priority.

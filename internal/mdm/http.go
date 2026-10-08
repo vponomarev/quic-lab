@@ -1,6 +1,7 @@
 package mdm
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,7 @@ func NewHandler(store *Store) http.Handler {
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/mdm/v1/")
-		if path != "enroll" && path != "activate" && path != "sync" && path != "pause" {
+		if path != "enroll" && path != "activate" && path != "sync" && path != "pause" && path != "telemetry" {
 			http.NotFound(w, r)
 			return
 		}
@@ -62,6 +63,26 @@ func NewHandler(store *Store) http.Handler {
 			respond(b, e)
 			return
 		}
+		if r.URL.Path == "/mdm/v1/telemetry" {
+			var batch TelemetryBatch
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&batch) != nil || decoder.Decode(new(any)) != io.EOF {
+				http.Error(w, "invalid request", 400)
+				return
+			}
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || !store.Authenticate(batch.BindingID, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
+				http.Error(w, "unauthorized", 401)
+				return
+			}
+			if e := store.AppendTelemetry(batch, time.Now().UTC()); e != nil {
+				respond(nil, e)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]bool{"accepted": true})
+			return
+		}
+
 		var req SyncRequest
 		if json.Unmarshal(raw, &req) != nil || req.Version != 1 {
 			respond(nil, ErrInvalid)
