@@ -41,3 +41,7 @@ same encrypted atomic envelope. These private bundles preserve existing registra
 and update metadata separately from the portable schema. ConfigurationPreferences
 rejects edits made through a source opened before a management-generation change.
 The adapter currently applies only while VPN is stopped; it is not wired to polling.
+
+## Optional reserve policy (WEB management)
+
+Schema 1 accepts an optional `reserve` object with Boolean `wifi_on`, `wifi_off`, `cell_on`, `cell_off`, `metered_wifi`. Omission preserves compatibility with older documents. Device reports exclude identity contents and carry a local `configGeneration`; WEB mutations require both observed generation and desired revision. A profile whose identity is omitted retains credentials of the same profile ID. Pending desired credentials are preserved server-side across sanitized editor round trips.

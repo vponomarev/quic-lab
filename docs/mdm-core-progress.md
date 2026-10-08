@@ -134,3 +134,7 @@ No production release or Note12Pro change.
 ### 2026-10-08 — accelerated radio telemetry slice
 
 User brought Wi-Fi/cell telemetry forward. Implementation and acceptance: docs/mdm-radio-telemetry.md; separate plan docs/superpowers/plans/2026-10-08-mdm-radio-telemetry.md. Core task4/5 remote apply/commands remain unfinished and are not exposed as working actions in admin. Server MDM routes/admin are wired for enrollment, lifecycle and telemetry. Default delivery now includes LTE; local Wi-Fi-only prohibition takes priority.
+
+### 2026-10-08 — WEB management implementation, acceptance pending
+
+See docs/mdm-web-management-acceptance.md and accepted WEB plan. Runtime now consumes desired configuration and VPN commands through serialized main-thread coordination with durable cleanup/revision acknowledgement and command deduplication. Report/inventory requires config consent. The server editor and user-card ownership links are deployed; old clients are gated by web-control-v1. Candidate Android 0.9.1-pre.9 (49) installed on Redmi but not publicly published. Real phone config/VPN consent and live traffic acceptance remain required. This supersedes earlier statements that the poll consumer is unwired; it does not mark full MDM acceptance complete.

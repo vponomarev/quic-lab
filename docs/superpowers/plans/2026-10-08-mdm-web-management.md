@@ -44,7 +44,7 @@ Interfaces: `CreateUserInvitation(now time.Time, rights Rights, userID string) (
 - [ ] Выполнить эти тесты на Linux, зафиксировать ожидаемый FAIL.
 - [ ] Реализовать ownership и миграцию, audit, проверку назначения и очистку связи при удалении пользователя. Добавить MDM:N и таблицу MDM в карточку, ссылку на устройство; создание invitation с config/vpn/telemetry правами как запросом, без автоматического согласия.
 - [ ] GREEN: ownership/admin тесты, включая CSRF/неизвестный пользователь/чужой binding и фильтр по владельцу. Проверить карточку визуально без нарушения фиксированной высоты вкладок.
-- [ ] Commit `feat: link MDM devices to admin users`.
+- [x] Commit `feat: link MDM devices to admin users`.
 
 ### Task 2 — Наблюдаемое состояние, CAS и совместимость
 
@@ -56,7 +56,7 @@ Interfaces: `Report(id string, epoch int64, report DeviceReport, now time.Time) 
 - [ ] Run narrow Linux tests, observe FAIL.
 - [ ] Implement authenticated report operation, persist last successful sync even without telemetry, capability gates, statuses and sanitized admin DTO. Existing Sync reports grant changes before accepting related sections; reject secret-bearing report fields rather than persisting them. Limit state growth; report replaces previous report.
 - [ ] GREEN: Linux tests plus old-client telemetry regression, escaped labels, no secret in GET/error/audit; queue expiry 5 min and pause epoch checks.
-- [ ] Commit `feat: report MDM device state and guard remote revisions`.
+- [x] Commit `feat: report MDM device state and guard remote revisions`.
 
 ### Task 3 — Android отчёт, inventory и прямой QR
 
@@ -67,7 +67,7 @@ Interfaces: `MdmDeviceReport.snapshot(context:Context,state:MdmState):JSONObject
 - [ ] Run BUILD/AT соответствующих классов, observe FAIL.
 - [ ] Implement report + persisted sequence/hash retry, inventory через тот же источник package visibility, что локальный выбор приложений. Первая выдача права/изменение списка отправляет полный актуальный inventory; между изменениями — hash. Ошибка чтения не публикует пустой список как полный. Добавить две прямые кнопки MDM, без проверки «VPN остановлен».
 - [ ] GREEN BUILD/AT; проверить отсутствие config-данных после отзыва права между сбором и отправкой; прежний профиль и работающий VPN неизменны после отмены сканирования.
-- [ ] Commit `feat: expose MDM enrollment and consented device inventory`.
+- [x] Commit `feat: expose MDM enrollment and consented device inventory`.
 
 ### Task 4 — Транзакционное применение при работающем VPN
 
@@ -111,3 +111,11 @@ Files: update docs/mdm-core-progress.md, docs/mdm-configuration-schema.md; creat
 - [ ] Review full diff against accepted spec with a fresh reviewer; resolve critical findings and rerun impacted tests. Do not count prior foundation tests as runtime evidence.
 - [ ] Back up production binary/config/APK, deploy server before client with old-client gates; publish APK/version/hash, validate public download. Keep rollback binary/APK and explain downgrade constraints if durable schema changes.
 - [ ] Install on available test phone; verify from WEB and record Note12Pro acceptance when available without silently granting new rights. Update completed/pending status and commit `docs: record MDM web management acceptance`.
+
+## Execution status — 2026-10-08
+
+- Tasks 1–3 implemented and committed (de15c63, 8ae8a14, 57669ec). Ownership/report/consent tests passed; user-card/editor navigation checked in browser.
+- Tasks 4–5 implemented together: they share service start/stop and runtime wiring. Durable cleanup, deadlock, TTL and audit regressions tested; independent review blockers resolved. Live VPN/traffic acceptance remains pending.
+- Task 6 editor deployed with guarded server APIs. Browser checked app list, preview, Apply and pending revision; complete responsive/two-editor browser matrix remains pending (CDP became unresponsive). Server CAS/idempotency tests pass.
+- Task 7 in progress: final Linux race/vet/source digest passed; pre.9 APK builds/lints and is on Redmi. Server staged with backup; public APK remains pre.8. Explicit test-phone MDM consent is awaited.
+- Authoritative test counts, hashes, backup and limitations: docs/mdm-web-management-acceptance.md. Unchecked compound acceptance steps below/above are intentionally not claimed complete.
