@@ -49,12 +49,6 @@ class AppSettingsActivity:Activity(){
   box=ui.card(panel);box.addView(ui.text("Измерения задержки",18f,true))
   for((key,title,default) in listOf(Triple("screen_on","При включённом экране",1000L),Triple("screen_off","При выключенном экране",0L))){box.addView(ui.text(title));val spinner=Spinner(this);spinner.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,VpnRttSettings.labels);spinner.setSelection(VpnRttSettings.values.indexOf(rtt.getLong(key,default)).coerceAtLeast(0));box.addView(spinner);spinner.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:android.widget.AdapterView<*>?){};override fun onItemSelected(p:android.widget.AdapterView<*>?,v:android.view.View?,pos:Int,id:Long){rtt.edit().putLong(key,VpnRttSettings.values[pos]).apply()}}}
   box.addView(ui.text("После сохранения применяется сразу. Отключение измерений не отключает служебные проверки и смену сети."))
-  box=ui.card(panel);box.addView(ui.text("Фоновая работа VPN",18f,true))
-  box.addView(ui.text("На Xiaomi/MIUI разрешите автозапуск приложения в системных настройках. Очистка памяти может завершить VPN даже с постоянным уведомлением. При необходимости закрепите приложение в недавних и снимите ограничения батареи. Разрешение автозапуска не включает VPN после перезагрузки: подключение запускаете вы."))
-  box.addView(ui.button("Системные настройки приложения"){
-   runCatching{startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:$packageName")))}
-    .onFailure{Toast.makeText(this,"Откройте настройки Android → Приложения → QUIC Lab",Toast.LENGTH_LONG).show()}
-  })
   root.addView(ui.button("Сохранить",true){save{}});EditorViewState.assign(root);ui.install(root);listOf(rtt,reserve,budget,meta).forEach{it.acceptInitialState()};initialising=false
  }
  private fun dirty()=!initialising && (listOf(rtt,reserve,budget,meta).any{it.dirty} || limit.text.toString()!=initialLimit)

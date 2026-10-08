@@ -217,7 +217,7 @@ class ProfileEditorActivity : Activity() {
         }
         val categories = LinearLayout(this)
         outer.addView(categories,1)
-        for (name in listOf("Подключение","Маршруты","Устойчивость","Ещё")) {
+        for (name in listOf("Подключение","Маршруты","Устойчивость","Доступ")) {
             categories.addView(Button(this).apply { text=name;isAllCaps=false;textSize=10f;isSingleLine=true;setPadding(dp(2),0,dp(2),0);setOnClickListener {category=name;showCategory()} },LinearLayout.LayoutParams(0,dp(52),1f))
         }
         fun section(title: String): LinearLayout {

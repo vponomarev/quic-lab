@@ -30,9 +30,10 @@ class MdmTelemetryActivity:Activity(){
   val panel=ui.column().apply{setPadding(ui.dp(16),ui.dp(8),ui.dp(16),ui.dp(16))}
   root.addView(ScrollView(this).apply{addView(panel)},LinearLayout.LayoutParams(-1,0,1f));ui.install(root)
   panel.addView(ui.text("Данные Wi-Fi и сот",22f,true))
-  panel.addView(ui.text("SSID/BSSID точки доступа, MCC/MNC, идентификаторы обслуживающей соты и уровень сигнала позволяют определить ваше местоположение. GPS-координаты не собираются. Полученные сервером данные сохраняются после отключения."))
   val state=MdmStore(this).read()
   if(state.binding==null){panel.addView(ui.text("Сначала подключите отдельную привязку MDM в разделе «Управление устройством»."));return}
+  status=ui.text("");panel.addView(status);handler.post(tick)
+  panel.addView(ui.text("Данные Wi-Fi и сот позволяют определить местоположение. GPS-координаты не собираются."))
   val controls=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
   consent=CheckBox(this).apply{
    text="Разрешить отправку";isChecked=state.rights.telemetry&&state.rights.geo
@@ -49,7 +50,6 @@ class MdmTelemetryActivity:Activity(){
    setOnCheckedChangeListener{_,v->MdmTelemetry.setWifiOnly(this@MdmTelemetryActivity,v)}
   })
   panel.addView(controls)
-  panel.addView(ui.text("Без галочки отправка разрешена и через LTE. «Только Wi-Fi» накапливает данные и отправляет пакетом через любой Wi-Fi. Очередь: до 24 часов / 50 МиБ."))
   panel.addView(ui.button("Начать сбор и отправку",true){
    if(!MdmTelemetryPolicy.consented(MdmStore(this).read())){
     Toast.makeText(this,"Включите MDM и разрешите отправку данных",Toast.LENGTH_LONG).show()
@@ -63,13 +63,14 @@ class MdmTelemetryActivity:Activity(){
    if(!MdmTelemetry.serverEnabled(this))MdmTelemetryService.stop(this)
    MdmTelemetry.status=if(MdmTelemetry.wanted(this))"Продолжается сбор по запросу сервера" else "Ручной сбор остановлен"
   })
+  panel.addView(ui.text("Без галочки отправка разрешена и через LTE. «Только Wi-Fi» накапливает данные и отправляет пакетом через любой Wi-Fi. Очередь: до 24 часов / 50 МиБ."))
+  panel.addView(ui.text("SSID/BSSID точки доступа, MCC/MNC, идентификаторы обслуживающей соты и уровень сигнала позволяют определить ваше местоположение. GPS-координаты не собираются. Полученные сервером данные сохраняются после отключения."))
   panel.addView(ui.button("Разрешения Android · сбор в фоне"){
    startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))
   })
   permissions=ui.text("");panel.addView(permissions);refreshPermissions()
   panel.addView(ui.text("Сбор сохраняется до вашей остановки, в том числе после обновления приложения. Для восстановления в фоне разрешите геопозицию «Всегда». При разрешении «При использовании» достаточно открыть приложение. GPS не запрашивается."))
   panel.addView(ui.text("Снятие разрешения полностью прекращает сбор и удаляет неотправленные данные. Пауза MDM также останавливает отправку."))
-  status=ui.text("");panel.addView(status);handler.post(tick)
  }
  override fun onResume(){
   super.onResume()

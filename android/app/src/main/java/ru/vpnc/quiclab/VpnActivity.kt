@@ -104,11 +104,16 @@ class VpnActivity:Activity() {
  private fun diagnostics(){
   val card=ui.card(content);card.addView(ui.text("Проверка связи",18f,true));card.addView(ui.text("Echo проверяет передачу данных через выход. Самостоятельное сравнение транспортов доступно внутри диагностики."))
   ui.add(card,ui.button("Echo · диагностика сетей"){startActivity(Intent(this,EchoActivity::class.java))})
-  ui.add(card,ui.button("Отчёт для диагностики"){Diagnostics.preview(this,"VPN: ${LabVpnService.status}")})
-  ui.add(card,ui.button("Диагностика и отправка журналов"){startActivity(Intent(this,DiagnosticsSettingsActivity::class.java))})
-  content.addView(ui.text("Последние события",16f,true));logs=ui.text("");content.addView(logs)
+  val journals=ui.card(content);journals.addView(ui.text("Журналы и отправка",18f,true))
+  ui.add(journals,ui.button("Экспорт отчёта"){Diagnostics.preview(this,"VPN: ${LabVpnService.status}")})
+  ui.add(journals,ui.button("Диагностика и отправка журналов"){startActivity(Intent(this,DiagnosticsSettingsActivity::class.java))})
+  val events=ui.card(content);events.addView(ui.text("Последние события",18f,true));logs=ui.text("");events.addView(logs)
  }
  private fun settings(){
+  val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
+  ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
+  ui.add(card,ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
+  ui.add(card,ui.button("Разрешения и фоновая работа"){startActivity(Intent(this,PermissionsActivity::class.java))})
   val updates=ui.card(content);updates.addView(ui.text("Обновление приложения",18f,true))
   updates.addView(ui.text("Установлено: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"))
   updateStatus=ui.text(ApplicationUpdates.status(this)).apply{accessibilityLiveRegion=android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE};updates.addView(updateStatus)
@@ -119,11 +124,6 @@ class VpnActivity:Activity() {
   updateProgress=ProgressBar(this).apply{isIndeterminate=true;contentDescription="Проверяем обновления"};updates.addView(updateProgress,LinearLayout.LayoutParams(ui.dp(28),ui.dp(28)))
   updateCheck=ui.button("Проверить обновления"){checkUpdates(true)};ui.add(updates,updateCheck!!);refreshUpdateStatus()
 
-  val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
-  ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
-  ui.add(card,ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
-  ui.add(card,ui.button("Разрешить сведения о сети"){requestPermissions(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION,android.Manifest.permission.ACCESS_FINE_LOCATION),21)})
-  ui.add(card,ui.button("Разрешения приложения"){startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:$packageName")))})
   val about=ui.card(content);about.addView(ui.text("О приложении",18f,true));about.addView(ui.text("Версия ${BuildConfig.VERSION_NAME}\nIPv4 · IPv6 для трафика VPN блокируется\nЗакрытие экрана не отключает работающий VPN."))
  }
  private fun setText(view:TextView?,value:String){if(view?.text?.toString()!=value)view?.text=value}

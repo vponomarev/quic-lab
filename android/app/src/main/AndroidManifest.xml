@@ -48,6 +48,7 @@
         <activity android:name=".ProfileEditorActivity" android:exported="false" />
         <service android:name=".DiagnosticsUploadJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
 <activity android:name=".DiagnosticsSettingsActivity" android:exported="false" />
+<activity android:name=".PermissionsActivity" android:exported="false" />
 <activity android:name=".AppSettingsActivity" android:exported="false" />
         <activity android:name=".VpnActivity" android:exported="false" />
         <activity android:name=".EchoActivity" android:exported="false" />
