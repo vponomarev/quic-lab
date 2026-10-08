@@ -12,9 +12,11 @@ class MdmEnrollActivity:Activity(){
  private lateinit var ui:ClientUi
  private lateinit var panel:LinearLayout
  private lateinit var status:TextView
+ private var telemetryButton:Button?=null
  private val statusHandler=android.os.Handler(android.os.Looper.getMainLooper())
  private val statusTick=object:Runnable{
   override fun run(){
+   refreshTelemetryButton()
    if(::status.isInitialized && !busy && status.text.startsWith("MDM")){
     runCatching{MdmRuntime.controller(this@MdmEnrollActivity).read()}.getOrNull()?.let{
      if(it.active)status.text=MdmService.status
@@ -23,7 +25,7 @@ class MdmEnrollActivity:Activity(){
    statusHandler.postDelayed(this,1000)
   }
  }
- override fun onResume(){super.onResume();MdmRuntime.restore(this,foreground=true);statusHandler.post(statusTick)}
+ override fun onResume(){super.onResume();MdmRuntime.restore(this,foreground=true);refreshTelemetryButton();statusHandler.post(statusTick)}
  override fun onPause(){statusHandler.removeCallbacks(statusTick);super.onPause()}
  private var busy=false
  private var invitation:MdmInvitation?=null
@@ -42,7 +44,7 @@ class MdmEnrollActivity:Activity(){
   catch(_:Exception){panel.addView(ui.text("Не удалось открыть MDM. Проверьте приглашение или состояние хранилища."))}
  }
  private fun render(){
-  panel.removeAllViews();checks.clear()
+  panel.removeAllViews();checks.clear();telemetryButton=null
   val controller=MdmRuntime.controller(this)
   val state=controller.read()
   panel.addView(ui.text("Управление устройством",22f,true))
@@ -57,7 +59,8 @@ class MdmEnrollActivity:Activity(){
     }
    })
    panel.addView(ui.text("Пауза полностью отключает управление. Привязка сохранится; вы сможете возобновить её."))
-   panel.addView(ui.button("Данные Wi-Fi и сот"){startActivity(Intent(this,MdmTelemetryActivity::class.java))})
+   telemetryButton=ui.button("Данные Wi-Fi и сот"){startActivity(Intent(this,MdmTelemetryActivity::class.java))}
+   panel.addView(telemetryButton);refreshTelemetryButton()
    rights(state.rights)
    panel.addView(ui.button("Сохранить права"){val selected=selectedRights();work{controller.setRights(selected)}})
    panel.addView(ui.button("Удалить MDM"){
@@ -98,6 +101,13 @@ class MdmEnrollActivity:Activity(){
    val selected=selectedRights()
    work{controller.enroll(proposed,selected);MdmService.start(this)}
   })
+ }
+ private fun refreshTelemetryButton(){
+  val button=telemetryButton ?: return
+  val enabled=runCatching{MdmTelemetry.wanted(this)}.getOrNull()
+  val label=(when(enabled){true->"☑ ";false->"☐ ";null->"? "})+"Данные Wi-Fi и сот"
+  if(button.text.toString()!=label)button.text=label
+  button.contentDescription="Данные Wi-Fi и сот. "+when(enabled){true->"Сбор включён. Открыть настройки";false->"Сбор выключен. Открыть настройки";null->"Состояние недоступно. Открыть настройки"}
  }
  private fun rights(value:MdmRights){
   fun check(right:MdmRight,label:String,selected:Boolean){
