@@ -47,11 +47,7 @@ func (s *Store) Pause(id string, epoch int64, now time.Time) error {
 func (s *Store) SetDesired(id string, expected int64, mode string, document json.RawMessage) (ConfigRevision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if (mode != "current" && mode != "external") || len(document) > 1<<20 || !json.Valid(document) {
-		return ConfigRevision{}, ErrInvalid
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(document, &obj) != nil || obj == nil {
+	if (mode != "current" && mode != "external") || ValidateDocument(document) != nil {
 		return ConfigRevision{}, ErrInvalid
 	}
 	b, ok := s.state.Bindings[id]

@@ -65,3 +65,31 @@ Next: implement Task 4 atomic
 current/external configuration layers and mutator rights, Task 5 VPN commands,
 Task 6 admin/bootstrap, Task 7 integrated acceptance and whole-branch review.
 Telemetry, remote helper, and research mode remain outside this core package.
+
+## Task 4 — configuration transaction foundation (in progress)
+
+Implemented the bounded schema-1 document validator, used by server SetDesired and
+the mobile native API. It rejects unknown fields, duplicate JSON keys, null/type
+coercion, invalid profile references, invalid routing/pool values and unsafe
+credential formats. Invalid input never advances the desired revision.
+
+Added MdmConfigurationStore: encrypted AtomicFile snapshots, current/external
+transitions, same-profile credential preservation with explicit removal, binding
+ownership, revision deduplication, and idempotent external cleanup. No runtime
+config reader, mutator or poll consumer is connected yet: this is a storage
+foundation, NOT completed remote configuration management.
+
+Verification on 2026-10-08:
+- RED: missing ValidateDocument / ValidateMDMConfiguration and Android store.
+- Routing-type regression RED, then GREEN after aligning mode with Android Int.
+- Linux internal/mdm race x3 PASS (2.829s), vet PASS; mobile TestMDM race PASS.
+- APK + instrumentation APK + lint PASS.
+- Dedicated Redmi dc69eb2c API30: final 21 tests PASS / 12.104s
+  (configuration store, MDM storage/lifecycle, existing VPN configuration/profiles).
+- Note12Pro and production untouched by this MDM work.
+
+Remaining Task4 gates: capture complete existing native identity bundles; make
+configuration/profile/identity readers authoritative; enforce permissions on
+every editor/import/update mutation including stale drafts; connect pause/delete
+cleanup with active VPN and persistent recovery; synchronize applied revision
+and report failures. The store's detach alone does not stop any VPN.

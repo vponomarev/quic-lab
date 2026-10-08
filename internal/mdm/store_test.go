@@ -102,14 +102,14 @@ func TestResumeDropsCommands(t *testing.T) {
 }
 func TestRevisionCASAndRestart(t *testing.T) {
 	s, b, _ := fixture(t)
-	r, e := s.SetDesired(b.ID, 0, "current", json.RawMessage(`{"schema":1}`))
+	r, e := s.SetDesired(b.ID, 0, "current", json.RawMessage(validDocument))
 	if e != nil || r.Revision != 1 {
 		t.Fatal(e)
 	}
-	if _, e = s.SetDesired(b.ID, 0, "external", json.RawMessage(`{}`)); e == nil {
+	if _, e = s.SetDesired(b.ID, 0, "external", json.RawMessage(validDocument)); e == nil {
 		t.Fatal("stale revision accepted")
 	}
-	if _, e = s.SetDesired(b.ID, 1, "shell", json.RawMessage(`{}`)); e == nil {
+	if _, e = s.SetDesired(b.ID, 1, "shell", json.RawMessage(validDocument)); e == nil {
 		t.Fatal("invalid mode")
 	}
 	b, _ = s.Activate(b.ID, testNow)
@@ -232,11 +232,11 @@ func TestWriteFailureDoesNotPublishRevision(t *testing.T) {
 	s, b, _ := fixture(t)
 	original := s.dir
 	s.dir = filepath.Join(s.dir, "missing", "child")
-	if _, e := s.SetDesired(b.ID, 0, "current", json.RawMessage(`{}`)); e == nil {
+	if _, e := s.SetDesired(b.ID, 0, "current", json.RawMessage(validDocument)); e == nil {
 		t.Fatal("write failure ignored")
 	}
 	s.dir = original
-	r, e := s.SetDesired(b.ID, 0, "current", json.RawMessage(`{}`))
+	r, e := s.SetDesired(b.ID, 0, "current", json.RawMessage(validDocument))
 	if e != nil || r.Revision != 1 {
 		t.Fatal("failed write changed state", e)
 	}
