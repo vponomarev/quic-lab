@@ -13,7 +13,8 @@ internal object MdmDeviceReport {
   store.edit{j->if(j.optString("report_config_hash")!=fingerprint)j.put("report_config_hash",fingerprint).put("report_config_generation",Math.addExact(j.optLong("report_config_generation"),1))}
   store.document().optLong("report_config_generation")
  }
- fun snapshot(context:Context,state:MdmState):JSONObject=synchronized(MdmConfiguration.lock){
+ fun snapshot(context:Context,state:MdmState):JSONObject {
+  val result=synchronized(MdmConfiguration.lock){
   check(state.active && !state.cleanupPending)
   val store=MdmStore(context)
   val result=JSONObject().put("version",1).put("name",("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").take(100))
@@ -26,6 +27,16 @@ internal object MdmDeviceReport {
    val fingerprint=hash(document.toString())
    store.edit{j->if(j.optString("report_config_hash")!=fingerprint){j.put("report_config_hash",fingerprint).put("report_config_generation",Math.addExact(j.optLong("report_config_generation"),1))};generation=j.optLong("report_config_generation")}
    result.put("configuration",document)
+
+  }
+  store.edit{j->j.put("report_sequence",Math.addExact(j.optLong("report_sequence"),1));result.put("sequence",j.getLong("report_sequence"))}
+  result.put("configGeneration",generation)
+  }
+  // PackageManager may spend seconds loading installed application labels.
+  // Keep only the coherent config snapshot under the lock shared with the UI.
+  // MdmController.report rechecks the consent generation before sending.
+  if(state.rights.config){
+   val store=MdmStore(context)
    val pm=context.packageManager
    val launchable=pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),0).associate{it.activityInfo.packageName to it.loadLabel(pm).toString()}
    val entries=JSONArray()
@@ -37,7 +48,6 @@ internal object MdmDeviceReport {
    if(store.document().optString("inventory_ack")!=inventoryHash)inventory.put("entries",entries)
    result.put("inventory",inventory)
   }
-  store.edit{j->j.put("report_sequence",Math.addExact(j.optLong("report_sequence"),1));result.put("sequence",j.getLong("report_sequence"))}
-  result.put("configGeneration",generation)
+  return result
  }
 }

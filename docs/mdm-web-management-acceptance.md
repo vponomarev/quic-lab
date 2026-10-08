@@ -46,3 +46,13 @@ This section supersedes the earlier pending-consent and unpublished-APK status.
 - Fixed candidate installed on Redmi. Remote start and revision 3 (original configuration) succeeded; server acknowledged revision and running VPN. Original observed configuration equals the backup exactly. HTTPS example.com probe returned vpn=true/ok=true. Normal launcher opened VpnActivity in 246 ms. Last-ANR timestamp remained the original 23:29:06 throughout these checks; this is a bounded reproduction check, not a long-duration soak.
 - Published 0.9.1-pre.9 (49). Public capabilities and downloaded APK verified. SHA256: f60460f39bc601ee15e958e7ca013b1b3fe0e2b0f5daed8070acfd7753f5c673. Server service restarted for version metadata; MDM report after restart confirms original settings and VPN running.
 - Remaining acceptance: two-editor/responsive browser checks (CDP stalled around native confirm), system-DNS hostname probe investigation, and Note12Pro/API34+ live acceptance. No claim of full phase completion.
+
+## Note12Pro follow-up ANR (pre.9)
+
+User repeated Save rights, Wi-Fi/cell screen, Back. Note12Pro 22101316UG runs Android 12/API31 (not API34). ANR at 2026-10-08 23:49:20 MSK. MIUI Scout captured main blocked in MdmConfiguration.token from Diagnostics.event, waiting on the configuration monitor held by mdm-control in MdmDeviceReport.snapshot. Logcat reports 6.168 seconds of contention. Later standard ANR traces show the already-released main loop, so those late traces alone miss the cause.
+
+The pre.9 store cache addressed repeated cryptographic reads but did not remove the slow PackageManager inventory/label scan from the shared configuration lock. pre.10 keeps the coherent settings/revision snapshot protected and collects application inventory outside that monitor. MdmController still rechecks the local consent generation before transmission.
+
+Regression packageInventoryDoesNotHoldConfigurationLock: RED on pre.9, GREEN after scope reduction. Related report/lifecycle/store: 16 tests PASS (12.168s), build/lint PASS (41s). Additional consent-change-during-inventory regression and report suite: 3 tests PASS (4.174s); revoked-generation reports never reach the gateway. pre.10(50) installed on both connected phones; Note12Pro VPN recovered after install. User repeated the original UI sequence on Note12Pro and confirmed it works. Server received pre.10 report with VPN running and inventory of 511 applications.
+
+Published pre.10(50); public capabilities and APK hash verified: cb329519efe384e7e2df12d2a1213076f5e6fc639a168e1c6d646c8a5205740e.
