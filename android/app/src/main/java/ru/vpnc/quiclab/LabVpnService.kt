@@ -71,7 +71,10 @@ class LabVpnService : VpnService() {
             )
         multipleMode = false
         status = "Подключаем…"
-        startForeground(42, vpnNotification())
+        AppServiceNotification.start(this, "vpn", content = {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (multipleMode) MultipleVpnState.notification(now) else notificationSnapshot(now)
+        })
         handler.postDelayed(notificationTick, 1000)
         try {
             // One shared meter survives every exit reconnect in this VPN run.
@@ -256,27 +259,9 @@ class LabVpnService : VpnService() {
         override fun run() {
             if (!active) return
             runCatching{budgetRun.checkpoint()}.onFailure{Diagnostics.event("vpn",JSONObject().put("event","budget_checkpoint_failed"))}
-            getSystemService(NotificationManager::class.java).notify(42, vpnNotification())
+            AppServiceNotification.refresh(this@LabVpnService)
             handler.postDelayed(this, 2000)
         }
-    }
-
-    private fun vpnNotification(): Notification {
-        val now = android.os.SystemClock.elapsedRealtime()
-        val content = if (multipleMode) MultipleVpnState.notification(now) else notificationSnapshot(now)
-        val open = PendingIntent.getActivity(this, 2, Intent(this, VpnActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val stop = PendingIntent.getService(this, 1, Intent(this, LabVpnService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, "vpn")
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentTitle(content.title)
-            .setContentText(content.text)
-            .setStyle(Notification.BigTextStyle().bigText(content.details))
-            .setContentIntent(open)
-            .addAction(Notification.Action.Builder(null, "Остановить", stop).build())
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .setOngoing(true)
-            .build()
     }
 
     override fun onRevoke() {
@@ -311,7 +296,7 @@ class LabVpnService : VpnService() {
         txRate=0.0; rxRate=0.0
         connection = "—"
         rtt = 0.0
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        AppServiceNotification.stop(this)
         if (!status.startsWith("Ошибка")) status = "VPN остановлен"
     }
 

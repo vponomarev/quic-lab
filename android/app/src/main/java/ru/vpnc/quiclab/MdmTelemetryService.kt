@@ -25,14 +25,7 @@ class MdmTelemetryService:Service(){
   if(!MdmTelemetry.wanted(this)){stopSelf();return START_NOT_STICKY}
   if(worker!=null)return START_NOT_STICKY
   try{
-   getSystemService(NotificationManager::class.java).createNotificationChannel(
-    NotificationChannel("mdm-radio","Передача данных Wi-Fi и сот",NotificationManager.IMPORTANCE_LOW))
-   val open=PendingIntent.getActivity(this,722,Intent(this,MdmTelemetryActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-   val stop=PendingIntent.getService(this,723,Intent(this,MdmTelemetryService::class.java).setAction("stop"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-   val notice=Notification.Builder(this,"mdm-radio").setSmallIcon(android.R.drawable.ic_menu_mylocation)
-    .setContentTitle("Передача данных Wi-Fi и сот").setContentText("MDM · сбор каждые 30 секунд")
-    .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null,"Отключить",stop).build()).build()
-   startForeground(722,notice,ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+   AppServiceNotification.start(this,"geo",ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
   }catch(_:Exception){
    MdmTelemetry.status="Android не разрешил сбор: откройте экран телеметрии и проверьте разрешение геопозиции"
    stopSelf();return START_NOT_STICKY
@@ -55,7 +48,7 @@ class MdmTelemetryService:Service(){
   },"mdm-radio").also{it.start()}
   return START_NOT_STICKY
  }
- override fun onDestroy(){ending.set(true);worker?.interrupt();running=false;super.onDestroy()}
+ override fun onDestroy(){ending.set(true);worker?.interrupt();running=false;AppServiceNotification.stop(this);super.onDestroy()}
  companion object{
   @Volatile var running=false
   fun start(c:Context){c.startForegroundService(Intent(c,MdmTelemetryService::class.java))}

@@ -42,15 +42,7 @@ class MdmService:Service(){
   if(selected==null){stopSelf();return START_NOT_STICKY}
   session=selected
   try{
-   val nm=getSystemService(NotificationManager::class.java)
-   nm.createNotificationChannel(NotificationChannel("mdm","Управление устройством",NotificationManager.IMPORTANCE_LOW))
-   val open=PendingIntent.getActivity(this,720,Intent(this,MdmEnrollActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-   val pause=PendingIntent.getService(this,721,Intent(this,MdmService::class.java).setAction("pause"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-   val notice=Notification.Builder(this,"mdm").setSmallIcon(android.R.drawable.ic_menu_manage)
-    .setContentTitle("Управление устройством").setContentText("MDM включено")
-    .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null,"Приостановить",pause).build()).build()
-   if(Build.VERSION.SDK_INT>=34)startForeground(720,notice,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-   else startForeground(720,notice)
+   AppServiceNotification.start(this,"mdm",if(Build.VERSION.SDK_INT>=34)ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
    VpnBudgetRun.sharedForContext(this).acquireControl(VpnBudgetSettings.limitBytes(this));retained=true
    status="MDM включено"
    handler.post(checkpoint)
@@ -76,7 +68,7 @@ class MdmService:Service(){
  override fun onDestroy(){
   ending.set(true);handler.removeCallbacks(checkpoint);session?.close();worker?.interrupt()
   if(retained){retained=false;runCatching{VpnBudgetRun.sharedForContext(this).releaseControl()}}
-  session=null;super.onDestroy()
+  session=null;AppServiceNotification.stop(this);super.onDestroy()
  }
  companion object {
   @Volatile internal var owner:((Context)->MdmSession?)?=null
