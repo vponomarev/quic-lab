@@ -109,3 +109,9 @@ func TestMDMCancelPoll(t *testing.T) {
 	}
 
 }
+func TestMDMReportOperation(t *testing.T) {
+	c, b, s, _ := mdmFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"accepted":true}`)) }))
+	if _, e := c.Exchange(s.URL+"/mdm/v1/report", "secret", "{}", b.Bind(nil, "wifi")); e != nil {
+		t.Fatal(e)
+	}
+}

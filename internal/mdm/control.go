@@ -113,7 +113,7 @@ func validEvent(e Event) bool {
 		return false
 	}
 	switch e.Kind {
-	case "vpn_start", "vpn_stop", "command_result", "config_result", "rights_changed", "gap":
+	case "vpn_start", "vpn_stop", "command_result", "config_result", "config_vpn_result", "rights_changed", "gap":
 		return true
 	}
 	return false

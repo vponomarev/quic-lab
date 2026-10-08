@@ -23,6 +23,9 @@ class LabVpnService : VpnService() {
     private var starting = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if(intent?.getBooleanExtra("mdm_restart",false)==true && intent.getLongExtra("mdm_user_stop",-1)!=MdmStore(this).document().optLong("user_stop"))return restartPolicy()
+        val required=intent?.getLongExtra("mdm_required_generation",-1)?:-1
+        if(required>=0){val s=MdmStore(this).read();if(!s.active || s.cleanupPending || s.localGeneration!=required || (if(intent?.getStringExtra("mdm_right")=="vpn")!s.rights.vpn else !s.rights.config))return restartPolicy()}
         liveService=this
         Diagnostics.init(applicationContext)
         if (intent?.action == "toggle-profile") {
@@ -33,6 +36,7 @@ class LabVpnService : VpnService() {
             return restartPolicy()
         }
         if (intent?.action == "stop") {
+            runCatching{MdmStore(this).edit{it.put("user_stop",Math.addExact(it.optLong("user_stop"),1))};MdmVpnControl.event(this,"vpn_stop",actor="user")}
             Diagnostics.event("vpn", JSONObject().put("event", "stop_requested"))
             shutdown(clearBudget=true)
             val local = getSharedPreferences("vpn_lifecycle", MODE_PRIVATE)
@@ -84,7 +88,7 @@ class LabVpnService : VpnService() {
             if (VpnProfiles.multiple(this)) {
                 val plan=MultipleVpnPlan.load(this)
                 VpnDashboardEvents.beginRun(dashboardRunId,plan.profiles.associate {it.id to it.name}) {runBudget.snapshot()}
-                tun=Builder().setSession("QUIC Lab · multiple").setMtu(1280).addAddress("10.254.254.1",32)
+                tun=Builder().setSession("QUIC Lab В· multiple").setMtu(1280).addAddress("10.254.254.1",32)
                     .addRoute("0.0.0.0",0).addDnsServer(plan.dns).addDisallowedApplication(packageName)
                     .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
                 budgetRun.setResumeEligible(true)
@@ -236,13 +240,19 @@ class LabVpnService : VpnService() {
                 if(id==exitId && active) try {singleRouter?.blockExit(id);starting=false;controller.start(id);session=controller.session(id);status="Переподключаем обновлённый выход…"}
                 catch(_:Exception) {status="Обновлённый выход заблокирован: переподключение не удалось"}
             }}
-            status = "Подключаем ${cfg.optString("transport").uppercase()}…"
+            status = "Подключаем ${cfg.optString("transport").uppercase()}вЂ¦"
         } catch (e: Exception) {
             status = "Ошибка: ${e.message}"
             Diagnostics.event("vpn", JSONObject().put("event","start_failed").put("error",e.toString()))
             runCatching{budgetRun.setResumeEligible(false)}
             shutdown()
             stopSelf()
+        }
+        runCatching{
+            val commandID=intent?.getStringExtra("mdm_command_id")
+            if(commandID!=null)MdmVpnControl.event(this,"command_result",if(active)"running" else "vpn_start_failed",commandID=commandID)
+            else if(intent?.getBooleanExtra("mdm_restart",false)==true)MdmVpnControl.event(this,"config_vpn_result",if(active)"running" else "vpn_start_failed",revision=intent.getLongExtra("mdm_revision",0))
+            else if(intent!=null && !intent.getBooleanExtra("mdm_restart",false))MdmVpnControl.event(this,"vpn_start",if(active)"running" else "vpn_start_failed",actor="user")
         }
         return restartPolicy()
     }
@@ -308,6 +318,7 @@ class LabVpnService : VpnService() {
 
     companion object {
         @Volatile private var liveService: LabVpnService? = null
+        internal fun stopForMdm(clearBudget:Boolean=false){check(Looper.myLooper()==Looper.getMainLooper());liveService?.let{it.shutdown(clearBudget);it.stopSelf()}}
         /** Diagnostics never create a service, a VPN run, or a replacement exit. */
         internal fun echoExits(): Map<String,String> {
             val service = liveService?.takeIf { active } ?: return emptyMap()
@@ -411,8 +422,8 @@ class LabVpnService : VpnService() {
             val latency = "RTT ${rttLabel(now)}"
             val state = if(lastEcho > 0 && !fresh) "Нет свежих ответов · $status" else status
             return VpnNotificationContent(
-                "${vpnNetworkLabel(network)} · ${transport.uppercase()}",
-                "$rate · $latency",
+                "${vpnNetworkLabel(network)} В· ${transport.uppercase()}",
+                "$rate В· $latency",
                 "$state\n$rate · $latency\nВсего ↑ ${vpnBytes(txBytes.toDouble())} · ↓ ${vpnBytes(rxBytes.toDouble())}",
             )
         }
@@ -443,7 +454,7 @@ class LabVpnService : VpnService() {
             }
             val now=android.os.SystemClock.elapsedRealtime()
             if(kind=="traffic" || kind=="profile_traffic") {
-                flowSummary="Потоки TCP/UDP: ${e.optLong("tcp_flows")}/${e.optLong("udp_flows")} · UDP пакеты ↑${e.optLong("udp_tx")} ↓${e.optLong("udp_rx")}\nUDP отклонено потоков: ${e.optLong("udp_rejected")} · DATAGRAM локальные сбросы: ${e.optLong("datagram_drops")}"
+                flowSummary="Потоки TCP/UDP: ${e.optLong("tcp_flows")}/${e.optLong("udp_flows")} · UDP пакеты ↑${e.optLong("udp_tx")} в†“${e.optLong("udp_rx")}\nUDP отклонено потоков: ${e.optLong("udp_rejected")} · DATAGRAM локальные сбросы: ${e.optLong("datagram_drops")}"
                 val tx=e.optLong("tx_bytes"); val rx=e.optLong("rx_bytes")
                 val seconds=(now-trafficAt).coerceAtLeast(1)/1000.0
                 txRate=(tx-txBytes).coerceAtLeast(0)/seconds

@@ -99,6 +99,7 @@ internal object MdmConfiguration {
    .put("enabledProfileIds",JSONArray(VpnProfiles.enabled(c).sorted())).put("multiple",VpnProfiles.multiple(c))
    .put("globalApps",JSONArray(VpnProfiles.globalApps(c).sorted()))
    .put("dns",JSONObject().put("mode",VpnProfiles.dnsMode(c)).put("profileId",VpnProfiles.dnsProfile(c).ifEmpty{current}))
+   .put("reserve",JSONObject().also{r->val p=VpnReserveSettings.preferences(c);for(k in listOf("wifi_on","wifi_off","cell_on","cell_off","metered_wifi"))r.put(k,p.getBoolean(k,k.startsWith("wifi_")))})
    .put("budget",JSONObject().put("limitBytes",VpnBudgetSettings.limitBytes(c)))
    .put("diagnostics",JSONObject().put("enabled",DiagnosticsPolicy.enabled(c)).put("detailed",DiagnosticsPolicy.detailed(c)))
  }
@@ -129,6 +130,7 @@ internal object MdmConfiguration {
   val oldKeys=previous.getJSONObject("identities")
   val prefs=JSONObject();val keys=JSONObject();val names=JSONArray()
   for(name in listOf("vpn_rtt","vpn_reserve"))prefs.put(name,JSONObject((oldPrefs.optJSONObject(name)?:JSONObject()).toString()))
+  doc.optJSONObject("reserve")?.let{prefs.put("vpn_reserve",JSONObject(it.toString()))}
   val items=doc.getJSONArray("profiles")
   for(i in 0 until items.length()){
    val p=items.getJSONObject(i);val id=p.getString("id")

@@ -21,6 +21,7 @@ import (
 // ConfigurationDocument is a complete desired application configuration, not a
 // map of SharedPreferences or Android permissions. Credentials are never logged.
 type ConfigurationDocument struct {
+	Reserve           map[string]bool          `json:"reserve,omitempty"`
 	Schema            int                      `json:"schema"`
 	Profiles          []ConfigurationProfile   `json:"profiles"`
 	CurrentProfileID  string                   `json:"currentProfileId"`
@@ -101,6 +102,11 @@ func ValidateDocument(raw json.RawMessage) error {
 			if _, ok := m[k]; !ok {
 				return ErrInvalid
 			}
+		}
+	}
+	for k := range d.Reserve {
+		if !oneOf(k, "wifi_on", "wifi_off", "cell_on", "cell_off", "metered_wifi") {
+			return ErrInvalid
 		}
 	}
 	ids := map[string]bool{}

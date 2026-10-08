@@ -81,7 +81,7 @@ internal class MdmStore(private val file:File,private val alias:String="quic-lab
      MdmRights.parse(it.getJSONObject("requestedRights")),it.optBoolean("active"))
    }
    return MdmState(b,j.optBoolean("active") && b!=null,j.getLong("generation"),
-    MdmRights.parse(j.optJSONObject("rights")?:JSONObject()),j.optBoolean("cleanupPending"),
+    MdmRights.parse(j.optJSONObject("rights")?:JSONObject()),j.optBoolean("cleanupPending") || j.optBoolean("configCleanupPending"),
     j.has("pending"),j.optLong("appliedRevision"))
   }
  }

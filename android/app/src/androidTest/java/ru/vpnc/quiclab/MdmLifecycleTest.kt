@@ -83,4 +83,28 @@ class MdmLifecycleTest {
   assertFalse("Granting consent again must not restart old collection",store.document().optBoolean("radio_manual"))
  }
 
+ @Test fun configRevocationCleanupSurvivesCrash()=fixture{store,c,server->
+  c.enroll(invite,MdmRights(config=true,vpn=true))
+  val broken=MdmController(store,{server.gateway()},{},{error("cleanup interrupted")})
+  assertTrue(runCatching{broken.setRights(MdmRights(vpn=true))}.isFailure)
+  assertTrue("revocation must journal cleanup",store.read().cleanupPending)
+  var cleaned=false
+  MdmController(store,{server.gateway()},{},{cleaned=true}).recover()
+  assertTrue(cleaned);assertFalse(store.read().cleanupPending);assertFalse(store.read().rights.config)
+ }
+
+ @Test fun concurrentMainPauseDoesNotDeadlockCleanup()=fixture{store,c,server->
+  c.enroll(invite,MdmRights(config=true,vpn=true))
+  val gate=java.util.concurrent.CountDownLatch(1);val done=java.util.concurrent.CountDownLatch(1)
+  val controller=MdmController(store,{server.gateway()},{MdmApplyCoordinator.onMain{}},{gate.countDown();MdmApplyCoordinator.onMain{}})
+  val worker=Thread{runCatching{controller.setRights(MdmRights(vpn=true))}}
+  android.os.Handler(android.os.Looper.getMainLooper()).post{
+   gate.await(500,java.util.concurrent.TimeUnit.MILLISECONDS)
+   try{controller.pause()}finally{done.countDown()}
+  }
+  worker.start()
+  try{assertTrue("main/controller cleanup deadlock",done.await(3,java.util.concurrent.TimeUnit.SECONDS))}
+  finally{worker.join(20000);done.await(20,java.util.concurrent.TimeUnit.SECONDS)}
+ }
+
 }

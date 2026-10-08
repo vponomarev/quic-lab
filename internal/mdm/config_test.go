@@ -69,3 +69,17 @@ func TestConfigInvalidDoesNotChangeRevision(t *testing.T) {
 		t.Fatalf("lost CAS: %v", err)
 	}
 }
+func TestConfigurationReserve(t *testing.T) {
+	raw := strings.Replace(validDocument, `"schema":1`, `"schema":1,"reserve":{"wifi_on":true,"wifi_off":true,"cell_on":false,"cell_off":false,"metered_wifi":false}`, 1)
+	if e := ValidateDocument(json.RawMessage(raw)); e != nil {
+		t.Fatal(e)
+	}
+	bad := strings.Replace(raw, `"wifi_on":true`, `"wifi_on":"true"`, 1)
+	if ValidateDocument(json.RawMessage(bad)) == nil {
+		t.Fatal("coercion")
+	}
+	bad = strings.Replace(raw, `"wifi_on":true`, `"shell":true`, 1)
+	if ValidateDocument(json.RawMessage(bad)) == nil {
+		t.Fatal("unknown reserve")
+	}
+}

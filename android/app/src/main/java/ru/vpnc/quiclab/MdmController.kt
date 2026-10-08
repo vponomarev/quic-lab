@@ -44,17 +44,17 @@ internal class MdmController(
  private val calls=ConcurrentHashMap<MdmGateway,Boolean>()
  fun read()=store.read()
  private fun mutate(change:(JSONObject)->Unit):MdmState=synchronized(this){synchronized(MdmConfiguration.lock){store.edit(change)}}
- @Synchronized fun recover(){
-  if(!store.read().cleanupPending)return
-  cleanup()
+ fun recover(){ MdmApplyCoordinator.onMain { synchronized(this) {
+  if(!store.read().cleanupPending)return@synchronized
+  if(store.document().optBoolean("configCleanupPending") && !store.document().optBoolean("cleanupPending"))rightsChanged() else cleanup()
   mutate{j->
    if(j.optBoolean("deletePending")){
     val generation=Math.addExact(j.getLong("generation"),1)
     j.keys().asSequence().toList().forEach{j.remove(it)}
     j.put("schema",1).put("generation",generation)
-   }else j.put("cleanupPending",false)
+   }else {j.put("cleanupPending",false);j.remove("configCleanupPending")}
   }
- }
+ } } }
  fun enroll(invitation:MdmInvitation,rights:MdmRights):MdmState {
   recover()
   val state=mutate{j->
@@ -95,10 +95,10 @@ internal class MdmController(
   check(activated.id==b.id && activated.active && activated.epoch>b.epoch){"Неверная эпоха MDM"}
   return mutate{j->
    check(j.getLong("generation")==state.localGeneration && j.has("binding") && !j.optBoolean("cleanupPending")){"Возобновление отменено"}
-   j.put("binding",MdmStore.bindingJson(activated)).put("active",true)
+   j.put("binding",MdmStore.bindingJson(activated)).put("active",true).put("resume_config",true)
   }
  }
- @Synchronized fun pause(){
+ fun pause(){ MdmApplyCoordinator.onMain { synchronized(this) {
   val before=store.read();val secret=store.secret()
   val paused=mutate{j->
    j.put("active",false).put("radio_manual",false).put("cleanupPending",true).put("generation",Math.addExact(j.getLong("generation"),1))
@@ -106,20 +106,21 @@ internal class MdmController(
   cancelCalls()
   recover()
   before.binding?.let{b->notifyPause(b,secret,paused.localGeneration)}
- }
- @Synchronized fun delete(){
+ } } }
+ fun delete(){ MdmApplyCoordinator.onMain { synchronized(this) {
   mutate{j->j.put("active",false).put("radio_manual",false).put("cleanupPending",true).put("deletePending",true)
    .put("generation",Math.addExact(j.getLong("generation"),1))}
   cancelCalls();recover()
- }
- @Synchronized fun setRights(rights:MdmRights){
+ } } }
+ fun setRights(rights:MdmRights){ MdmApplyCoordinator.onMain { synchronized(this) {
   mutate{j->
    check(j.has("binding")){"Нет привязки MDM"}
+   if(j.optJSONObject("rights")?.optBoolean("config")==true && !rights.config)j.put("configCleanupPending",true)
    j.put("rights",rights.json()).put("generation",Math.addExact(j.getLong("generation"),1))
    if(!rights.geo || !rights.telemetry)j.put("radio_manual",false)
   }
-  cancelCalls();rightsChanged()
- }
+  cancelCalls();if(store.read().cleanupPending)recover() else rightsChanged()
+ } } }
  fun authorize(generation:Long,right:MdmRight):Boolean {
   val s=store.read()
   if(!s.active || s.cleanupPending || s.localGeneration!=generation)return false
@@ -132,8 +133,10 @@ internal class MdmController(
   val state=store.read()
   if(!state.active || state.cleanupPending)return false
   val b=state.binding?:return false
+  val events=store.document().optJSONArray("events")?:org.json.JSONArray()
+  val sent=org.json.JSONArray();for(i in 0 until minOf(100,events.length()))sent.put(events.getJSONObject(i))
   val response=MdmSyncResponse.parse(send(b,"sync",
-   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,grantedRights=state.rights).json(),state.localGeneration,store.secret()).toString())
+   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,grantedRights=state.rights).json(),state.localGeneration,store.secret()).toString())
   synchronized(this){
    val latest=store.read()
    if(!latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
@@ -141,6 +144,8 @@ internal class MdmController(
    synchronized(MdmConfiguration.lock){
     val permitted=store.read()
     if(!permitted.active || permitted.cleanupPending || permitted.localGeneration!=state.localGeneration)return false
+    val ids=(0 until sent.length()).map{sent.getJSONObject(it).getString("id")}.toSet()
+    store.edit{j->val pending=j.optJSONArray("events")?:org.json.JSONArray();val keep=org.json.JSONArray();for(i in 0 until pending.length())if(pending.getJSONObject(i).optString("id") !in ids)keep.put(pending.getJSONObject(i));j.put("events",keep)}
     consume(permitted,response)
    }
   }
@@ -151,7 +156,12 @@ internal class MdmController(
   val b=before.binding?:return false
   val report=build(before)
   val latest=read();if(!latest.active || latest.localGeneration!=before.localGeneration)return false
-  send(b,"report",JSONObject().put("bindingId",b.id).put("epoch",b.epoch).put("report",report),before.localGeneration,store.secret())
+  try{send(b,"report",JSONObject().put("bindingId",b.id).put("epoch",b.epoch).put("report",report),before.localGeneration,store.secret())}
+  catch(e:Exception){store.edit{it.remove("inventory_ack")};throw e}
+  synchronized(this){if(read().localGeneration==before.localGeneration)store.edit{j->
+   val hash=report.optJSONObject("inventory")?.optString("hash")
+   if(hash!=null)j.put("inventory_ack",hash)else j.remove("inventory_ack")
+  }}
   return true
  }
  internal fun cancelCalls(){calls.keys.forEach{runCatching{it.close()}}}

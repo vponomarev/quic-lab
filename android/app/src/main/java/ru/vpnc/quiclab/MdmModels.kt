@@ -33,7 +33,7 @@ internal data class MdmSyncRequest(val bindingId:String,val epoch:Long,val appli
   .put("appliedRevision",appliedRevision).put("events",events).put("wait",wait)
   .also{if(grantedRights!=null)it.put("grantedRights",grantedRights.json())}
 }
-internal data class MdmConfigRevision(val revision:Long,val mode:String,val document:JSONObject)
+internal data class MdmConfigRevision(val revision:Long,val mode:String,val document:JSONObject,val expectedGeneration:Long=-1)
 internal data class MdmCommand(val id:String,val bindingId:String,val epoch:Long,val issuedAt:Instant,
  val expiresAt:Instant,val kind:String)
 internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRevision?,val commands:List<MdmCommand>,
@@ -43,7 +43,7 @@ internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRe
    val j=JSONObject(raw);require(j.getInt("version")==1)
    val config=j.optJSONObject("desiredConfig")?.let {
     val mode=it.getString("mode");require(mode=="current"||mode=="external")
-    MdmConfigRevision(it.getLong("revision"),mode,it.getJSONObject("document"))
+    MdmConfigRevision(it.getLong("revision"),mode,it.getJSONObject("document"),it.optLong("expectedGeneration",-1))
    }
    val commands=j.optJSONArray("commands")?:JSONArray();require(commands.length()<=100)
    return MdmSyncResponse(j.getLong("epoch"),config,(0 until commands.length()).map { i ->
