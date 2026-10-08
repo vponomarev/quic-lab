@@ -42,10 +42,11 @@ internal class MdmController(
 ) {
  private val calls=ConcurrentHashMap<MdmGateway,Boolean>()
  fun read()=store.read()
+ private fun mutate(change:(JSONObject)->Unit):MdmState=synchronized(this){store.edit(change)}
  @Synchronized fun recover(){
   if(!store.read().cleanupPending)return
   cleanup()
-  store.edit{j->
+  mutate{j->
    if(j.optBoolean("deletePending")){
     val generation=Math.addExact(j.getLong("generation"),1)
     j.keys().asSequence().toList().forEach{j.remove(it)}
@@ -55,7 +56,7 @@ internal class MdmController(
  }
  fun enroll(invitation:MdmInvitation,rights:MdmRights):MdmState {
   recover()
-  val state=store.edit{j->
+  val state=mutate{j->
    check(!j.has("binding")){"Сначала удалите существующую привязку MDM"}
    val pending=j.optJSONObject("pending")
    if(pending!=null){
@@ -73,7 +74,7 @@ internal class MdmController(
    .put("registrationId",pending.getString("registrationId")).put("secret",saved.getString("secret"))
   val response=send(provisional,"enroll",req,state.localGeneration,saved.getString("secret"))
   val b=binding(response,invitation.endpoint)
-  store.edit{j->
+  mutate{j->
    check(j.getLong("generation")==state.localGeneration && j.has("pending")){"Регистрация отменена"}
    j.put("binding",MdmStore.bindingJson(b));j.remove("pending")
   }
@@ -81,7 +82,7 @@ internal class MdmController(
  }
  fun resume():MdmState {
   recover()
-  val state=store.edit{j->
+  val state=mutate{j->
    check(j.has("binding")){"Нет привязки MDM"}
    j.put("active",false).put("generation",Math.addExact(j.getLong("generation"),1))
   }
@@ -91,14 +92,14 @@ internal class MdmController(
    state.localGeneration,store.secret())
   val activated=binding(reply,b.endpoint)
   check(activated.id==b.id && activated.active && activated.epoch>b.epoch){"Неверная эпоха MDM"}
-  return store.edit{j->
+  return mutate{j->
    check(j.getLong("generation")==state.localGeneration && j.has("binding") && !j.optBoolean("cleanupPending")){"Возобновление отменено"}
    j.put("binding",MdmStore.bindingJson(activated)).put("active",true)
   }
  }
  @Synchronized fun pause(){
   val before=store.read();val secret=store.secret()
-  val paused=store.edit{j->
+  val paused=mutate{j->
    j.put("active",false).put("cleanupPending",true).put("generation",Math.addExact(j.getLong("generation"),1))
   }
   cancelCalls()
@@ -106,12 +107,12 @@ internal class MdmController(
   before.binding?.let{b->notifyPause(b,secret,paused.localGeneration)}
  }
  @Synchronized fun delete(){
-  store.edit{j->j.put("active",false).put("cleanupPending",true).put("deletePending",true)
+  mutate{j->j.put("active",false).put("cleanupPending",true).put("deletePending",true)
    .put("generation",Math.addExact(j.getLong("generation"),1))}
   cancelCalls();recover()
  }
  @Synchronized fun setRights(rights:MdmRights){
-  store.edit{j->
+  mutate{j->
    check(j.has("binding")){"Нет привязки MDM"}
    j.put("rights",rights.json()).put("generation",Math.addExact(j.getLong("generation"),1))
   }
@@ -124,6 +125,20 @@ internal class MdmController(
    MdmRight.CONFIG->s.rights.config;MdmRight.VPN->s.rights.vpn;MdmRight.TELEMETRY->s.rights.telemetry
    MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
   }
+ }
+ internal fun poll(consume:(MdmState,MdmSyncResponse)->Unit):Boolean{
+  val state=store.read()
+  if(!state.active || state.cleanupPending)return false
+  val b=state.binding?:return false
+  val response=MdmSyncResponse.parse(send(b,"sync",
+   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,grantedRights=state.rights).json(),state.localGeneration,store.secret()).toString())
+  synchronized(this){
+   val latest=store.read()
+   if(!latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
+   check(response.epoch==b.epoch){"Эпоха ответа MDM не совпадает"}
+   consume(latest,response)
+  }
+  return true
  }
  internal fun cancelCalls(){calls.keys.forEach{runCatching{it.close()}}}
  private fun send(b:MdmBinding,op:String,body:JSONObject,generation:Long,secret:String):JSONObject{

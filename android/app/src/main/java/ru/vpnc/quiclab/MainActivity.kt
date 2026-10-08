@@ -98,6 +98,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MdmRuntime.restore(this)
         if (intent.action == android.content.Intent.ACTION_MAIN &&
             intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER) &&
             !intent.getBooleanExtra("standalone_echo", false)) {

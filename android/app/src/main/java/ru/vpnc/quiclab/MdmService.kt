@@ -14,7 +14,7 @@ import kotlin.random.Random
 
 /** Lifecycle owner must check durable active state before returning a session.
  * Its pause persists revocation before returning. Wired by Task 3. */
-internal interface MdmSession:Closeable { fun sync();fun pause() }
+internal interface MdmSession:Closeable { fun sync();fun pause();fun isActive():Boolean=true }
 
 class MdmService:Service(){
  private var session:MdmSession?=null
@@ -33,17 +33,18 @@ class MdmService:Service(){
  override fun onBind(intent:Intent?):IBinder?=null
  override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
   if(intent?.action=="pause"){
-   try{session?.pause()}finally{stopSelf()}
+   try{val current=session;if(current!=null)current.pause() else MdmRuntime.controller(this).pause()}catch(_:Exception){status="Не удалось сохранить паузу MDM"}finally{stopSelf()}
    return START_NOT_STICKY
   }
   if(session!=null)return START_STICKY
-  val selected=owner?.invoke(applicationContext)?:run{stopSelf();return START_NOT_STICKY}
+  val selected=try{val factory=owner;if(factory!=null)factory(applicationContext) else MdmRuntime.session(applicationContext)}
+   catch(_:Exception){status="Хранилище MDM недоступно";stopSelf();return START_NOT_STICKY}
+  if(selected==null){stopSelf();return START_NOT_STICKY}
   session=selected
   try{
    val nm=getSystemService(NotificationManager::class.java)
    nm.createNotificationChannel(NotificationChannel("mdm","Управление устройством",NotificationManager.IMPORTANCE_LOW))
-   val open=PendingIntent.getActivity(this,720,Intent(this,MainActivity::class.java)
-    .setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+   val open=PendingIntent.getActivity(this,720,Intent(this,MdmEnrollActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
    val pause=PendingIntent.getService(this,721,Intent(this,MdmService::class.java).setAction("pause"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
    val notice=Notification.Builder(this,"mdm").setSmallIcon(android.R.drawable.ic_menu_manage)
     .setContentTitle("Управление устройством").setContentText("MDM включено")
@@ -56,8 +57,8 @@ class MdmService:Service(){
    worker=Thread({
     var delay=1000L
     while(!ending.get()){
-     try{selected.sync();delay=1000;status="MDM подключено"}
-     catch(_:InterruptedException){break}
+     try{if(!selected.isActive()){stopSelf();break};selected.sync();delay=1000;status="MDM подключено"}
+     catch(_:InterruptedException){stopSelf();break}
      catch(_:Exception){
       if(ending.get())break
       status="MDM: ожидание связи"

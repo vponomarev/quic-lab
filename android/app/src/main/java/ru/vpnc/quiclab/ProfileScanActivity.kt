@@ -16,7 +16,7 @@ class ProfileScanActivity : Activity() {
         val supplied=intent.getStringExtra("import_text")
         if(supplied!=null) { importText(supplied.trim());return }
         if(savedInstanceState==null) IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-            .setPrompt("QR QUIC Lab, AmneziaWG или VLESS").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
+            .setPrompt("QR QUIC Lab, AmneziaWG, VLESS или MDM").setBeepEnabled(false).setOrientationLocked(false).initiateScan()
     }
     @Deprecated("Activity result compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
@@ -27,6 +27,11 @@ class ProfileScanActivity : Activity() {
     }
     private fun importText(raw:String) {
         try {
+            if(raw.startsWith("quiclab://mdm/")){
+                MdmInvitation.parse(raw)
+                startActivity(Intent(this,MdmEnrollActivity::class.java).putExtra("mdm_invitation",raw))
+                finish();return
+            }
             check(!LabVpnService.active){"Сначала остановите VPN"}
             require(raw.length<=32768){"Конфигурация слишком большая"}
             if(raw.trimStart().startsWith("vless://")) {

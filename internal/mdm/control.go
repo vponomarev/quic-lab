@@ -125,7 +125,7 @@ func validEvent(e Event) bool {
 func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if req.Version != 1 || req.AppliedRevision < 0 || len(req.Events) > 100 {
+	if req.Version != 1 || req.AppliedRevision < 0 || len(req.Events) > 100 || req.GrantedRights != nil && !validRights(*req.GrantedRights) {
 		return SyncResponse{}, ErrInvalid
 	}
 	for _, v := range req.Events {
@@ -149,6 +149,14 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 	n := s.clone()
 	b = n.Bindings[id]
 	changed := false
+	if req.GrantedRights != nil && b.Binding.GrantedRights != *req.GrantedRights {
+		b.Binding.GrantedRights = *req.GrantedRights
+		if len(b.Audit) < 10000 {
+			raw, _ := json.Marshal(*req.GrantedRights)
+			b.Audit = append(b.Audit, auditEntry{Event: Event{ID: randomID(), Actor: "device", Kind: "rights_changed", Result: string(raw), OccurredAt: now}, ReceivedAt: now})
+		}
+		changed = true
+	}
 	for _, v := range req.Events {
 		if _, seen := b.Seen[v.ID]; seen {
 			continue

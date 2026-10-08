@@ -30,6 +30,14 @@
         <receiver android:name=".MdmBootReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.USER_UNLOCKED" /></intent-filter>
         </receiver>
+        <activity android:name=".MdmEnrollActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="quiclab" android:host="mdm" android:path="/enroll" />
+            </intent-filter>
+        </activity>
         <activity android:name=".ProfileScanActivity" android:exported="false" />
         <activity android:name=".AppSelectionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MultipleVpnActivity" android:exported="false" />

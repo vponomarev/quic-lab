@@ -26,6 +26,7 @@ type Binding struct {
 	ID              string `json:"id"`
 	Epoch           int64  `json:"epoch"`
 	RequestedRights Rights `json:"requestedRights"`
+	GrantedRights   Rights `json:"grantedRights"`
 	Active          bool   `json:"active"`
 }
 type Invitation struct {
@@ -68,6 +69,7 @@ type SyncRequest struct {
 	AppliedRevision int64   `json:"appliedRevision"`
 	Events          []Event `json:"events"`
 	Wait            bool    `json:"wait,omitempty"`
+	GrantedRights   *Rights `json:"grantedRights,omitempty"`
 }
 type SyncResponse struct {
 	Version       int             `json:"version"`

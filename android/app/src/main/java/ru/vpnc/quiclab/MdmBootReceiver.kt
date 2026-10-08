@@ -10,7 +10,6 @@ class MdmBootReceiver:BroadcastReceiver(){
  override fun onReceive(context:Context,intent:Intent){
   if(intent.action!=Intent.ACTION_BOOT_COMPLETED && intent.action!=Intent.ACTION_USER_UNLOCKED)return
   if(!context.getSystemService(UserManager::class.java).isUserUnlocked)return
-  if(MdmService.owner==null)return
-  runCatching{MdmService.start(context)}
+  MdmRuntime.restore(context)
  }
 }

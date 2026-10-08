@@ -28,9 +28,10 @@ internal data class MdmBinding(val id:String,val endpoint:String,val epoch:Long,
  }
 }
 internal data class MdmSyncRequest(val bindingId:String,val epoch:Long,val appliedRevision:Long=0,
- val events:JSONArray=JSONArray(),val wait:Boolean=true) {
+ val events:JSONArray=JSONArray(),val wait:Boolean=true,val grantedRights:MdmRights?=null) {
  fun json()=JSONObject().put("version",1).put("bindingId",bindingId).put("epoch",epoch)
   .put("appliedRevision",appliedRevision).put("events",events).put("wait",wait)
+  .also{if(grantedRights!=null)it.put("grantedRights",grantedRights.json())}
 }
 internal data class MdmConfigRevision(val revision:Long,val mode:String,val document:JSONObject)
 internal data class MdmCommand(val id:String,val bindingId:String,val epoch:Long,val issuedAt:Instant,
