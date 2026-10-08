@@ -9,7 +9,7 @@ internal object MdmTelemetryPolicy{
 }
 internal object MdmTelemetry {
  internal val lock=Any()
- @Volatile var manual=false
+ fun setManual(c:Context,enabled:Boolean)=MdmStore(c).setManualTelemetry(enabled)
  @Volatile var status="Сбор выключен"
  private val uploading=java.util.concurrent.atomic.AtomicBoolean(false)
  @Volatile private var transfer:MdmTransport?=null
@@ -24,19 +24,19 @@ internal object MdmTelemetry {
   prefs(c).edit().putString("server_binding",MdmStore(c).read().binding?.id).putBoolean("server_enabled",value).apply()
  }
 
- fun reconcile(c:Context){
+ fun reconcile(c:Context,foreground:Boolean=false){
   if(!wanted(c)){if(MdmTelemetryService.running)MdmTelemetryService.stop(c);return}
   if(MdmTelemetryService.running)return
   val allowed=c.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED &&
-   c.checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED
-  if(!allowed){status="Сервер запросил сбор · откройте экран телеметрии или разрешите геопозицию всегда";return}
+   (foreground || c.checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED)
+  if(!allowed){status="Сбор включён · откройте приложение или разрешите геопозицию «Всегда»";return}
   runCatching{MdmTelemetryService.start(c)}
    .onFailure{status="Android запретил фоновый запуск · откройте экран телеметрии"}
  }
- fun wanted(c:Context)=MdmTelemetryPolicy.consented(MdmStore(c).read())&&(manual||serverEnabled(c))
+ fun wanted(c:Context)=MdmTelemetryPolicy.consented(MdmStore(c).read())&&(MdmStore(c).manualTelemetry()||serverEnabled(c))
  fun stop(c:Context,erase:Boolean){
   synchronized(lock){
-   manual=false;transfer?.close();transfer=null
+   setManual(c,false);transfer?.close();transfer=null
    prefs(c).edit().remove("server_binding").remove("server_enabled").remove("last_upload").remove("reported_dropped").apply()
    if(erase)MdmTelemetryStore(c).erase()
    status="Сбор выключен"

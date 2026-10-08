@@ -23,7 +23,7 @@ class MdmEnrollActivity:Activity(){
    statusHandler.postDelayed(this,1000)
   }
  }
- override fun onResume(){super.onResume();statusHandler.post(statusTick)}
+ override fun onResume(){super.onResume();MdmRuntime.restore(this,foreground=true);statusHandler.post(statusTick)}
  override fun onPause(){statusHandler.removeCallbacks(statusTick);super.onPause()}
  private var busy=false
  private var invitation:MdmInvitation?=null

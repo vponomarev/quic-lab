@@ -61,4 +61,21 @@ class MdmTelemetryTest {
    bind("B");assertFalse("policy from A leaked into B",MdmTelemetry.serverEnabled(c))
   }finally{dir.deleteRecursively();c.getSharedPreferences("mdm-radio-options",0).edit().clear().commit()}
  }
+ @Test fun savedManualCollectionIsRecoveredWithoutServerRequest(){
+  val base=InstrumentationRegistry.getInstrumentation().targetContext
+  val tag="mdm-resume-"+System.nanoTime();val dir=File(base.noBackupFilesDir,tag).apply{mkdirs()}
+  val c=object:android.content.ContextWrapper(base){
+   override fun getNoBackupFilesDir()=dir
+   override fun getSharedPreferences(n:String,m:Int)=base.getSharedPreferences(tag+n,m)
+  }
+  try{
+   MdmStore(c).edit{it.put("binding",MdmStore.bindingJson(MdmBinding("A","https://example.org",1,MdmRights(),true)))
+    .put("active",true).put("rights",MdmRights(telemetry=true,geo=true).json()).put("radio_manual",true)}
+   assertFalse(MdmTelemetry.serverEnabled(c))
+   assertTrue("Durable manual collection was ignored after restart",MdmTelemetry.wanted(c))
+   MdmStore(c).edit{it.put("radio_manual",false)}
+   assertFalse(MdmTelemetry.wanted(c))
+  }finally{dir.deleteRecursively();c.getSharedPreferences("mdm-radio-options",0).edit().clear().commit()}
+ }
+
 }

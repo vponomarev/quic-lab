@@ -32,7 +32,7 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-consented application configuration management, independent of VPN, with persistent pause control" />
         </service>
         <receiver android:name=".MdmBootReceiver" android:exported="false">
-            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.USER_UNLOCKED" /></intent-filter>
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.USER_UNLOCKED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
         </receiver>
         <activity android:name=".MdmEnrollActivity" android:exported="true">
             <intent-filter>

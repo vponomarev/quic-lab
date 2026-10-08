@@ -14,9 +14,11 @@ class MdmTelemetryActivity:Activity(){
  private lateinit var ui:ClientUi
  private lateinit var status:TextView
  private lateinit var consent:CheckBox
+ private lateinit var permissions:TextView
  private val handler=Handler(Looper.getMainLooper())
  private val tick=object:Runnable{
   override fun run(){
+   refreshPermissions()
    val last=MdmTelemetry.lastUpload(this@MdmTelemetryActivity)
    status.text=MdmTelemetry.status+"\nПоследняя отправка: "+(if(last==0L)"ещё не было" else DateFormat.getDateTimeInstance().format(Date(last)))+"\nУдалено из очереди по сроку/лимиту: "+runCatching{MdmTelemetryStore(this@MdmTelemetryActivity).dropped()}.getOrDefault(0)
    handler.postDelayed(this,1000)
@@ -52,27 +54,37 @@ class MdmTelemetryActivity:Activity(){
    if(!MdmTelemetryPolicy.consented(MdmStore(this).read())){
     Toast.makeText(this,"Включите MDM и разрешите отправку данных",Toast.LENGTH_LONG).show()
    }else if(ensurePermissions()){
-    MdmTelemetry.manual=true
-    runCatching{MdmTelemetryService.start(this)}.onFailure{MdmTelemetry.manual=false;MdmTelemetry.status="Не удалось запустить сбор"}
+    runCatching{MdmTelemetry.setManual(this,true);MdmTelemetryService.start(this)}
+     .onFailure{MdmTelemetry.status="Не удалось запустить сбор · проверьте разрешения Android"}
    }
   })
   panel.addView(ui.button("Остановить ручной сбор"){
-   MdmTelemetry.manual=false
+   MdmTelemetry.setManual(this,false)
    if(!MdmTelemetry.serverEnabled(this))MdmTelemetryService.stop(this)
    MdmTelemetry.status=if(MdmTelemetry.wanted(this))"Продолжается сбор по запросу сервера" else "Ручной сбор остановлен"
   })
   panel.addView(ui.button("Разрешения Android · сбор в фоне"){
    startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))
   })
-  panel.addView(ui.text("Для запуска по запросу сервера без открытия приложения разрешите геопозицию «Всегда» в настройках Android. Для ручного сбора достаточно «При использовании». GPS не запрашивается."))
+  permissions=ui.text("");panel.addView(permissions);refreshPermissions()
+  panel.addView(ui.text("Сбор сохраняется до вашей остановки, в том числе после обновления приложения. Для восстановления в фоне разрешите геопозицию «Всегда». При разрешении «При использовании» достаточно открыть приложение. GPS не запрашивается."))
   panel.addView(ui.text("Снятие разрешения полностью прекращает сбор и удаляет неотправленные данные. Пауза MDM также останавливает отправку."))
   status=ui.text("");panel.addView(status);handler.post(tick)
  }
  override fun onResume(){
   super.onResume()
-  if(MdmTelemetry.wanted(this) && !MdmTelemetryService.running && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){
-   runCatching{MdmTelemetryService.start(this)}
-  }
+  refreshPermissions()
+  runCatching{MdmTelemetry.reconcile(this,foreground=true)}
+ }
+ private fun refreshPermissions(){
+  if(!::permissions.isInitialized)return
+  fun granted(p:String)=checkSelfPermission(p)==PackageManager.PERMISSION_GRANTED
+  fun line(ok:Boolean,text:String)=(if(ok)"☑ " else "☐ ")+text
+  permissions.text=listOf(
+   line(granted(Manifest.permission.ACCESS_FINE_LOCATION),"Точная геопозиция — для данных Wi-Fi и сот"),
+   line(granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION),"Геопозиция «Всегда» — для восстановления в фоне"),
+   line(getSystemService(android.location.LocationManager::class.java).isLocationEnabled,"Геолокация Android включена")
+  ).joinToString("\n")
  }
  private fun ensurePermissions():Boolean{
   if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED)return true

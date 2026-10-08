@@ -66,7 +66,7 @@ internal class MdmController(
     j.put("secret",newSecret()).put("pending",JSONObject().put("endpoint",invitation.endpoint)
      .put("token",invitation.token).put("registrationId",UUID.randomUUID().toString()))
    }
-   j.put("rights",rights.json()).put("active",false)
+   j.put("rights",rights.json()).put("radio_manual",false).put("active",false)
     .put("generation",Math.addExact(j.getLong("generation"),1))
   }
   val saved=store.document();val pending=saved.getJSONObject("pending")
@@ -101,14 +101,14 @@ internal class MdmController(
  @Synchronized fun pause(){
   val before=store.read();val secret=store.secret()
   val paused=mutate{j->
-   j.put("active",false).put("cleanupPending",true).put("generation",Math.addExact(j.getLong("generation"),1))
+   j.put("active",false).put("radio_manual",false).put("cleanupPending",true).put("generation",Math.addExact(j.getLong("generation"),1))
   }
   cancelCalls()
   recover()
   before.binding?.let{b->notifyPause(b,secret,paused.localGeneration)}
  }
  @Synchronized fun delete(){
-  mutate{j->j.put("active",false).put("cleanupPending",true).put("deletePending",true)
+  mutate{j->j.put("active",false).put("radio_manual",false).put("cleanupPending",true).put("deletePending",true)
    .put("generation",Math.addExact(j.getLong("generation"),1))}
   cancelCalls();recover()
  }
@@ -116,6 +116,7 @@ internal class MdmController(
   mutate{j->
    check(j.has("binding")){"Нет привязки MDM"}
    j.put("rights",rights.json()).put("generation",Math.addExact(j.getLong("generation"),1))
+   if(!rights.geo || !rights.telemetry)j.put("radio_manual",false)
   }
   cancelCalls();rightsChanged()
  }

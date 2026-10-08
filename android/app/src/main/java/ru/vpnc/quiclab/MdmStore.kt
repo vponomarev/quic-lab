@@ -58,6 +58,11 @@ internal class MdmStore(private val file:File,private val alias:String="quic-lab
  }
  fun read():MdmState=synchronized(lock){state(load())}
  internal fun document():JSONObject=synchronized(lock){load()}
+ fun manualTelemetry():Boolean=synchronized(lock){load().optBoolean("radio_manual")}
+ fun setManualTelemetry(enabled:Boolean){edit{j->
+  if(enabled)check(MdmTelemetryPolicy.consented(state(j))){"Включите MDM и разрешите отправку данных"}
+  j.put("radio_manual",enabled)
+ }}
  internal fun secret():String=synchronized(lock){load().optString("secret")}
  internal fun edit(change:(JSONObject)->Unit):MdmState=synchronized(lock){
   val j=load();change(j);val result=state(j);save(j);result

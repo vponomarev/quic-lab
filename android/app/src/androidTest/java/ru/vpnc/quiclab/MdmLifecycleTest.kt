@@ -68,4 +68,19 @@ class MdmLifecycleTest {
   MdmController(store,{server.gateway()},{clean=true}).recover()
   assertTrue(clean);assertFalse(store.read().cleanupPending)
  }
+ @Test fun pauseClearsSavedRadioIntentEvenIfCleanupCrashes()=fixture{store,c,server->
+  c.enroll(invite,MdmRights(telemetry=true,geo=true))
+  store.edit{it.put("radio_manual",true)}
+  val broken=MdmController(store,{server.gateway()},{error("interrupted cleanup")})
+  assertTrue(runCatching{broken.pause()}.isFailure)
+  assertFalse("Pause must durably clear collection intent",store.document().optBoolean("radio_manual"))
+ }
+ @Test fun revokingRadioConsentClearsSavedIntent()=fixture{store,c,_->
+  c.enroll(invite,MdmRights(telemetry=true,geo=true))
+  store.edit{it.put("radio_manual",true)}
+  c.setRights(MdmRights(telemetry=true))
+  c.setRights(MdmRights(telemetry=true,geo=true))
+  assertFalse("Granting consent again must not restart old collection",store.document().optBoolean("radio_manual"))
+ }
+
 }

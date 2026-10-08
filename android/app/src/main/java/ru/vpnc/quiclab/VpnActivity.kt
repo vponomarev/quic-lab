@@ -158,7 +158,7 @@ class VpnActivity:Activity() {
    setText(v,VpnDashboardText.card(card,names[card.exitId] ?: "Подключение",SystemClock.elapsedRealtime(),VpnRttSettings.interval(this),"",labels))
   }
  }
- override fun onResume(){super.onResume();checkUpdates();showPage(page,false);handler.removeCallbacks(ticker);handler.post(ticker);radios=RadioMonitor(this,{wifi,cell->wifiRadio=wifi;cellRadio=cell;refreshStatus()},{_,_->}).also{it.start()}}
+ override fun onResume(){super.onResume();MdmRuntime.restore(this,foreground=true);checkUpdates();showPage(page,false);handler.removeCallbacks(ticker);handler.post(ticker);radios=RadioMonitor(this,{wifi,cell->wifiRadio=wifi;cellRadio=cell;refreshStatus()},{_,_->}).also{it.start()}}
  override fun onPause(){positions[page]=scroll.scrollY;handler.removeCallbacks(ticker);radios?.close();radios=null;super.onPause()}
  override fun onSaveInstanceState(out:Bundle){out.putString("page",page);positions[page]=scroll.scrollY;positions.forEach{(name,pos)->out.putInt("scroll_$name",pos)};super.onSaveInstanceState(out)}
  @Deprecated("Legacy back dispatch") override fun onBackPressed(){if(page!="VPN")showPage("VPN") else super.onBackPressed()}

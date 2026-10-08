@@ -24,8 +24,8 @@ internal object MdmRuntime {
    // Remote configuration application remains gated until live cleanup is wired.
   },{MdmTelemetry.rightsChanged(app)}).also{it.recover();instance=it}
  }
- fun restore(context:Context){
-  runCatching{if(controller(context).read().active)MdmService.start(context)}
+ fun restore(context:Context,foreground:Boolean=false){
+  runCatching{if(controller(context).read().active){MdmService.start(context);MdmTelemetry.reconcile(context,foreground)}}
    .onFailure{MdmService.status="Не удалось восстановить MDM; откройте настройки управления"}
  }
  fun session(context:Context):MdmSession?{

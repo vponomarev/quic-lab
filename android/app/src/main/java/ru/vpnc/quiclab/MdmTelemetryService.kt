@@ -14,8 +14,8 @@ class MdmTelemetryService:Service(){
  override fun onBind(intent:Intent?):IBinder?=null
  override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
   if(intent?.action=="stop"){
-   MdmTelemetry.manual=false
-   // Notification stop revokes radio consent, even if the server requests collection.
+   MdmTelemetry.setManual(this,false)
+   // Explicit legacy stop also revokes consent, even if the server requests collection.
    runCatching{
     val controller=MdmRuntime.controller(this)
     controller.setRights(controller.read().rights.copy(geo=false))
@@ -23,7 +23,7 @@ class MdmTelemetryService:Service(){
    MdmTelemetry.stop(this,true);stopSelf();return START_NOT_STICKY
   }
   if(!MdmTelemetry.wanted(this)){stopSelf();return START_NOT_STICKY}
-  if(worker!=null)return START_NOT_STICKY
+  if(worker!=null)return START_STICKY
   try{
    AppServiceNotification.start(this,"geo",ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
   }catch(_:Exception){
@@ -46,7 +46,7 @@ class MdmTelemetryService:Service(){
      catch(_:Exception){MdmTelemetry.status="Ошибка сбора телеметрии";try{Thread.sleep(30000)}catch(_:InterruptedException){break}}
    }
   },"mdm-radio").also{it.start()}
-  return START_NOT_STICKY
+  return START_STICKY
  }
  override fun onDestroy(){ending.set(true);worker?.interrupt();running=false;AppServiceNotification.stop(this);super.onDestroy()}
  companion object{
