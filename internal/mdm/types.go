@@ -41,9 +41,10 @@ type EnrollmentRequest struct {
 	Secret         string `json:"secret"`
 }
 type ConfigRevision struct {
-	Revision int64           `json:"revision"`
-	Mode     string          `json:"mode"`
-	Document json.RawMessage `json:"document"`
+	ExpectedGeneration int64           `json:"expectedGeneration"`
+	Revision           int64           `json:"revision"`
+	Mode               string          `json:"mode"`
+	Document           json.RawMessage `json:"document"`
 }
 type Command struct {
 	ID        string    `json:"id"`

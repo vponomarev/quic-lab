@@ -24,7 +24,7 @@ func NewHandler(store *Store) http.Handler {
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/mdm/v1/")
-		if path != "enroll" && path != "activate" && path != "sync" && path != "pause" && path != "telemetry" {
+		if path != "enroll" && path != "activate" && path != "sync" && path != "pause" && path != "telemetry" && path != "report" {
 			http.NotFound(w, r)
 			return
 		}
@@ -61,6 +61,27 @@ func NewHandler(store *Store) http.Handler {
 			}
 			b, e := store.Redeem(req, now)
 			respond(b, e)
+			return
+		}
+		if path == "report" {
+			var req struct {
+				BindingID string       `json:"bindingId"`
+				Epoch     int64        `json:"epoch"`
+				Report    DeviceReport `json:"report"`
+			}
+			dec := json.NewDecoder(bytes.NewReader(raw))
+			dec.DisallowUnknownFields()
+			if dec.Decode(&req) != nil || dec.Decode(new(any)) != io.EOF {
+				respond(nil, ErrInvalid)
+				return
+			}
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") || !store.Authenticate(req.BindingID, strings.TrimPrefix(auth, "Bearer ")) {
+				respond(nil, ErrUnauthorized)
+				return
+			}
+			e := store.Report(req.BindingID, req.Epoch, req.Report, now)
+			respond(map[string]bool{"accepted": e == nil}, e)
 			return
 		}
 		if r.URL.Path == "/mdm/v1/telemetry" {

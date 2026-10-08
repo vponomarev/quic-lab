@@ -145,6 +145,10 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 	n := s.clone()
 	b = n.Bindings[id]
 	changed := false
+	if now.Sub(b.ReceivedAt) >= 30*time.Second {
+		b.ReceivedAt = now
+		changed = true
+	}
 	if req.GrantedRights != nil && b.Binding.GrantedRights != *req.GrantedRights {
 		b.Binding.GrantedRights = *req.GrantedRights
 		if len(b.Audit) < 10000 {

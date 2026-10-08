@@ -25,6 +25,10 @@ type auditEntry struct {
 	ReceivedAt time.Time
 }
 type bindingState struct {
+	Report           *DeviceReport
+	ReportHash       string
+	ReceivedAt       time.Time
+	Requests         map[string]requestRecord
 	UserID           string
 	TelemetryDropped int64
 	Telemetry        TelemetryPolicy
@@ -184,6 +188,11 @@ func (s *Store) Prune(now time.Time) error {
 			}
 		}
 		b.Audit = kept
+		for k, v := range b.Requests {
+			if now.Sub(v.At) > 90*24*time.Hour {
+				delete(b.Requests, k)
+			}
+		}
 		for k, v := range b.Seen {
 			if now.Sub(v) > 90*24*time.Hour {
 				delete(b.Seen, k)
