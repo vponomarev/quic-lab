@@ -124,7 +124,7 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 }
 func (w *Web) renderMDM(rw http.ResponseWriter, v mdmView) {
 	rw.Header().Set("Cache-Control", "no-store")
-	rw.Header().Set("Referrer-Policy", "no-referrer")
+	rw.Header().Set("Referrer-Policy", "same-origin")
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = mdmTemplate.Execute(rw, v)
 }

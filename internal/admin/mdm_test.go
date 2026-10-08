@@ -47,6 +47,10 @@ func TestMDMAdminConsentAndAccess(t *testing.T) {
 	if out.Code != 303 {
 		t.Fatal("policy", out.Code)
 	}
+	page := call(h, "GET", "/mdm?device="+b.ID, "", cookie)
+	if got := page.Header().Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("MDM forms must preserve same-origin Origin for CSRF validation, got %q", got)
+	}
 	// An admin request does not grant device consent.
 	if w.MDM.Bindings()[0].Binding.GrantedRights.Geo {
 		t.Fatal("admin silently granted geo")
