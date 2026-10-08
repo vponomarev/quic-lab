@@ -105,6 +105,7 @@ class VpnActivity:Activity() {
   val card=ui.card(content);card.addView(ui.text("Проверка связи",18f,true));card.addView(ui.text("Echo проверяет передачу данных через выход. Самостоятельное сравнение транспортов доступно внутри диагностики."))
   ui.add(card,ui.button("Echo · диагностика сетей"){startActivity(Intent(this,EchoActivity::class.java))})
   ui.add(card,ui.button("Отчёт для диагностики"){Diagnostics.preview(this,"VPN: ${LabVpnService.status}")})
+  ui.add(card,ui.button("Диагностика и отправка журналов"){startActivity(Intent(this,DiagnosticsSettingsActivity::class.java))})
   content.addView(ui.text("Последние события",16f,true));logs=ui.text("");content.addView(logs)
  }
  private fun settings(){
@@ -120,6 +121,7 @@ class VpnActivity:Activity() {
 
   val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
   ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
+  ui.add(card,ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
   ui.add(card,ui.button("Разрешить сведения о сети"){requestPermissions(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION,android.Manifest.permission.ACCESS_FINE_LOCATION),21)})
   ui.add(card,ui.button("Разрешения приложения"){startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:$packageName")))})
   val about=ui.card(content);about.addView(ui.text("О приложении",18f,true));about.addView(ui.text("Версия ${BuildConfig.VERSION_NAME}\nIPv4 · IPv6 для трафика VPN блокируется\nЗакрытие экрана не отключает работающий VPN."))
