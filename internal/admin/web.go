@@ -55,6 +55,7 @@ func (w *Web) Handler() http.Handler {
 	w.captureRoutes(m)
 	m.HandleFunc("GET /mdm", w.mdmPage)
 	m.HandleFunc("POST /mdm/invite", w.mdmInvite)
+	m.HandleFunc("POST /mdm/assign", w.mdmAssign)
 	m.HandleFunc("POST /mdm/policy", w.mdmPolicy)
 	m.HandleFunc("POST /mdm/delete-telemetry", w.mdmDeleteTelemetry)
 	if w.MDM != nil {
@@ -310,6 +311,16 @@ func (w *Web) delete(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.Form.Get("id")
+	if w.MDM != nil {
+		if _, e := w.Store.Profile(id); e != nil {
+			http.Error(rw, "Unknown user", 400)
+			return
+		}
+		if e := w.MDM.UnassignUser(id, time.Now().UTC()); e != nil {
+			http.Error(rw, "Cannot detach MDM owner", 503)
+			return
+		}
+	}
 	if e := w.Store.Delete(id); e != nil {
 		http.Error(rw, "Cannot delete user", 400)
 		return
@@ -415,6 +426,8 @@ func (w *Web) enroll(rw http.ResponseWriter, r *http.Request) {
 }
 
 type view struct {
+	MDMAvailable                                        bool
+	UserMDM                                             map[string][]mdmRow
 	DeviceReports                                       map[string]string
 	DeviceVersions                                      map[string]string
 	ClientVersionCounts                                 map[string]int
@@ -441,6 +454,19 @@ type view struct {
 
 func (w *Web) page(rw http.ResponseWriter, v view) {
 	v.Base = w.base
+	v.MDMAvailable = w.MDM != nil
+	v.UserMDM = map[string][]mdmRow{}
+	if v.Admin && w.MDM != nil {
+		for _, b := range w.MDM.Bindings() {
+			row := mdmRow{ID: b.Binding.ID, UserID: b.UserID, Name: "Устройство " + b.Binding.ID[:12], Active: b.Binding.Active}
+			if records, e := w.MDM.Telemetry(b.Binding.ID, time.Now().UTC(), 1); e == nil && len(records) > 0 {
+				row.Name = records[0].Sample.DeviceName
+				row.Version = records[0].Sample.AppVersion
+				row.Last = records[0].Sample.MeasuredAt.Format(time.RFC3339)
+			}
+			v.UserMDM[b.UserID] = append(v.UserMDM[b.UserID], row)
+		}
+	}
 	v.DeviceReports = w.deviceReportTimes(v.Users)
 	v.DeviceVersions, v.ClientVersionCounts = w.deviceVersions(v.Users)
 	if v.ConnectionLink != "" {

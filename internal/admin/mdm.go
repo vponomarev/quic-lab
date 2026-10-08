@@ -27,10 +27,12 @@ var mdmTemplate = template.Must(template.New("mdm").Funcs(template.FuncMap{
 }).Parse(mdmHTML))
 
 type mdmRow struct {
-	ID, Name, Version, Last string
-	Active, Consent         bool
+	ID, Name, Version, Last, UserID, UserName string
+	Active, Consent                           bool
 }
 type mdmView struct {
+	UserID                         string
+	Users                          []User
 	Dropped                        int64
 	Base, CSRF, Link, Device, Next string
 	QR                             template.URL
@@ -52,13 +54,14 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 	if !ok || !w.mdmReady(rw) {
 		return
 	}
-	v := mdmView{Base: w.base, CSRF: session.CSRF, Device: r.URL.Query().Get("device")}
+	v := mdmView{Base: w.base, CSRF: session.CSRF, Device: r.URL.Query().Get("device"), Users: w.Store.List(), UserID: r.URL.Query().Get("user")}
 	now := time.Now().UTC()
 	if v.Device != "" {
 		found := false
 		for _, b := range w.MDM.Bindings() {
 			if b.Binding.ID == v.Device {
 				found = true
+				v.UserID = b.UserID
 				v.Policy = b.Policy
 				v.Dropped = b.Dropped
 				v.Consent = b.Binding.GrantedRights.Geo && b.Binding.GrantedRights.Telemetry
@@ -93,7 +96,15 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		for _, b := range w.MDM.Bindings() {
-			row := mdmRow{ID: b.Binding.ID, Name: "Новое устройство", Active: b.Binding.Active, Consent: b.Binding.GrantedRights.Geo && b.Binding.GrantedRights.Telemetry}
+			if v.UserID != "" && b.UserID != v.UserID {
+				continue
+			}
+			row := mdmRow{UserID: b.UserID, ID: b.Binding.ID, Name: "Новое устройство", Active: b.Binding.Active, Consent: b.Binding.GrantedRights.Geo && b.Binding.GrantedRights.Telemetry}
+			for _, u := range v.Users {
+				if u.ID == b.UserID {
+					row.UserName = u.Name
+				}
+			}
 			records, e := w.MDM.Telemetry(b.Binding.ID, now, 1)
 			if e != nil {
 				http.Error(rw, "Telemetry unavailable", 503)
@@ -111,6 +122,8 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 	w.renderMDM(rw, v)
 }
 func (w *Web) renderMDM(rw http.ResponseWriter, v mdmView) {
+	rw.Header().Set("Cache-Control", "no-store")
+	rw.Header().Set("Referrer-Policy", "no-referrer")
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = mdmTemplate.Execute(rw, v)
 }
@@ -119,7 +132,14 @@ func (w *Web) mdmInvite(rw http.ResponseWriter, r *http.Request) {
 	if !ok || !w.mdmReady(rw) {
 		return
 	}
-	inv, e := w.MDM.CreateInvitation(time.Now().UTC(), mdm.Rights{Telemetry: true, Geo: true, LANMode: "deny"})
+	w.userCaptureMu.Lock()
+	defer w.userCaptureMu.Unlock()
+	userID := r.Form.Get("userID")
+	if !w.mdmUserExists(userID) {
+		http.Error(rw, "Unknown user", 400)
+		return
+	}
+	inv, e := w.MDM.CreateUserInvitation(time.Now().UTC(), mdm.Rights{Config: true, VPN: true, Telemetry: true, Geo: true, LANMode: "deny"}, userID)
 	if e != nil {
 		http.Error(rw, "Cannot create invitation", 503)
 		return

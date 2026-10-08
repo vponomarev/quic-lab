@@ -53,6 +53,7 @@ type TelemetryRecord struct {
 	ReceivedAt time.Time   `json:"receivedAt"`
 }
 type BindingSummary struct {
+	UserID  string
 	Dropped int64
 	Binding Binding
 	Policy  TelemetryPolicy
@@ -73,7 +74,7 @@ func (s *Store) Bindings() []BindingSummary {
 	defer s.mu.Unlock()
 	out := make([]BindingSummary, 0, len(s.state.Bindings))
 	for _, b := range s.state.Bindings {
-		out = append(out, BindingSummary{Dropped: b.TelemetryDropped, Binding: b.Binding, Policy: effectiveTelemetry(b.Telemetry)})
+		out = append(out, BindingSummary{UserID: b.UserID, Dropped: b.TelemetryDropped, Binding: b.Binding, Policy: effectiveTelemetry(b.Telemetry)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Binding.ID < out[j].Binding.ID })
 	return out

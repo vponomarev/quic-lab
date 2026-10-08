@@ -8,9 +8,12 @@ func validRights(r Rights) bool {
 	return r.LANMode == "" || r.LANMode == "deny" || r.LANMode == "confirm" || r.LANMode == "allow"
 }
 func (s *Store) CreateInvitation(now time.Time, rights Rights) (Invitation, error) {
+	return s.CreateUserInvitation(now, rights, "")
+}
+func (s *Store) CreateUserInvitation(now time.Time, rights Rights, userID string) (Invitation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !validRights(rights) {
+	if !validRights(rights) || !validOwner(userID) {
 		return Invitation{}, ErrInvalid
 	}
 	n := s.clone()
@@ -18,7 +21,7 @@ func (s *Store) CreateInvitation(now time.Time, rights Rights) (Invitation, erro
 		return Invitation{}, ErrLimit
 	}
 	inv := Invitation{Token: randomID(), ExpiresAt: now.Add(24 * time.Hour), RequestedRights: rights}
-	n.Invitations[digest(inv.Token)] = invitationState{Expires: inv.ExpiresAt, Rights: rights}
+	n.Invitations[digest(inv.Token)] = invitationState{Expires: inv.ExpiresAt, Rights: rights, UserID: userID}
 	return inv, s.save(n)
 }
 func (s *Store) Redeem(req EnrollmentRequest, now time.Time) (Binding, error) {
@@ -53,7 +56,7 @@ func (s *Store) Redeem(req EnrollmentRequest, now time.Time) (Binding, error) {
 	}
 	n := s.clone()
 	b := Binding{ID: randomID(), Epoch: 0, RequestedRights: inv.Rights}
-	n.Bindings[b.ID] = bindingState{Binding: b, SecretHash: digest(req.Secret), Seen: map[string]time.Time{}}
+	n.Bindings[b.ID] = bindingState{UserID: inv.UserID, Binding: b, SecretHash: digest(req.Secret), Seen: map[string]time.Time{}}
 	inv.BindingID = b.ID
 	inv.RegistrationID = req.RegistrationID
 	n.Invitations[key] = inv

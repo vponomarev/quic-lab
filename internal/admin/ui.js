@@ -86,7 +86,8 @@
   const devices=$$('.device',row), deviceDetails=$('.devices',row), enrollmentDetails=$('.enrollments',row),exportDetails=$('details.export',row),settingsDetails=$('details.user-settings',row);
   const openUser=button(nameText,'user-name');openUser.dataset.stat='name';name.replaceWith(openUser);
   const user=modal('Пользователь',nameText,'user-dialog');
-  const sections=tabs(user.body,[['overview','Обзор'],['devices','Устройства · '+devices.length],['connections','Подключения'],['enrollments','Приглашения'],['access','Доступ'],['diagnostics','Диагностика']]);
+  const sections=tabs(user.body,[['overview','Обзор'],['devices','Устройства · '+devices.length],['connections','Подключения'],['enrollments','Приглашения'],['access','Доступ'],['diagnostics','Диагностика'],['mdm','MDM']]);
+  const mdm=$('.mdm-devices',row);if(mdm){const summary=$('summary',mdm),label=summary.textContent;summary.remove();sections.panels.get('mdm').append(...mdm.childNodes);mdm.remove();const shortcut=button(label);shortcut.onclick=()=>open('mdm');openUser.after(shortcut);}else sections.panels.get('mdm').append(el('p','muted','MDM недоступно'));
   const overview=sections.panels.get('overview'),prefs=el('details','display-options');prefs.append(el('summary','','Показывать в обзоре'));const checks=el('div');prefs.append(checks);overview.append(prefs);const grid=el('div','overview-grid');overview.append(grid);
   const fields=[['access','Состояние доступа'],['connections','Активные подключения'],['traffic','Трафик · 10 минут'],['last','Последнее подключение'],['expires','Доступ до']];
   const stored=load('overview',{}),overviewItems=new Map();

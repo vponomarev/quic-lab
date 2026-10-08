@@ -15,6 +15,7 @@ import (
 )
 
 type invitationState struct {
+	UserID                    string
 	Expires                   time.Time
 	Rights                    Rights
 	BindingID, RegistrationID string
@@ -24,6 +25,7 @@ type auditEntry struct {
 	ReceivedAt time.Time
 }
 type bindingState struct {
+	UserID           string
 	TelemetryDropped int64
 	Telemetry        TelemetryPolicy
 	Binding          Binding

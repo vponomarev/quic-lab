@@ -56,3 +56,52 @@ func TestMDMAdminConsentAndAccess(t *testing.T) {
 		t.Fatal("detail", out.Code, out.Body.String())
 	}
 }
+func TestMDMOwnershipAdmin(t *testing.T) {
+	c := config(t)
+	s, e := OpenStore(c.DataDir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	u, e := s.CreateWithProtocols("owner", []string{"quic"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	w := NewWeb(c, s)
+	w.MDM, e = mdm.OpenStore(filepath.Join(c.DataDir, "mdm"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	h := w.Handler()
+	login := call(h, "POST", "/login", url.Values{"username": {c.Username}, "password": {c.Password}}.Encode(), nil)
+	cookie := login.Result().Cookies()[0]
+	form := url.Values{"csrf": {w.sessions[cookie.Value].CSRF}, "userID": {u.ID}}
+	if out := call(h, "POST", "/mdm/invite", url.Values{"csrf": {form.Get("csrf")}, "userID": {"missing"}}.Encode(), cookie); out.Code != 400 {
+		t.Fatal("unknown owner accepted", out.Code)
+	}
+	inv, _ := w.MDM.CreateInvitation(time.Now(), mdm.Rights{})
+	b, e := w.MDM.Redeem(mdm.EnrollmentRequest{Version: 1, Token: inv.Token, RegistrationID: "owned", Secret: strings.Repeat("a", 64)}, time.Now())
+	if e != nil {
+		t.Fatal(e)
+	}
+	form.Set("id", b.ID)
+	if out := call(h, "POST", "/mdm/assign", form.Encode(), cookie); out.Code != 303 {
+		t.Fatal("assign", out.Code)
+	}
+	if w.MDM.Bindings()[0].UserID != u.ID {
+		t.Fatal("owner not assigned")
+	}
+	if out := call(h, "POST", "/mdm/assign", "id="+b.ID+"&csrf=wrong", cookie); out.Code != 403 {
+		t.Fatal("assign CSRF", out.Code)
+	}
+	out := call(h, "GET", "/users", "", cookie)
+	if out.Code != 200 || !strings.Contains(out.Body.String(), "MDM: 1") || !strings.Contains(out.Body.String(), b.ID) {
+		t.Fatal("missing user MDM entry", out.Code)
+	}
+	form.Set("id", u.ID)
+	if out = call(h, "POST", "/users/delete", form.Encode(), cookie); out.Code != 303 {
+		t.Fatal("delete", out.Code)
+	}
+	if len(w.MDM.Bindings()) != 1 || w.MDM.Bindings()[0].UserID != "" {
+		t.Fatal("delete lost MDM or retained owner")
+	}
+}
