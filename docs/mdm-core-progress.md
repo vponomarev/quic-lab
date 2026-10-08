@@ -93,3 +93,40 @@ configuration/profile/identity readers authoritative; enforce permissions on
 every editor/import/update mutation including stale drafts; connect pause/delete
 cleanup with active VPN and persistent recovery; synchronize applied revision
 and report failures. The store's detach alone does not stop any VPN.
+
+### Task 4 — authoritative Android readers and local mutation guard
+
+Added MdmConfiguration + ConfigurationPreferences. After initialization, profile
+metadata/settings, DNS, shared budget, diagnostic flags and encrypted identity
+bundles read the atomic runtime snapshot. Legacy preferences cannot overwrite it.
+External projections are not written into vpn-configuration.json. Original native
+identity bundles (including registration/update metadata) survive overlays.
+Explicit credential removal does not fall back to the old legacy key file.
+
+Local edits/imports/updates share the configuration lock with MDM generations;
+old drafts cannot write after a remote apply or detach. Profile-editor validation
+runs before key persistence. RTT/reserve preference listeners remain functional.
+Normal registered-profile updates can restore server projection per profile after
+current-mode management; they do not globally override other managed profiles.
+
+Verification:
+- RED: missing adapter; then API30 reader/restoration/draft tests PASS.
+- RED: local cell_mib edit failed to override retained limit_bytes; fixed.
+- RED: post-MDM registered-profile update remained hidden by the overlay; fixed.
+- Existing identity transaction test now waits on the shared configuration lock,
+  replacing the former VpnIdentity monitor while retaining its blocking assertion.
+- Final APK/test APK + lint PASS.
+- Redmi dc69eb2c API30: final 57 tests PASS / 49.228s (MDM config/store/lifecycle,
+  VPN config/profiles, update, RTT/reserve/budget, imports and managed VLESS).
+
+Task4 remains IN PROGRESS. The adapter currently requires stopped VPN.
+The production poll consumer and pause/delete runtime hook are NOT wired yet.
+Next: coordinate live VPN stop/restart and interrupted apply recovery, authoritative
+applied-revision acknowledgement/events, cleanup under process death, and integrated
+lifecycle acceptance. Confirm config-read/start serialization before enabling live
+poll application. Review storage/read performance with management active.
+Additional RED: Activity recreation restored an external draft under a new editor's
+generation. Fixed by carrying the original generation in saved draft state and
+rejecting stale state across repeated recreation. Stale values are not restored.
+Final PreferenceDraft + AndroidNavigation: 3 tests PASS / 6.480s.
+No production release or Note12Pro change.

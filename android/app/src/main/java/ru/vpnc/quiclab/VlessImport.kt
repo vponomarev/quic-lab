@@ -13,7 +13,8 @@ import org.json.JSONObject
 internal object VlessImport {
     fun metadata(raw: String) = JSONObject(Mobile.validateVLESSConfig(raw))
 
-    fun save(context: Context, raw: String) {
+    fun save(context: Context, raw: String) { return synchronized(MdmConfiguration.lock){ MdmConfiguration.assertEditable(context)
+
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         val info = metadata(raw)
         val endpoint = info.getString("endpoint")
@@ -37,7 +38,7 @@ internal object VlessImport {
             finally { VpnProfiles.select(context, previous) }
             throw failure
         }
-    }
+    } }
 
     private fun error(activity: Activity) {
         AlertDialog.Builder(activity).setTitle("Импорт VLESS не выполнен")

@@ -8,11 +8,25 @@ internal class PreferenceDraft(private val source: SharedPreferences) : SharedPr
     private var original = copy(source.all)
     private var values = copy(original)
     private var baseline = copy(values)
-    val dirty: Boolean get() = values != baseline
+    private val guard=source as? ConfigurationEditGuard
+    private var draftGeneration=guard?.editGeneration()
+    private var stale=false
+    val dirty: Boolean get() = stale || values != baseline
     fun acceptInitialState() { baseline = copy(values) }
-    fun snapshot(): java.util.HashMap<String, Any?> = java.util.HashMap(copy(values))
-    fun restore(saved: Map<String, *>) { values = copy(saved) }
+    fun snapshot(): java.util.HashMap<String, Any?> = java.util.HashMap(copy(values)).also {
+        draftGeneration?.let { generation -> it["__mdm_draft_epoch"]=generation }
+    }
+    fun restore(saved: Map<String, *>) {
+        val generation=saved["__mdm_draft_epoch"] as? String
+        if(guard!=null){
+            stale=if(generation==null)guard.editGeneration()!="0:0" else generation!=guard.editGeneration()
+            draftGeneration=generation ?: if(stale)"unknown" else guard.editGeneration()
+        }
+        values=if(stale)copy(source.all) else copy(saved.filterKeys{it!="__mdm_draft_epoch"})
+    }
+    fun validateWrite(){check(!stale){"Настройки изменились. Откройте редактор заново."};guard?.validateWrite()}
     fun persist() {
+        validateWrite()
         val editor = source.edit()
         for (key in original.keys + values.keys) {
             if (original[key] == values[key] && original.containsKey(key) == values.containsKey(key)) continue

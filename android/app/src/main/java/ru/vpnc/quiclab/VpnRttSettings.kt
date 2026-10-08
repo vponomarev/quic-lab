@@ -7,7 +7,7 @@ import android.os.PowerManager
 internal object VpnRttSettings {
     val values = longArrayOf(0, 1000, 5000)
     val labels = arrayOf("Выключено", "Каждую секунду", "Каждые 5 секунд")
-    fun preferences(context: Context) = context.getSharedPreferences("vpn_rtt", Context.MODE_PRIVATE)
+    fun preferences(context: Context) = MdmConfiguration.preferences(context,"vpn_rtt")
     fun interval(context: Context): Long {
         val on = context.getSystemService(PowerManager::class.java).isInteractive
         val value = preferences(context).getLong(if (on) "screen_on" else "screen_off", if (on) 1000 else 0)

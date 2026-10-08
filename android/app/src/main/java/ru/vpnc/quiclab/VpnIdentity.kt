@@ -76,7 +76,8 @@ internal object VpnIdentity {
         finally { content.fill(0) }
     }
 
-    @Synchronized fun writeBundle(context: Context, id: String, bundle: JSONObject) {
+    fun writeBundle(context: Context, id: String, bundle: JSONObject) = synchronized(MdmConfiguration.lock) {
+        if(MdmConfiguration.writeIdentity(context,id,bundle))return@synchronized
         val content = bundle.toString().toByteArray(Charsets.UTF_8)
         try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
@@ -150,12 +151,18 @@ internal object VpnIdentity {
         val canonical = mobile.Mobile.importVLESSConfig(raw)
         save(context, JSONObject().put("vless_config", canonical).put("subject", "VLESS").toString().toByteArray(Charsets.UTF_8))
     }
-    @Synchronized fun load(context: Context, id: String = VpnProfiles.current(context).id): JSONObject {
+    fun exists(context:Context,id:String):Boolean=if(MdmConfiguration.hasLayer(context))MdmConfiguration.identity(context,id)!=null else VpnProfiles.identityFile(context,id).exists()
+    fun deleteBundle(context:Context,id:String)=synchronized(MdmConfiguration.lock){
+        if(!MdmConfiguration.deleteIdentity(context,id))VpnProfiles.identityFile(context,id).delete()
+    }
+    fun load(context: Context, id: String = VpnProfiles.current(context).id): JSONObject = synchronized(MdmConfiguration.lock) {
+        if(MdmConfiguration.hasLayer(context))return@synchronized MdmConfiguration.identity(context,id) ?: throw java.io.FileNotFoundException("Нет ключей профиля")
+
         val bytes = android.util.AtomicFile(VpnProfiles.identityFile(context, id)).readFully()
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
             }
-        return JSONObject(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size))))
+        JSONObject(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size))))
     }
 }

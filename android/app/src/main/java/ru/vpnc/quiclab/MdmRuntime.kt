@@ -20,7 +20,7 @@ internal object MdmRuntime {
    }
    override fun close(){synchronized(this){closed.set(true);transfer?.close()}}
   }},{
-   // No configuration layer or remote actions are enabled before Tasks 4/5.
+   // Task4 adapter exists; live VPN cleanup/recovery must be wired before enabling polling actions.
   }).also{it.recover();instance=it}
  }
  fun restore(context:Context){

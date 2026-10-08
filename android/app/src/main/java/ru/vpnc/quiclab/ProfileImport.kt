@@ -127,7 +127,8 @@ internal object ProfileImport {
         VpnIdentity.writeBundle(context,id,bundle)
         return "vpn"
     }
-    fun save(context:Context,p:JSONObject):String {
+    fun save(context:Context,p:JSONObject):String { return synchronized(MdmConfiguration.lock){ MdmConfiguration.assertEditable(context)
+
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         val kind=validate(p)
         if(kind=="capture") { mobile.Mobile.configureDebugCapture(p.toString()); return kind }
@@ -165,5 +166,5 @@ internal object ProfileImport {
             }
         }
         return kind
-    }
+    } }
 }

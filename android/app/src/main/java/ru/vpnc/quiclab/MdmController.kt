@@ -42,7 +42,7 @@ internal class MdmController(
 ) {
  private val calls=ConcurrentHashMap<MdmGateway,Boolean>()
  fun read()=store.read()
- private fun mutate(change:(JSONObject)->Unit):MdmState=synchronized(this){store.edit(change)}
+ private fun mutate(change:(JSONObject)->Unit):MdmState=synchronized(this){synchronized(MdmConfiguration.lock){store.edit(change)}}
  @Synchronized fun recover(){
   if(!store.read().cleanupPending)return
   cleanup()
@@ -136,7 +136,11 @@ internal class MdmController(
    val latest=store.read()
    if(!latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
    check(response.epoch==b.epoch){"Эпоха ответа MDM не совпадает"}
-   consume(latest,response)
+   synchronized(MdmConfiguration.lock){
+    val permitted=store.read()
+    if(!permitted.active || permitted.cleanupPending || permitted.localGeneration!=state.localGeneration)return false
+    consume(permitted,response)
+   }
   }
   return true
  }

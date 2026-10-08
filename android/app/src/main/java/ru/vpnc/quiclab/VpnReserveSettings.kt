@@ -6,7 +6,7 @@ import android.os.PowerManager
 
 /** Independent of RTT, global to all VPN profiles. Unknown Wi-Fi cost is treated as metered. */
 internal object VpnReserveSettings {
-    fun preferences(context: Context) = context.getSharedPreferences("vpn_reserve", Context.MODE_PRIVATE)
+    fun preferences(context: Context) = MdmConfiguration.preferences(context,"vpn_reserve")
     fun allowed(context: Context, kind: Int, unmetered: Boolean): Boolean {
         val on = context.getSystemService(PowerManager::class.java).isInteractive
         val wifi = kind == NetworkCapabilities.TRANSPORT_WIFI

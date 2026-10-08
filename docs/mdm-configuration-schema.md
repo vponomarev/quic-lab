@@ -1,6 +1,7 @@
 # MDM configuration schema 1 — storage foundation
 
-Status: internal development contract; Android runtime adapter is pending.
+Status: internal development contract; authoritative Android readers are implemented,
+but live VPN coordination and poll application remain pending.
 
 A full JSON document contains schema=1, profiles (1–32), currentProfileId,
 enabledProfileIds, multiple, globalApps, dns {mode, profileId}, budget {limitBytes},
@@ -34,3 +35,9 @@ publishing a partial snapshot. This is separate from the 1 MiB wire limit.
 Authorization, active VPN transitions, pending cleanup recovery and applied-revision
 acknowledgement belong to the upcoming runtime adapter. The store itself does not
 grant rights, start/stop VPN, or expose remote settings to existing readers.
+
+The runtime adapter keeps native identity bundles and preference maps inside the
+same encrypted atomic envelope. These private bundles preserve existing registration
+and update metadata separately from the portable schema. ConfigurationPreferences
+rejects edits made through a source opened before a management-generation change.
+The adapter currently applies only while VPN is stopped; it is not wired to polling.

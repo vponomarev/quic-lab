@@ -10,7 +10,7 @@ import org.json.JSONObject
 internal object DiagnosticsPolicy {
  const val DEFAULT_ENABLED=true
  fun autoAllowed(enabled:Boolean,wifi:Boolean,unmetered:Boolean,validated:Boolean)=enabled&&wifi&&unmetered&&validated
- fun preferences(c:Context)=c.getSharedPreferences("diagnostics_settings",Context.MODE_PRIVATE)
+ fun preferences(c:Context)=MdmConfiguration.preferences(c,"diagnostics_settings")
  fun enabled(c:Context)=preferences(c).getBoolean("enabled",DEFAULT_ENABLED)
  fun detailed(c:Context)=preferences(c).getBoolean("detailed",false)
 }

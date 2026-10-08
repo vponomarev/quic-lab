@@ -71,7 +71,9 @@ internal object ProfileUpdate {
   val caps=envelope.getJSONObject("capabilities")
   return caps.getInt("control_version")==1 && caps.getInt("data_version")==1 && caps.getInt("min_android_version_code")<=BuildConfig.VERSION_CODE
  }
- @Synchronized fun apply(context:Context,exitId:String,incoming:JSONObject) {
+ fun apply(context:Context,exitId:String,incoming:JSONObject) { synchronized(MdmConfiguration.lock){
+  MdmConfiguration.assertEditable(context)
+
   val existing=VpnIdentity.load(context,exitId)
   validateCandidate(existing.optJSONObject("update_envelope"),incoming,existing.getString("device_id"))
   require(compatible(incoming)) {"Сначала обновите приложение"}
@@ -92,7 +94,7 @@ internal object ProfileUpdate {
   // Sole commit point: keys, revision and server-owned fields in one encrypted file.
   VpnIdentity.writeBundle(context,exitId,updated)
   LabVpnService.restartUpdatedExit(context,exitId)
- }
+ } }
  private fun validateKeys(server:JSONObject):String? {
   val vless=ProfileImport.vlessConfig(server)
   if(server.has("awg_config")) mobile.Mobile.validateAWGConfig(server.getString("awg_config"))

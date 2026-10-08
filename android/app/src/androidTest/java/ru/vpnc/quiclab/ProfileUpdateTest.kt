@@ -177,13 +177,13 @@ class ProfileUpdateTest {
   assertTrue(file.exists())
   assertEquals("a".repeat(64),VpnIdentity.load(c,"default").getString("update_token"))
  }
- @Test fun readerWaitsForIdentityTransactionMonitor()=withContext {c->
+ @Test fun readerWaitsForConfigurationTransactionMonitor()=withContext {c->
   seed(c,awgEnvelope(1))
   val attempting=java.util.concurrent.CountDownLatch(1)
   val completed=java.util.concurrent.CountDownLatch(1)
   var failure:Throwable?=null
   val reader=Thread({try {attempting.countDown();VpnIdentity.load(c,"default")}catch(e:Throwable){failure=e}finally{completed.countDown()}},"identity-reader-test")
-  synchronized(VpnIdentity) {
+  synchronized(MdmConfiguration.lock) {
    reader.start();assertTrue(attempting.await(5,java.util.concurrent.TimeUnit.SECONDS))
    assertFalse("Read must wait for pending AtomicFile write transaction",completed.await(1,java.util.concurrent.TimeUnit.SECONDS))
   }

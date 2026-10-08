@@ -10,17 +10,18 @@ import org.json.JSONObject
 internal object VpnProfiles {
     fun configuration(c:Context):JSONObject = VpnConfiguration.load(c)
     data class Profile(val id:String,val name:String)
-    private fun meta(c:Context)=c.getSharedPreferences("vpn_profiles",Context.MODE_PRIVATE)
-    @Synchronized fun list(c:Context):List<Profile> {
+    internal fun meta(c:Context)=MdmConfiguration.preferences(c,"vpn_profiles")
+    fun list(c:Context):List<Profile> { return synchronized(MdmConfiguration.lock) {
         val m=meta(c)
         if(!m.contains("profiles")) {
-            val old=c.getSharedPreferences("vpn",Context.MODE_PRIVATE)
+            if(MdmConfiguration.managed(c))return listOf(Profile("default","Основной"))
+            val old=MdmConfiguration.preferences(c,"vpn")
             check(m.edit().putString("profiles",JSONArray().put(JSONObject().put("id","default").put("name","Основной")).toString())
                 .putString("current","default").putStringSet("global_apps",old.getStringSet("apps",emptySet())).commit())
         }
         val a=JSONArray(m.getString("profiles","[]"))
         return (0 until a.length()).map { val p=a.getJSONObject(it);Profile(p.getString("id"),p.getString("name")) }
-    }
+    } }
     fun current(c:Context):Profile {
         val profiles=list(c)
         return profiles.firstOrNull{it.id==meta(c).getString("current",null)} ?: profiles.first()
@@ -36,21 +37,21 @@ internal object VpnProfiles {
     }
     private fun editable(){check(!LabVpnService.active){"Сначала остановите VPN"}}
     private fun name(value:String)=value.trim().also{require(it.isNotBlank() && it.length<=100){"Название: от 1 до 100 символов"}}
-    @Synchronized fun create(c:Context,title:String):Profile {
+    fun create(c:Context,title:String):Profile { return synchronized(MdmConfiguration.lock) {
         editable();val profiles=list(c);require(profiles.size<32){"Не более 32 профилей"}
         val p=Profile(UUID.randomUUID().toString(),name(title))
         check(preferences(c,p.id).edit().putBoolean("global_apps",true).commit())
         write(c,profiles+p,p.id);return p
-    }
-    @Synchronized fun select(c:Context,id:String){editable();require(list(c).any{it.id==id});check(meta(c).edit().putString("current",id).commit())}
-    @Synchronized fun rename(c:Context,title:String,id:String=current(c).id){editable();require(list(c).any{it.id==id});val n=name(title);write(c,list(c).map{if(it.id==id)it.copy(name=n)else it},current(c).id)}
-    @Synchronized fun delete(c:Context,id:String=current(c).id){
+    } }
+    fun select(c:Context,id:String){ return synchronized(MdmConfiguration.lock) {editable();require(list(c).any{it.id==id});check(meta(c).edit().putString("current",id).commit())} }
+    fun rename(c:Context,title:String,id:String=current(c).id){ return synchronized(MdmConfiguration.lock) {editable();require(list(c).any{it.id==id});val n=name(title);write(c,list(c).map{if(it.id==id)it.copy(name=n)else it},current(c).id)} }
+    fun delete(c:Context,id:String=current(c).id){ return synchronized(MdmConfiguration.lock) {
         editable();val profiles=list(c);require(profiles.size>1){"Нельзя удалить последний профиль"}
         val rest=profiles.filter{it.id!=id};require(rest.size<profiles.size)
         val selected=current(c).id
         write(c,rest,if(selected==id)rest.first().id else selected)
-        preferences(c,id).edit().clear().commit();identityFile(c,id).delete()
-    }
+        preferences(c,id).edit().clear().commit();VpnIdentity.deleteBundle(c,id)
+    } }
     fun globalApps(c:Context)=meta(c).getStringSet("global_apps",emptySet())!!.toSet()
     fun setGlobalApps(c:Context,apps:Set<String>){check(meta(c).edit().putStringSet("global_apps",apps.toSet()).commit())}
     fun apps(c:Context,id:String=current(c).id):Set<String> {

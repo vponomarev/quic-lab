@@ -26,9 +26,9 @@ internal object VpnConfiguration {
      * still write only local preferences; managed server fields are shown readonly. */
     fun effectivePreferences(context: Context, id: String): android.content.SharedPreferences {
         require(id == "default" || id.matches(Regex("[a-f0-9-]{36}")))
-        val local = context.getSharedPreferences(if (id == "default") "vpn" else "vpn_$id", Context.MODE_PRIVATE)
-        val identityFile=VpnProfiles.identityFile(context,id)
-        if (!local.getBoolean("managed_profile",false) && !identityFile.exists()) return local
+        val local = MdmConfiguration.preferences(context,if (id == "default") "vpn" else "vpn_$id")
+        if(!MdmConfiguration.serverOverlay(context,id))return local
+        if (!local.getBoolean("managed_profile",false) && !VpnIdentity.exists(context,id)) return local
         val bundle=try {VpnIdentity.load(context,id)} catch(e:Exception) {
             if(local.getBoolean("managed_profile",false)) throw e
             return local // Legacy settings remain editable even if their key file needs repair.
@@ -49,7 +49,9 @@ internal object VpnConfiguration {
         values["endpoint"]=when(selected) {"awg"->values["awg_endpoint"];"vless"->values["vless_endpoint"];"https"->values["https_endpoint"];else->values["quic_endpoint"]}
         // V2 VLESS is standalone. Keep the user's demux preference for a later QUIC/HTTPS selection.
         if(selected=="vless") values["demux_enabled"]=false
-        return object:android.content.SharedPreferences by local {
+        return object:android.content.SharedPreferences by local,ConfigurationEditGuard {
+            override fun validateWrite()=(local as ConfigurationEditGuard).validateWrite()
+            override fun editGeneration()=(local as ConfigurationEditGuard).editGeneration()
             override fun getAll():MutableMap<String,*> = (local.all.toMutableMap().apply {putAll(values)})
             override fun contains(key:String)=key in values || local.contains(key)
             override fun getString(key:String,defValue:String?):String?=if(key in values) values[key] as? String else local.getString(key,defValue)
@@ -78,11 +80,12 @@ internal object VpnConfiguration {
             .put("model",JSONObject().put("version",1).put("exits",JSONArray().put(JSONObject(exit.toString()))).put("profiles",profiles))
             .put("gateways",gateways).put("economy",!p.getBoolean("max_availability",false)))
     }
-    @Synchronized fun load(context: Context): JSONObject = migrate(context)
+    fun load(context: Context): JSONObject = migrate(context)
 
-    @Synchronized fun migrate(context: Context): JSONObject {
+    fun migrate(context: Context): JSONObject { return synchronized(MdmConfiguration.lock) {
         val desired = legacySnapshot(context)
         mobile.Mobile.validateVpnConfiguration(desired.getJSONObject("model").toString())
+        if(MdmConfiguration.hasLayer(context))return desired // Never persist external settings into the legacy cache.
         val bytes = desired.toString().toByteArray(Charsets.UTF_8)
         val file = AtomicFile(File(context.filesDir, FILE))
         val old = try { file.readFully() } catch (_: FileNotFoundException) { null }
@@ -101,10 +104,10 @@ internal object VpnConfiguration {
         }
         if (!file.readFully().contentEquals(bytes)) throw IOException("Не удалось сохранить настройки VPN")
         return desired
-    }
+    } }
 
     private fun legacySnapshot(context: Context): JSONObject {
-        val meta = context.getSharedPreferences("vpn_profiles", Context.MODE_PRIVATE)
+        val meta = VpnProfiles.meta(context)
         val list = JSONArray(meta.getString("profiles", null)
             ?: """[{"id":"default","name":"Основной"}]""")
         require(list.length() > 0) { "Нет профилей VPN" }
@@ -158,7 +161,7 @@ internal object VpnConfiguration {
             .put("enabled_exit_ids", JSONArray(ids.filter { it in enabled }))
             .put("dns_exit_id", dns)
             .put("global_apps", JSONArray(meta.getStringSet("global_apps",
-                context.getSharedPreferences("vpn",0).getStringSet("apps", emptySet())).orEmpty().sorted()))
+                MdmConfiguration.preferences(context,"vpn").getStringSet("apps", emptySet())).orEmpty().sorted()))
             .put("profiles", localProfiles)
         val model = JSONObject().put("version", 1).put("exits", exits).put("profiles", profiles)
         return JSONObject().put("schema_version", 1).put("model", model).put("local", local)

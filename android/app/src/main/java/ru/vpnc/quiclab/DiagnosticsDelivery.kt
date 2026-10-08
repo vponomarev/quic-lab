@@ -36,7 +36,7 @@ internal object DiagnosticsDelivery {
  @Synchronized fun destination(c:Context,profile:String):Pair<String,String>{
   val file=VpnProfiles.identityFile(c,profile)
   val cached=destinations[profile]
-  if(cached!=null&&cached.modified==file.lastModified()&&cached.size==file.length())return cached.url to cached.token
+  if(!MdmConfiguration.hasLayer(c)&&cached!=null&&cached.modified==file.lastModified()&&cached.size==file.length())return cached.url to cached.token
   val identity=VpnIdentity.load(c,profile);ServiceTransfer.validateMetadata(identity)
   val id=identity.optString("device_id");require(id.matches(Regex("[a-zA-Z0-9-]{1,64}"))){"Нет регистрации устройства"}
   val uri=URI(identity.getString("config_url"))

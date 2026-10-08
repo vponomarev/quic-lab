@@ -8,7 +8,8 @@ import org.json.JSONObject
 
 internal object AwgImport {
     fun metadata(raw: String) = JSONObject(Mobile.validateAWGConfig(raw))
-    fun save(context: Context, raw: String) {
+    fun save(context: Context, raw: String) { return synchronized(MdmConfiguration.lock){ MdmConfiguration.assertEditable(context)
+
         check(!LabVpnService.active) { "Сначала остановите VPN" }
         val info = metadata(raw)
         val previous = VpnProfiles.current(context).id
@@ -31,7 +32,7 @@ internal object AwgImport {
             VpnProfiles.select(context, previous)
             throw e
         }
-    }
+    } }
     fun review(activity: Activity, raw: String, saved: () -> Unit, cancelled: () -> Unit = {}) {
         val info = metadata(raw)
         val warning = if (info.optBoolean("ipv6_ignored")) "\nIPv6 не поддерживается и будет заблокирован для трафика, захваченного VPN." else ""

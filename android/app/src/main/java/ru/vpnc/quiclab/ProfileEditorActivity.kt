@@ -478,12 +478,14 @@ class ProfileEditorActivity : Activity() {
                 }.show()
         } else try {persistEditor();after()}catch(e:Exception){error(e)}
     }
-    private fun persistEditor() {
+    private fun persistEditor() { synchronized(MdmConfiguration.lock){
+        prefs.validateWrite()
         check(!LabVpnService.active){"Сначала остановите VPN"}
         save();pendingIdentity?.let { VpnIdentity.writeBundle(this,profileId,it) };prefs.persist();pendingIdentity=null
         if(useGlobalApps.isChecked && apps!=VpnProfiles.globalApps(this)) VpnProfiles.setGlobalApps(this,apps)
         initialForm=formFingerprint();initialApps=apps.toSet();draftGlobalApps=VpnProfiles.globalApps(this)
         Toast.makeText(this,"Изменения сохранены",Toast.LENGTH_SHORT).show()
+    }
     }
     private fun refreshEditor() {prefs=PreferenceDraft(VpnProfiles.preferences(this,profileId));buildEditor()}
 
