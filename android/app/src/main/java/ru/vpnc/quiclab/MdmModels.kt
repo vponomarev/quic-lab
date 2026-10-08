@@ -23,7 +23,7 @@ internal data class MdmBinding(val id:String,val endpoint:String,val epoch:Long,
    (u.path.isEmpty() || u.path=="/") && (u.port==-1 || u.port in 1..65535)) { "Неверный адрес MDM" }
  }
  fun url(operation:String):String {
-  require(operation in listOf("enroll","activate","sync","pause","telemetry"))
+  require(operation in listOf("enroll","activate","sync","pause","telemetry","report"))
   return endpoint.trimEnd('/')+"/mdm/v1/"+operation
  }
 }

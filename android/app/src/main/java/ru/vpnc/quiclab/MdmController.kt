@@ -146,6 +146,14 @@ internal class MdmController(
   }
   return true
  }
+ internal fun report(build:(MdmState)->JSONObject):Boolean {
+  val before=read();if(!before.active || before.cleanupPending)return false
+  val b=before.binding?:return false
+  val report=build(before)
+  val latest=read();if(!latest.active || latest.localGeneration!=before.localGeneration)return false
+  send(b,"report",JSONObject().put("bindingId",b.id).put("epoch",b.epoch).put("report",report),before.localGeneration,store.secret())
+  return true
+ }
  internal fun cancelCalls(){calls.keys.forEach{runCatching{it.close()}}}
  private fun send(b:MdmBinding,op:String,body:JSONObject,generation:Long,secret:String):JSONObject{
   val gateway=gateways();calls[gateway]=true

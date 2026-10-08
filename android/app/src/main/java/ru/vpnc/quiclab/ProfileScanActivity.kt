@@ -32,6 +32,7 @@ class ProfileScanActivity : Activity() {
                 startActivity(Intent(this,MdmEnrollActivity::class.java).putExtra("mdm_invitation",raw))
                 finish();return
             }
+            require(!intent.getBooleanExtra("mdm_only",false)){"Нужен QR приглашения MDM"}
             check(!LabVpnService.active){"Сначала остановите VPN"}
             require(raw.length<=32768){"Конфигурация слишком большая"}
             if(raw.trimStart().startsWith("vless://")) {

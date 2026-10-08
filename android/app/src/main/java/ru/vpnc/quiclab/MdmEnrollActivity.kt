@@ -76,8 +76,13 @@ class MdmEnrollActivity:Activity(){
   }
   val proposed=invitation
   if(proposed==null){
+   panel.addView(ui.button("Сканировать QR"){startActivity(Intent(this,ProfileScanActivity::class.java).putExtra("mdm_only",true))})
    val link=EditText(this).apply{hint="Отдельная ссылка-приглашение MDM";inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE}
    panel.addView(link)
+   panel.addView(ui.button("Вставить ссылку"){
+    val clip=getSystemService(android.content.ClipboardManager::class.java).primaryClip
+    if(clip!=null && clip.itemCount>0)link.setText(clip.getItemAt(0).coerceToText(this))
+   })
    panel.addView(ui.button("Проверить приглашение"){
     try{invitation=MdmInvitation.parse(link.text.toString().trim());render()}
     catch(_:Exception){status.text="Неверное приглашение MDM. VPN-профиль не включает управление устройством."}

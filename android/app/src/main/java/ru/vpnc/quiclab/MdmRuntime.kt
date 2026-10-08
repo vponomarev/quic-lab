@@ -41,6 +41,7 @@ internal object MdmRuntime {
      pending=response.desiredConfig!=null || response.commands.isNotEmpty()
     })
      throw InterruptedException("MDM paused")
+    c.report{state->MdmDeviceReport.snapshot(context,state)}
     MdmTelemetry.reconcile(context)
     runCatching{MdmTelemetry.upload(context)}
     // Do not acknowledge unsupported actions. Avoid a tight loop until their consumers are wired.
