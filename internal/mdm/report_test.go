@@ -123,3 +123,33 @@ func TestReportInventoryLimits(t *testing.T) {
 		})
 	}
 }
+func TestPendingIdentitySurvivesEditorRead(t *testing.T) {
+	s, b, r := reportFixture(t)
+	if e := s.Report(b.ID, b.Epoch, r, testNow); e != nil {
+		t.Fatal(e)
+	}
+	uri := "vless://12345678-1234-1234-1234-123456789abc@example.com:443?security=tls&type=tcp&sni=example.com"
+	var doc ConfigurationDocument
+	json.Unmarshal([]byte(validDocument), &doc)
+	doc.Profiles[0].Identity = &ConfigurationIdentity{VLESS: uri}
+	raw, _ := json.Marshal(doc)
+	if _, e := s.SetDesiredChecked(b.ID, 0, 3, "key-1", "current", raw); e != nil {
+		t.Fatal(e)
+	}
+	observed, _ := s.DeviceState(b.ID)
+	if strings.Contains(string(observed.Desired.Document), uri) {
+		t.Fatal("GET secret")
+	}
+	if _, e := s.SetDesiredChecked(b.ID, 1, 3, "key-2", "current", observed.Desired.Document); e != nil {
+		t.Fatal(e)
+	}
+	response, e := s.Sync(b.ID, SyncRequest{Version: 1, Epoch: b.Epoch}, testNow)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var result ConfigurationDocument
+	json.Unmarshal(response.DesiredConfig.Document, &result)
+	if result.Profiles[0].Identity == nil || result.Profiles[0].Identity.VLESS != uri {
+		t.Fatal("pending credentials lost")
+	}
+}

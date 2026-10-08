@@ -50,3 +50,41 @@ func TestMDMControlRoutesGuarded(t *testing.T) {
 		t.Fatal("csrf", out.Code)
 	}
 }
+func TestMDMEditorPage(t *testing.T) {
+	c := config(t)
+	s, _ := OpenStore(c.DataDir)
+	w := NewWeb(c, s)
+	w.MDM, _ = mdm.OpenStore(filepath.Join(c.DataDir, "mdm"))
+	inv, _ := w.MDM.CreateInvitation(time.Now(), mdm.Rights{})
+	b, _ := w.MDM.Redeem(mdm.EnrollmentRequest{Version: 1, Token: inv.Token, RegistrationID: "edit", Secret: strings.Repeat("b", 64)}, time.Now())
+	h := w.Handler()
+	login := call(h, "POST", "/login", url.Values{"username": {c.Username}, "password": {c.Password}}.Encode(), nil)
+	cookie := login.Result().Cookies()[0]
+	out := call(h, "GET", "/mdm/device?id="+b.ID, "", cookie)
+	if out.Code != 200 || !strings.Contains(out.Body.String(), "Применить") || !strings.Contains(out.Body.String(), "mdm-editor.js") {
+		t.Fatal("editor missing", out.Code)
+	}
+	if out = call(h, "GET", "/mdm/device?id=missing", "", cookie); out.Code != 404 {
+		t.Fatal("unknown device", out.Code)
+	}
+}
+
+func TestMDMListUsesReportWithoutGeo(t *testing.T) {
+	c := config(t)
+	s, _ := OpenStore(c.DataDir)
+	w := NewWeb(c, s)
+	w.MDM, _ = mdm.OpenStore(filepath.Join(c.DataDir, "mdm"))
+	inv, _ := w.MDM.CreateInvitation(time.Now(), mdm.Rights{})
+	b, _ := w.MDM.Redeem(mdm.EnrollmentRequest{Version: 1, Token: inv.Token, RegistrationID: "report", Secret: strings.Repeat("c", 64)}, time.Now())
+	b, _ = w.MDM.Activate(b.ID, time.Now())
+	if e := w.MDM.Report(b.ID, b.Epoch, mdm.DeviceReport{Version: 1, Sequence: 1, Name: "Report-only phone", AppVersion: "version-123"}, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	h := w.Handler()
+	login := call(h, "POST", "/login", url.Values{"username": {c.Username}, "password": {c.Password}}.Encode(), nil)
+	cookie := login.Result().Cookies()[0]
+	out := call(h, "GET", "/mdm", "", cookie)
+	if out.Code != 200 || !strings.Contains(out.Body.String(), "Report-only phone") || !strings.Contains(out.Body.String(), "version-123") {
+		t.Fatal("device report missing from list", out.Code)
+	}
+}

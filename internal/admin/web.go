@@ -57,6 +57,8 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /mdm/invite", w.mdmInvite)
 	m.HandleFunc("POST /mdm/assign", w.mdmAssign)
 	m.HandleFunc("GET /mdm/state", w.mdmState)
+	m.HandleFunc("GET /mdm/device", w.mdmEditor)
+	m.HandleFunc("GET /mdm-editor.js", w.mdmEditorScript)
 	m.HandleFunc("POST /mdm/config", w.mdmConfig)
 	m.HandleFunc("POST /mdm/command", w.mdmCommand)
 	m.HandleFunc("POST /mdm/policy", w.mdmPolicy)
@@ -117,6 +119,9 @@ func (w *Web) Handler() http.Handler {
 		rw.Header().Set("Referrer-Policy", "same-origin")
 		rw.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		limit := int64(16384)
+		if r.URL.Path == "/mdm/config" {
+			limit = 4 << 20
+		}
 		if strings.HasPrefix(r.URL.Path, "/mdm/v1/") {
 			limit = 1 << 20
 		}
@@ -467,6 +472,7 @@ func (w *Web) page(rw http.ResponseWriter, v view) {
 				row.Version = records[0].Sample.AppVersion
 				row.Last = records[0].Sample.MeasuredAt.Format(time.RFC3339)
 			}
+			w.mdmReportRow(&row)
 			v.UserMDM[b.UserID] = append(v.UserMDM[b.UserID], row)
 		}
 	}

@@ -116,6 +116,7 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 				row.Version = sample.AppVersion
 				row.Last = sample.MeasuredAt.Format("02.01.2006 15:04:05") + " UTC"
 			}
+			w.mdmReportRow(&row)
 			v.Rows = append(v.Rows, row)
 		}
 	}
@@ -205,4 +206,19 @@ func (w *Web) StartMDMMaintenance(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// Prefer the control-channel report; telemetry consent is not required for device identity.
+func (w *Web) mdmReportRow(row *mdmRow) {
+	state, e := w.MDM.DeviceState(row.ID)
+	if e != nil {
+		return
+	}
+	if state.Report != nil {
+		row.Name = state.Report.Name
+		row.Version = state.Report.AppVersion
+	}
+	if !state.ReceivedAt.IsZero() {
+		row.Last = state.ReceivedAt.UTC().Format(time.RFC3339)
+	}
 }

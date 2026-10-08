@@ -62,7 +62,7 @@ func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) er
 			return ErrInvalid
 		}
 	}
-	if r.VPNState != "" && !oneOf(r.VPNState, "stopped", "starting", "connected", "recovering", "error") {
+	if r.VPNState != "" && !oneOf(r.VPNState, "stopped", "starting", "running", "connected", "recovering", "error") {
 		return ErrInvalid
 	}
 	if len(r.Configuration) > 0 {
@@ -203,6 +203,25 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	b = n.Bindings[id]
 	if b.Requests == nil {
 		b.Requests = map[string]requestRecord{}
+	}
+	if b.Desired != nil && b.Report.AppliedRevision < b.Desired.Revision {
+		var previous, next ConfigurationDocument
+		_ = json.Unmarshal(b.Desired.Document, &previous)
+		_ = json.Unmarshal(document, &next)
+		identities := map[string]*ConfigurationIdentity{}
+		for _, p := range previous.Profiles {
+			identities[p.ID] = p.Identity
+		}
+		for i := range next.Profiles {
+			p := &next.Profiles[i]
+			if p.Identity == nil && !p.RemoveIdentity {
+				p.Identity = identities[p.ID]
+			}
+		}
+		document, _ = json.Marshal(next)
+		if ValidateDocument(document) != nil {
+			return ConfigRevision{}, ErrInvalid
+		}
 	}
 	r := ConfigRevision{Revision: revision + 1, Mode: mode, Document: append(json.RawMessage(nil), document...), ExpectedGeneration: generation}
 	now := time.Now().UTC()
