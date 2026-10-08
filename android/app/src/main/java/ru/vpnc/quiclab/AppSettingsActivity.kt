@@ -22,6 +22,15 @@ class AppSettingsActivity:Activity(){
  override fun onCreate(savedInstanceState:Bundle?){
   super.onCreate(savedInstanceState);ui=ClientUi(this)
   rtt=PreferenceDraft(VpnRttSettings.preferences(this));reserve=PreferenceDraft(VpnReserveSettings.preferences(this));budget=PreferenceDraft(VpnBudgetSettings.preferences(this));meta=PreferenceDraft(VpnProfiles.meta(this))
+  // Normalize displayed defaults in the private draft before Spinner callbacks run.
+  // Initial selection can be delivered after the first posted initialization task.
+  meta.edit().putString("dns_mode",if(meta.getString("dns_mode","tunnel")=="system")"system" else "tunnel").apply()
+  for((key,default) in listOf("screen_on" to 1000L,"screen_off" to 0L)) {
+   val displayed=VpnRttSettings.values.indexOf(rtt.getLong(key,default)).coerceAtLeast(0)
+   rtt.edit().putLong(key,VpnRttSettings.values[displayed]).apply()
+  }
+  for((key,default) in listOf("wifi_on" to true,"wifi_off" to true,"cell_on" to false,"cell_off" to false,"metered_wifi" to false))
+   reserve.edit().putBoolean(key,reserve.getBoolean(key,default)).apply()
   val root=ui.column();val bar=LinearLayout(this);bar.addView(ui.button("Назад"){leave()});bar.addView(ui.text("Общие настройки",20f,true));root.addView(bar)
   val panel=ui.column().apply{setPadding(ui.dp(16),0,ui.dp(16),ui.dp(16))};root.addView(ScrollView(this).apply{addView(panel)},LinearLayout.LayoutParams(-1,0,1f))
   var box=ui.card(panel);box.addView(ui.text("DNS",18f,true));val dns=Spinner(this);dns.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,arrayOf("Через выбранный VPN-выход","Системный DNS сети"));dns.setSelection(if(meta.getString("dns_mode","tunnel")=="system")1 else 0);box.addView(dns);dns.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:android.widget.AdapterView<*>?){};override fun onItemSelected(p:android.widget.AdapterView<*>?,v:android.view.View?,pos:Int,id:Long){meta.edit().putString("dns_mode",if(pos==1)"system" else "tunnel").apply()}}
@@ -48,7 +57,7 @@ class AppSettingsActivity:Activity(){
   })
   panel.addView(ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
   panel.addView(ui.button("Диагностика и отправка журналов"){startActivity(Intent(this,DiagnosticsSettingsActivity::class.java))})
-  root.addView(ui.button("Сохранить",true){save{}});EditorViewState.assign(root);ui.install(root);handler.post{listOf(rtt,reserve,budget,meta).forEach{it.acceptInitialState()};initialising=false}
+  root.addView(ui.button("Сохранить",true){save{}});EditorViewState.assign(root);ui.install(root);listOf(rtt,reserve,budget,meta).forEach{it.acceptInitialState()};initialising=false
  }
  private fun dirty()=!initialising && (listOf(rtt,reserve,budget,meta).any{it.dirty} || limit.text.toString()!=initialLimit)
  private fun leave(){if(busy)return;if(!dirty()){finish();return};AlertDialog.Builder(this).setTitle("Сохранить изменения?").setPositiveButton("Сохранить"){_,_->save{finish()}}.setNegativeButton("Не сохранять"){_,_->finish()}.setNeutralButton("Продолжить редактирование",null).show()}
