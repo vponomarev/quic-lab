@@ -15,6 +15,7 @@ import (
 )
 
 type serverConfig struct {
+	ManagementOnly             bool                  `json:"management_only,omitempty"`
 	TLSRoutes                  []sniRoute            `json:"tls_routes,omitempty"`
 	VPNSNINames                []string              `json:"vpn_sni_names,omitempty"`
 	Capabilities               protocol.Capabilities `json:"capabilities,omitempty"`
@@ -40,6 +41,7 @@ type serverConfig struct {
 func parseServerConfig(args []string) (serverConfig, error) {
 	c := serverConfig{Listen: "127.0.0.1:4433", Capabilities: protocol.DefaultCapabilities()}
 	fs := flag.NewFlagSet("quic-lab-server", flag.ContinueOnError)
+	fs.BoolVar(&c.ManagementOnly, "management-only", false, "serve only HTTPS management; no VPN or Echo")
 	path := fs.String("config", "", "server JSON configuration; explicit CLI flags override file values")
 	fs.IntVar(&c.BondDisconnectGraceSeconds, "bond-disconnect-grace-seconds", 0, "bond disconnect retention, seconds (0 = 120)")
 	check := fs.Bool("check-config", false, "validate configuration without opening listeners")
@@ -126,6 +128,15 @@ func validateAddress(value string, backend bool) error {
 }
 
 func (c serverConfig) validate() error {
+	if c.ManagementOnly {
+		if c.AdminConfig == "" {
+			return errors.New("management_only requires admin_config")
+		}
+		if c.GatewayQUIC != "" || c.GatewayHTTPS != "" || c.WebListen != "" || c.DemoListen != "" || c.TLSFallback != "" || len(c.TLSRoutes) > 0 {
+			return errors.New("management_only conflicts with VPN, Echo and passthrough listeners")
+		}
+	}
+
 	if len(c.TLSRoutes) > 0 {
 		if c.HTTPSListen == "" {
 			return errors.New("tls_routes requires https_listen")

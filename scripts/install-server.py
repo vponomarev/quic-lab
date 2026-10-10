@@ -302,6 +302,12 @@ def server_config(ports, frontend, domain, allow="0.0.0.0/0", previous=None, arg
     if args and getattr(args, "migrate_unified", False):
         result["gateway_quic"] = result["listen"]
         result["gateway_https"] = result["https_listen"]
+    if (args and getattr(args, "management_only", False)) or result.get("management_only"):
+        result["management_only"] = True
+        for field in ("gateway_quic", "gateway_https", "web_listen", "demo_listen", "tls_fallback", "gateway_allow", "client_ca"):
+            result[field] = ""
+        result["tls_routes"] = []
+        result["vpn_sni_names"] = []
     return result
 
 
@@ -684,6 +690,7 @@ def main():
     parser.add_argument("--tls-fallback", help="Direct frontend: pass other TLS SNI names to this host:port, including remote hosts")
     parser.add_argument("--email", help="Optional Let's Encrypt account email")
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-server")
+    parser.add_argument("--management-only", action="store_true", help="Fresh standalone MDM installation without VPN or Echo; existing mode is preserved")
     parser.add_argument("--enable-vless", action="store_true", help="Provision optional managed VLESS: exact-SNI TCP/443 routing in unified mode, dedicated TCP in split mode")
     parser.add_argument("--vless-port", type=port_number, help="VLESS backend port: unified default 9444 on loopback; split chooses 8443/9443/10443")
     parser.add_argument("--vless-binary", type=Path, default=Path(__file__).resolve().parent / "quic-lab-vless")
@@ -701,6 +708,8 @@ def main():
         parser.print_help()
         return
     args = parser.parse_args()
+    if args.management_only and (args.enable_awg or args.enable_vless or args.tls_fallback):
+        parser.error("--management-only conflicts with transport options")
     if (args.awg_port or args.awg_address) and not args.enable_awg:
         parser.error("--awg-port/--awg-address require --enable-awg")
     if args.vless_port and not (args.enable_vless or args.migrate_unified):
@@ -759,6 +768,16 @@ def install(args):
     server_file = CONFIG / "server.json"
     old_server = server_file.read_bytes() if server_file.exists() else None
     previous_server = json.loads(old_server) if old_server is not None else None
+    management = bool((previous_server or {}).get("management_only") or getattr(args,"management_only",False))
+    if management:
+        if previous_server and not previous_server.get("management_only"):
+            raise RuntimeError("Converting an existing VPN installation requires an explicit manual migration")
+        if args.enable_awg or args.enable_vless or VLESS_UNIT.exists() or (cfg and any(cfg.get(k) for k in ("awg","vless","transit","echo_awg","capture"))):
+            raise RuntimeError("Management-only installation cannot run transport workers")
+        if getattr(args,"frontend",None) == "nginx" or (state and state.get("frontend") == "nginx"):
+            raise RuntimeError("Management-only installer requires the direct HTTPS frontend")
+        args.frontend = "direct"
+        args.management_only = True
     frontend = "direct" if getattr(args, "migrate_unified", False) else (getattr(args, "frontend", None) or resolve_frontend(state, cfg))
     prior_ingress = resolve_ingress(argparse.Namespace(), state, cfg, resolve_frontend(state, cfg)) if state or cfg else None
     args.ingress = resolve_ingress(args, state, cfg, frontend)
@@ -843,6 +862,7 @@ def install(args):
         print(f"Previous configuration saved in {backup}", flush=True)
     if not existing.exists():
         cfg = admin_config(args.domain, ports)
+        if management: cfg["management_only"] = True
         if desired_vless: cfg["vless"] = desired_vless
         atomic(existing, json.dumps(cfg, indent=2) + "\n", 0o600)
         credentials = f"URL: {cfg['public_url']}login\nLogin: {cfg['username']}\nPassword: {cfg['password']}\n"
@@ -1012,6 +1032,9 @@ def install(args):
         if args.awg_address:
             command += ["--address", args.awg_address]
         run(*command)
+    if management:
+        print(f"Management-only ready: https://{args.domain}/lab/mdm\nAllow TCP 443 (and 80 for ACME); no VPN/Echo ports are opened.")
+        return
     exposed_tcp = {80, 443, ports["mtls_port"]}
     if desired_vless and not desired_vless.get("accept_proxy_protocol"): exposed_tcp.add(port_number(desired_vless["listen"].rsplit(":", 1)[1]))
     tcp_ports = ",".join(str(p) for p in sorted(exposed_tcp))

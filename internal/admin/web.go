@@ -121,6 +121,18 @@ func (w *Web) Handler() http.Handler {
 		// Preserve Origin on same-origin form POSTs; disclose no referrer cross-origin.
 		rw.Header().Set("Referrer-Policy", "same-origin")
 		rw.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		if w.Config.ManagementOnly {
+			path := r.URL.Path
+			if path == "/users" && r.Method == "GET" {
+				http.Redirect(rw, r, w.base+"mdm", http.StatusSeeOther)
+				return
+			}
+			allowed := path == "/" || path == "/login" || path == "/logout" || path == "/download/quic-lab.apk" || path == "/ui.css" || path == "/ui.js" || path == "/mdm-editor.js" || path == "/mdm" || strings.HasPrefix(path, "/mdm/") || path == "/backups" || strings.HasPrefix(path, "/backups/")
+			if !allowed {
+				http.NotFound(rw, r)
+				return
+			}
+		}
 		limit := int64(16384)
 		if r.URL.Path == "/mdm/config" {
 			limit = 4 << 20

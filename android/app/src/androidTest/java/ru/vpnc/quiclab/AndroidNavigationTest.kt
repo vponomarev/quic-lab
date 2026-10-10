@@ -9,6 +9,15 @@ import androidx.test.runner.lifecycle.Stage
 import org.junit.Assert.*
 import org.junit.Test
 class AndroidNavigationTest {
+ @Test fun directEntryOpensVpnUnlessEchoExplicitlyRequested() {
+  val inst=InstrumentationRegistry.getInstrumentation()
+  inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity").use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
+  Thread.sleep(1200)
+  inst.runOnMainSync {
+   assertTrue("Direct entry must open VPN, not legacy Echo",ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).any{it is VpnActivity})
+  }
+ }
+
  private fun views(v:View):List<View> = listOf(v)+(if(v is ViewGroup)(0 until v.childCount).flatMap{views(v.getChildAt(it))}else emptyList())
  private val inst get()=InstrumentationRegistry.getInstrumentation()
  private fun resumedEditor():ProfileEditorActivity {

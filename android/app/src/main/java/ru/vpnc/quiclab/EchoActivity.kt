@@ -80,7 +80,7 @@ class EchoActivity : Activity() {
         panel.addView(Button(this).apply { text = "Самостоятельное сравнение ›"; setOnClickListener {
             if (controller.canOpenStandalone()) {
                 controller.close()
-                startActivity(Intent(this@EchoActivity,MainActivity::class.java).putExtra("standalone_echo",true))
+                startActivity(Intent(this@EchoActivity,StandaloneEchoActivity::class.java))
             } else Toast.makeText(this@EchoActivity,"Сначала остановите VPN",Toast.LENGTH_SHORT).show()
         } })
         label("Полный путь через активный VPN-выход").textSize = 20f

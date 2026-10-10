@@ -16,6 +16,13 @@ spec.loader.exec_module(i)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_management_only_has_no_transport_listeners(self):
+        c = i.server_config(i.UNIFIED_PORTS, "direct", "example.org", args=SimpleNamespace(management_only=True))
+        self.assertTrue(c.get("management_only"))
+        for field in ("gateway_quic", "gateway_https", "web_listen", "demo_listen", "tls_fallback"):
+            self.assertFalse(c.get(field), field)
+        self.assertEqual(c["https_listen"], "0.0.0.0:443")
+
     def test_backup_transit_credential_is_readable_by_dynamic_user(self):
         if not Path("/run/systemd/system").exists():
             self.skipTest("requires systemd Linux host")

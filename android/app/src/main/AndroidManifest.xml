@@ -51,6 +51,7 @@
 <activity android:name=".PermissionsActivity" android:exported="false" />
 <activity android:name=".AppSettingsActivity" android:exported="false" />
         <activity android:name=".VpnActivity" android:exported="false" />
+        <activity android:name=".StandaloneEchoActivity" android:exported="false" />
         <activity android:name=".EchoActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

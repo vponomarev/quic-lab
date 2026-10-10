@@ -68,7 +68,7 @@ func main() {
 	keys := new(debugcapture.Router)
 	echoTLS := &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*addr), true), NextProtos: []string{protocol.ALPN}, MinVersion: tls.VersionTLS13}
 	var ln echo.Listener
-	if *addr != *gatewayQUIC {
+	if !opts.ManagementOnly && *addr != *gatewayQUIC {
 		separate, listenErr := quic.ListenAddr(*addr, echoTLS, &quic.Config{MaxIdleTimeout: 90 * time.Second, MaxIncomingStreams: 1, MaxIncomingUniStreams: -1})
 		if listenErr != nil {
 			log.Error("listen", "error", listenErr)
@@ -115,6 +115,10 @@ func main() {
 		cfg, e := admin.ReadConfig(*adminFile)
 		if e != nil {
 			log.Error("admin_config", "error", e)
+			os.Exit(1)
+		}
+		if cfg.ManagementOnly != opts.ManagementOnly {
+			log.Error("management_only must match in server and admin configuration")
 			os.Exit(1)
 		}
 		uplink = cfg.Transit
@@ -324,7 +328,7 @@ func main() {
 		}
 	}
 	if *publicHTTPS != "" && *publicHTTPS != *gatewayHTTPS {
-		ps := &http.Server{Addr: *publicHTTPS, Handler: withCapabilities(publicHandler(publicAdmin, adminBase, log, nil, echoProbe), opts.Capabilities), TLSConfig: &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*publicHTTPS), false), MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
+		ps := &http.Server{Addr: *publicHTTPS, Handler: withCapabilities(selectPublicHandler(opts.ManagementOnly, publicAdmin, adminBase, log, echoProbe), opts.Capabilities), TLSConfig: &tls.Config{GetCertificate: reloadable.GetCertificate, KeyLogWriter: keys.Writer(listenerPort(*publicHTTPS), false), MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16384}
 		defer ps.Close()
 		configurePublicTLS(ps, opts, log)
 		go func() {
@@ -355,6 +359,10 @@ func main() {
 			}
 		}()
 		defer srv.Close()
+	}
+	if opts.ManagementOnly {
+		<-ctx.Done()
+		return
 	}
 	if err := echo.Serve(ctx, ln, log, echoProbe); err != nil && ctx.Err() == nil {
 		log.Error("serve", "error", err)

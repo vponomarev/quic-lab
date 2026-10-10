@@ -31,6 +31,7 @@ type mdmRow struct {
 	Active, Consent                           bool
 }
 type mdmView struct {
+	ManagementOnly                 bool
 	UserID                         string
 	Users                          []User
 	Dropped                        int64
@@ -54,7 +55,7 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 	if !ok || !w.mdmReady(rw) {
 		return
 	}
-	v := mdmView{Base: w.base, CSRF: session.CSRF, Device: r.URL.Query().Get("device"), Users: w.Store.List(), UserID: r.URL.Query().Get("user")}
+	v := mdmView{ManagementOnly: w.Config.ManagementOnly, Base: w.base, CSRF: session.CSRF, Device: r.URL.Query().Get("device"), Users: w.Store.List(), UserID: r.URL.Query().Get("user")}
 	now := time.Now().UTC()
 	if v.Device != "" {
 		found := false
@@ -123,6 +124,7 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 	w.renderMDM(rw, v)
 }
 func (w *Web) renderMDM(rw http.ResponseWriter, v mdmView) {
+	v.ManagementOnly = w.Config.ManagementOnly
 	rw.Header().Set("Cache-Control", "no-store")
 	rw.Header().Set("Referrer-Policy", "same-origin")
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")

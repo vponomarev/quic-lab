@@ -41,6 +41,7 @@ type Profile struct {
 	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
+	ManagementOnly  bool                  `json:"management_only,omitempty"`
 	BackupMiB       int                   `json:"backup_mib,omitempty"`
 	DiagnosticsDays int                   `json:"diagnostics_days,omitempty"`
 	DiagnosticsMiB  int                   `json:"diagnostics_mib,omitempty"`
@@ -73,6 +74,10 @@ func ReadConfig(file string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.ManagementOnly && (c.AWG != nil || c.VLESS != nil || c.Transit != nil || c.Capture != nil || c.EchoAWG != "") {
+		return errors.New("management_only conflicts with transport workers or capture")
+	}
+
 	if c.BackupMiB < 0 || c.BackupMiB > 1048576 {
 		return errors.New("invalid backup disk quota")
 	}
@@ -115,6 +120,9 @@ func (c Config) Validate() error {
 	}
 	if c.DataDir == "" {
 		return errors.New("data_dir required")
+	}
+	if c.ManagementOnly {
+		return nil
 	}
 	for _, v := range []string{c.Echo.Endpoint, c.VPN.QUIC, c.VPN.HTTPS} {
 		h, p, e := net.SplitHostPort(v)

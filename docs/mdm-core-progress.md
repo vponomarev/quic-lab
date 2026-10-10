@@ -2,7 +2,7 @@
 
 2026-10-08. Branch: codex/mdm-core, based on v0.9.0.
 Accepted plan: docs/superpowers/plans/2026-10-04-mdm-core.md.
-Production remains v0.9.0; MDM is not exposed there.
+Historical checkpoints below describe staged implementation. MDM and telemetry are now deployed. See [0.9.1 acceptance](mdm-stable-091-acceptance.md) for current release status; older statements about production or unwired runtime are superseded.
 
 ## Task 1 — server foundation
 Implemented in bc3669b: durable private snapshot, hashed credentials, idempotent enrollment,
