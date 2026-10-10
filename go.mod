@@ -22,6 +22,11 @@ require (
 )
 
 require (
+	filippo.io/age v1.3.2 // indirect
+	filippo.io/hpke v0.4.0 // indirect
+)
+
+require (
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/apernet/quic-go v0.59.1-0.20260217092621-db4786c77a22 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect

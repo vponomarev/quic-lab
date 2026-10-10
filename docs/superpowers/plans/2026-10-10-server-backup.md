@@ -51,11 +51,11 @@
 
 **Interfaces:** produces `Write(ctx context.Context, dst io.Writer, snapshot Snapshot, password []byte) error`; `Verify(ctx context.Context, src io.Reader, password []byte, staging string, limits Limits) (*Verified, error)`.
 
-- [ ] Добавить `TestArchiveRoundTrip`, `TestArchiveRejectUnsafeEntries`, `TestArchiveAuthenticationBeforeSuccess`: оба типа, manifest/hash, неверный пароль, усечение последнего age-блока, traversal, абсолютный путь, symlink/hardlink, special file, duplicate, число/размер/распакованный поток сверх лимита. Assert: ошибка, рабочая директория не затронута, staging очищен.
-- [ ] Linux: `go test ./internal/backup -run TestArchive -count=1` — ожидаемый FAIL до реализации.
-- [ ] Реализовать API в archive.go/manifest.go; выбрать и зафиксировать поддерживаемую совместимую версию age в go.mod/go.sum. Дешифровать поток до EOF, проверять обязательность компонентов/схему и все ссылки идентичностей перед успехом; не считать успешный заголовок доказательством целостности.
-- [ ] Повторить команду: PASS.
-- [ ] Commit: `feat: add authenticated server backup format` (только файлы задачи и зависимости).
+- [x] Добавить `TestArchiveRoundTrip`, `TestArchiveRejectUnsafeEntries`, `TestArchiveAuthenticationBeforeSuccess`: оба типа, manifest/hash, неверный пароль, усечение последнего age-блока, traversal, абсолютный путь, symlink/hardlink, special file, duplicate, число/размер/распакованный поток сверх лимита. Assert: ошибка, рабочая директория не затронута, staging очищен.
+- [x] Linux: `go test ./internal/backup -run TestArchive -count=1` — ожидаемый FAIL до реализации.
+- [x] Реализовать API в archive.go/manifest.go; выбрать и зафиксировать поддерживаемую совместимую версию age в go.mod/go.sum. Дешифровать поток до EOF, проверять обязательность компонентов/схему и все ссылки идентичностей перед успехом; не считать успешный заголовок доказательством целостности.
+- [x] Повторить команду: PASS.
+- [x] Commit: `feat: add authenticated server backup format` (только файлы задачи и зависимости).
 
 ## Task 2: Согласованный снимок и инвентарь секретов
 
