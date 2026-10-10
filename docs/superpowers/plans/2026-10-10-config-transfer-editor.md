@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-04-client-management-design.md`, sections 7–8, 9.3, 10–12; current configuration/report contracts and accepted amendments through 0.9.1.
 
-Status: prepared 2026-10-10; implementation not started. This plan supplies implementation decisions for the already accepted product design. Execution starts after review of this document.
+Status 2026-10-10: Tasks 1–2 implementation shipped in 0.9.3. Acceptance limits are recorded in docs/configuration-transfer-acceptance.md (full UI import/apply and live-traffic crash acceptance remain open). Task 3 is in progress: ephemeral store and lifecycle/CAS tests implemented; HTTPS/admin wiring remains pending. Tasks 4–5 are not complete. Original detailed checkboxes below are not a substitute for the release acceptance evidence.
 
 ## Global constraints
 
