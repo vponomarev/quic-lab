@@ -44,6 +44,8 @@ class MdmService:Service(){
   try{
    AppServiceNotification.start(this,"mdm",if(Build.VERSION.SDK_INT>=34)ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
    VpnBudgetRun.sharedForContext(this).acquireControl(VpnBudgetSettings.limitBytes(this));retained=true
+   // Retry only once management has a legitimate foreground service.
+   VpnProcessRecovery.restore(this)
    runCatching{MdmTelemetry.reconcile(this)}
    status="MDM включено"
    handler.post(checkpoint)

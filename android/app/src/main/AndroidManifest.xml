@@ -17,7 +17,7 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <application android:label="QUIC Lab" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+    <application android:name=".QuicLabApplication" android:label="QUIC Lab" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.diagnostics" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/diagnostic_paths" />
         </provider>

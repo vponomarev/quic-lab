@@ -29,8 +29,17 @@ internal object MdmRuntime {
   },{MdmTelemetry.rightsChanged(app);if(!MdmStore(app).read().rights.config)MdmApplyCoordinator(app).detach()})
  }
  fun restore(context:Context,foreground:Boolean=false){
-  runCatching{if(controller(context).read().active){MdmService.start(context);MdmTelemetry.reconcile(context,foreground)}}
-   .onFailure{MdmService.status="Не удалось восстановить MDM; откройте настройки управления"}
+  runCatching {
+   val state=controller(context).read()
+   if(state.active && !state.cleanupPending && state.binding!=null){
+    MdmService.start(context)
+    MdmTelemetry.reconcile(context,foreground)
+   }
+  }.onFailure {
+   MdmService.status="Не удалось восстановить MDM: проверьте автозапуск и откройте приложение"
+   // Exception class is sufficient here; never log credentials or server responses.
+   Diagnostics.event("mdm",JSONObject().put("event","restore_denied").put("error",it.javaClass.simpleName))
+  }
  }
  fun session(context:Context):MdmSession?{
   val c=controller(context)

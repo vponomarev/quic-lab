@@ -23,6 +23,8 @@ class LabVpnService : VpnService() {
     private var starting = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A queued recovery must not undo an explicit Stop or cross an OS reboot.
+        if(intent?.getBooleanExtra("saved_run_restart",false)==true && !budgetRun.shouldResume())return restartPolicy()
         if(intent?.getBooleanExtra("mdm_restart",false)==true && intent.getLongExtra("mdm_user_stop",-1)!=MdmStore(this).document().optLong("user_stop"))return restartPolicy()
         val required=intent?.getLongExtra("mdm_required_generation",-1)?:-1
         if(required>=0){val s=MdmStore(this).read();if(!s.active || s.cleanupPending || s.localGeneration!=required || (if(intent?.getStringExtra("mdm_right")=="vpn")!s.rights.vpn else !s.rights.config))return restartPolicy()}
@@ -79,6 +81,9 @@ class LabVpnService : VpnService() {
             val now = android.os.SystemClock.elapsedRealtime()
             if (multipleMode) MultipleVpnState.notification(now) else notificationSnapshot(now)
         })
+        // Process startup may have occurred while Android prohibited background FGS.
+        // Once the VPN is foreground, retry the existing active management binding.
+        handler.post { MdmRuntime.restore(applicationContext) }
         handler.postDelayed(notificationTick, 1000)
         try {
             // One shared meter survives every exit reconnect in this VPN run.
