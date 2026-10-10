@@ -5,7 +5,7 @@ from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--binary',required=True);args=p.parse_args();binary=str(Path(args.binary).resolve())
 def run(*cmd):return subprocess.run(cmd,check=True,text=True,capture_output=True)
 with tempfile.TemporaryDirectory(prefix='quic-backup-acceptance-') as temp:
- root=Path(temp);conf=root/'etc/quic-lab';data=root/'var/lib/quic-lab';conf.mkdir(parents=True,mode=0o700);data.mkdir(parents=True,mode=0o700)
+ root=Path(temp);conf=root/'etc/quic-lab';data=root/'var/lib/quic-lab';conf.mkdir(parents=True,mode=0o700);actual=root/'var/lib/private/quic-lab';actual.mkdir(parents=True,mode=0o700);data.symlink_to(actual,target_is_directory=True)
  password=root/'password';password.write_text('test-archive-passphrase\n');password.chmod(0o600)
  cert=conf/'cert.pem';key=conf/'key.pem';run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=backup.test')
  s=socket.socket();s.bind(('127.0.0.1',0));port=s.getsockname()[1];s.close()
@@ -46,6 +46,11 @@ with tempfile.TemporaryDirectory(prefix='quic-backup-acceptance-') as temp:
   for kind in ('config','full'):
    output=root/(kind+'.age');result=json.loads(run(binary,'backup','create','--type',kind,'--socket',str(data/'backups/control.sock'),'--output',str(output),'--password-file',str(password),'--json').stdout);assert result['size_bytes']==output.stat().st_size;assert result['sha256']==hashlib.sha256(output.read_bytes()).hexdigest()
    verified=run(binary,'backup','verify','--input',str(output),'--password-file',str(password),'--json');manifest=json.loads(verified.stdout);names=[x['path'] for x in manifest['entries']];assert 'data/identities.json' in names;assert 'data/downloads/quic-lab.apk' not in names;assert ('data/client-diagnostics/device/batch.json' in names)==(kind=='full');outputs[kind]=output
+  # The documented external wrapper must never deliver a failed create.
+  marker=root/'deliveries';wrapper='set -eu; "$1" backup create --type config --socket "$2" --output "$3" --password-file "$4" --json > "$3.json.tmp"; mv "$3.json.tmp" "$3.json"; echo sent >> "$5"'
+  failed=subprocess.run(['sh','-c',wrapper,'backup-job',binary,str(data/'backups/control.sock'),str(outputs['full']),str(password),str(marker)],capture_output=True)
+  assert failed.returncode!=0 and not marker.exists(),'failed create invoked uploader'
+  run('sh','-c',wrapper,'backup-job',binary,str(data/'backups/control.sock'),str(root/'automated.age'),str(password),str(marker));assert marker.read_text().splitlines()==['sent']
   # GUI creation and authenticated download use the same archive verifier.
   page=request('/backups',cookie=cookie).read().decode();reqid=re.search(r'name="request_id" value="([^"]+)"',page)[1]
   request('/backups/create',{'csrf':csrf,'request_id':reqid,'type':'config','password':'test-archive-passphrase','repeat':'test-archive-passphrase'},cookie)

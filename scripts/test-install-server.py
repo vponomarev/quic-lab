@@ -440,7 +440,7 @@ class VLESSPackagingTests(unittest.TestCase):
         unit = i.vless_unit_config('/cert.pem', '/key.pem', dict(listen='0.0.0.0:9443'))
         self.assertIn('User=quic-lab\n', unit)
         self.assertIn('DynamicUser=yes\n', unit)
-        self.assertIn('StateDirectory=quic-lab\n', unit)
+        self.assertIn('StateDirectory=quic-lab quic-lab-control\n', unit)
         self.assertIn('UMask=0077\n', unit)
         self.assertIn('ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/quic-lab/vless', unit)
         self.assertIn('LoadCredential=key.pem:/key.pem', unit)

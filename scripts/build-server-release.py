@@ -60,6 +60,7 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                  (root / "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", 0o644)]
         files.extend((source, "licenses/" + source.name, 0o644)
                      for source in sorted((root / "android/app/src/main/assets/licenses").glob("*.txt")))
+        files.extend((source, "licenses/" + source.name, 0o644) for source in sorted((root / "licenses/server").glob("*.txt")))
         with tarfile.open(archive, "w:gz") as tar:
             for source, target, mode in files:
                 info = tar.gettarinfo(str(source), arcname=name + "/" + target)

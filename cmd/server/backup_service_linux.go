@@ -14,6 +14,16 @@ import (
 )
 
 func initBackupStorage(dir string) (func(), error) {
+	gate, e := backup.AcquireInstallationLock(dir, false)
+	if e != nil {
+		return nil, e
+	}
+	success := false
+	defer func() {
+		if !success {
+			gate.Close()
+		}
+	}()
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
@@ -25,7 +35,8 @@ func initBackupStorage(dir string) (func(), error) {
 		f.Close()
 		return nil, e
 	}
-	return func() { f.Close() }, nil
+	success = true
+	return func() { f.Close(); gate.Close() }, nil
 }
 func startServerBackups(ctx context.Context, ui *admin.Web, opts serverConfig) (func(), error) {
 	cfg := ui.Config
@@ -48,15 +59,7 @@ func startServerBackups(ctx context.Context, ui *admin.Web, opts serverConfig) (
 		}
 		sources["config/transit.json"] = source
 	}
-	if cfg.VLESS != nil && cfg.VLESS.Security == "tls" {
-		sources["config/vless-cert.pem"] = cfg.VLESS.TLSCertificateFile
-		sources["config/vless-key.pem"] = cfg.VLESS.TLSKeyFile
-		if cfg.VLESS.TLSCertificateFile == "/run/credentials/quic-lab-vless.service/cert.pem" && cfg.VLESS.TLSKeyFile == "/run/credentials/quic-lab-vless.service/key.pem" {
-			sources["config/vless-cert.pem"] = opts.Cert
-			sources["config/vless-key.pem"] = opts.Key
-		}
-	}
-	participants := []backup.Participant{admin.NewBackupParticipant(cfg, sources)}
+	participants := []backup.Participant{admin.NewBackupParticipant(cfg, sources, validateBackupServerConfig)}
 	if ui.Capture != nil {
 		participants = append(participants, ui.Capture.BackupParticipant())
 	}

@@ -172,3 +172,34 @@ func copyOwnership(source, target string) error {
 		return os.Chown(path, int(stat.Uid), int(stat.Gid))
 	})
 }
+
+// AcquireInstallationLock uses a sibling StateDirectory which is never swapped
+// by restore. All runtime owners hold a shared lock before touching data.
+func AcquireInstallationLock(data string, exclusive bool) (*os.File, error) {
+	dir, e := installationControl(data)
+	if e != nil {
+		return nil, e
+	}
+	if e = os.MkdirAll(dir, 0700); e != nil {
+		return nil, e
+	}
+	f, e := openLock(filepath.Join(dir, "installation.lock"), true)
+	if e != nil {
+		return nil, e
+	}
+	mode := unix.LOCK_SH
+	if exclusive {
+		mode = unix.LOCK_EX
+	}
+	if e = unix.Flock(int(f.Fd()), mode|unix.LOCK_NB); e != nil {
+		f.Close()
+		return nil, errors.New("stop server and workers before restore; installation busy")
+	}
+	if !exclusive {
+		if _, e = os.Lstat(filepath.Join(dir, "restore-pending")); !os.IsNotExist(e) {
+			f.Close()
+			return nil, errors.New("interrupted restore requires offline rollback")
+		}
+	}
+	return f, nil
+}

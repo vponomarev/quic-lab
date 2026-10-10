@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,5 +75,58 @@ func TestSnapshotCredentials(t *testing.T) {
 	c := NewCoordinator(root, []Participant{&FileParticipant{Root: root, Prefix: "data", Required: []string{"missing.key"}, Include: func(string, Kind) bool { return true }}}, "test")
 	if _, err := c.Capture(context.Background(), Full); err == nil {
 		t.Fatal("missing secret accepted")
+	}
+}
+
+type timedBackupParticipant struct {
+	*FileParticipant
+	elapsed time.Duration
+}
+
+func (p *timedBackupParticipant) Pin(ctx context.Context, k Kind, dir string) (func() error, error) {
+	start := time.Now()
+	release, e := p.FileParticipant.Pin(ctx, k, dir)
+	p.elapsed = time.Since(start)
+	return release, e
+}
+func TestSnapshotRepresentativeDataset(t *testing.T) {
+	root := t.TempDir()
+	EnablePublication(root)
+	for i := 0; i < 3000; i++ {
+		if e := os.WriteFile(filepath.Join(root, fmt.Sprintf("%04d.json", i)), []byte(`{"sample":1}`), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	p := &timedBackupParticipant{FileParticipant: &FileParticipant{Root: root, Prefix: "data", Include: func(path string, _ Kind) bool { return filepath.Ext(path) == ".json" }}}
+	c := NewCoordinator(root, []Participant{p}, "test")
+	snap, e := c.Capture(context.Background(), Full)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer snap.Release()
+	if len(snap.Manifest.Entries) != 3000 || p.elapsed > time.Second {
+		t.Fatal("snapshot barrier exceeded target", p.elapsed)
+	}
+	t.Logf("3000 durable records pinned in %s", p.elapsed)
+}
+
+func TestSnapshotSystemdStateDirectoryAlias(t *testing.T) {
+	parent := t.TempDir()
+	actual := filepath.Join(parent, "private/data")
+	os.MkdirAll(actual, 0700)
+	alias := filepath.Join(parent, "data")
+	if e := os.Symlink(actual, alias); e != nil {
+		t.Fatal(e)
+	}
+	os.WriteFile(filepath.Join(actual, "identities.json"), []byte("state"), 0600)
+	EnablePublication(alias)
+	c := NewCoordinator(alias, []Participant{&FileParticipant{Root: alias, Prefix: "data", Required: []string{"identities.json"}, Include: func(path string, _ Kind) bool { return path == "identities.json" }}}, "test")
+	snap, e := c.Capture(context.Background(), Full)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer snap.Release()
+	if len(snap.Manifest.Entries) != 1 {
+		t.Fatal("state alias not traversed")
 	}
 }

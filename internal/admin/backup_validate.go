@@ -10,18 +10,20 @@ import (
 	"os"
 	"path/filepath"
 	"quiclab/internal/awg"
+	"quiclab/internal/awgserver"
 	"quiclab/internal/backup"
 	"quiclab/internal/mdm"
 	"quiclab/internal/transit"
 	"quiclab/internal/vlessserver"
+	"reflect"
 	"strings"
 )
 
-func ValidateBackup(v *backup.Verified, restoring bool) error {
+func ValidateBackup(v *backup.Verified, restoring bool, validateServer ...func([]byte) error) error {
 	if v == nil {
 		return errors.New("missing verified backup")
 	}
-	allowedConfig := map[string]bool{"admin.json": true, "server.json": true, "cert.pem": true, "key.pem": true, "client-ca.pem": true, "transit.json": true, "vless-cert.pem": true, "vless-key.pem": true}
+	allowedConfig := map[string]bool{"awg.json": true, "admin.json": true, "server.json": true, "cert.pem": true, "key.pem": true, "client-ca.pem": true, "transit.json": true, "vless-cert.pem": true, "vless-key.pem": true}
 	for _, entry := range v.Manifest.Entries {
 		path := entry.Path
 		ok := path == "data/identities.json" || path == "data/mdm/state.json" || path == "data/vless/vless-state.json"
@@ -54,6 +56,44 @@ func ValidateBackup(v *backup.Verified, restoring bool) error {
 	if json.Unmarshal(raw, &cfg) != nil || cfg.Validate() != nil {
 		return errors.New("invalid backup admin configuration")
 	}
+	raw, err = read("config/server.json")
+	if err != nil {
+		return errors.New("missing server configuration")
+	}
+	var server struct {
+		Listen   string `json:"listen"`
+		Cert     string `json:"cert"`
+		Key      string `json:"key"`
+		Admin    string `json:"admin_config"`
+		ClientCA string `json:"client_ca"`
+	}
+	if json.Unmarshal(raw, &server) != nil || server.Listen == "" || server.Cert == "" || server.Key == "" || server.Admin == "" {
+		return errors.New("invalid backup server configuration")
+	}
+	for _, validate := range validateServer {
+		if e := validate(raw); e != nil {
+			return errors.New("invalid backup server configuration")
+		}
+	}
+	if server.ClientCA != "" {
+		ca, e := read("config/client-ca.pem")
+		if e != nil || !x509.NewCertPool().AppendCertsFromPEM(ca) {
+			return errors.New("missing or invalid client CA")
+		}
+	}
+	if cfg.AWG != nil {
+		raw, e := read("config/awg.json")
+		if e != nil {
+			return errors.New("missing AWG worker configuration")
+		}
+		var worker struct {
+			DataDir string           `json:"data_dir"`
+			AWG     awgserver.Config `json:"awg"`
+		}
+		if json.Unmarshal(raw, &worker) != nil || worker.DataDir != cfg.DataDir || !reflect.DeepEqual(worker.AWG, *cfg.AWG) {
+			return errors.New("inconsistent AWG worker configuration")
+		}
+	}
 	if cfg.Transit != nil {
 		raw, err = read("config/transit.json")
 		if err != nil {
@@ -73,7 +113,7 @@ func ValidateBackup(v *backup.Verified, restoring bool) error {
 	for _, names := range [][2]string{{"config/cert.pem", "config/key.pem"}, {"config/vless-cert.pem", "config/vless-key.pem"}} {
 		cp, ce := read(names[0])
 		kp, ke := read(names[1])
-		if os.IsNotExist(ce) && os.IsNotExist(ke) {
+		if names[0] == "config/vless-cert.pem" && os.IsNotExist(ce) && os.IsNotExist(ke) {
 			continue
 		}
 		if ce != nil || ke != nil {
@@ -97,6 +137,26 @@ func ValidateBackup(v *backup.Verified, restoring bool) error {
 	var state diskState
 	if json.Unmarshal(raw, &state) != nil || state.Version != 2 || state.Users == nil || state.Devices == nil {
 		return errors.New("invalid backup identities")
+	}
+	if state.VLESSPending != nil {
+		return errors.New("backup contains incomplete VLESS update")
+	}
+	current := cfg.VLESS
+	if state.VLESS != nil {
+		current = state.VLESS
+	}
+	if current != nil {
+		if current.Validate() != nil {
+			return errors.New("invalid durable VLESS configuration")
+		}
+		if current.Security == "tls" {
+			if _, e := read("config/vless-cert.pem"); e != nil {
+				return errors.New("missing current VLESS TLS material")
+			}
+			if _, e := read("config/vless-key.pem"); e != nil {
+				return errors.New("missing current VLESS TLS material")
+			}
+		}
 	}
 	ca, err := tls.X509KeyPair([]byte(state.CA), []byte(state.Key))
 	if err != nil {

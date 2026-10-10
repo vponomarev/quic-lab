@@ -13,17 +13,19 @@ import (
 )
 
 type backupParticipant struct {
-	files    backup.FileParticipant
-	config   Config
-	sources  map[string]string
-	prepared map[string][]byte
-	hashes   map[string][32]byte
+	files          backup.FileParticipant
+	config         Config
+	sources        map[string]string
+	prepared       map[string][]byte
+	hashes         map[string][32]byte
+	currentSources map[string]string
+	validateServer []func([]byte) error
 }
 
-// NewBackupParticipant only accepts an explicit inventory supplied at startup.
-// Neither HTTP nor archive contents can add arbitrary filesystem paths.
-func NewBackupParticipant(cfg Config, sources map[string]string) backup.Participant {
-	p := &backupParticipant{config: cfg, sources: sources}
+// NewBackupParticipant resolves credentials from the authoritative durable
+// configuration on each snapshot; archive contents cannot select source paths.
+func NewBackupParticipant(cfg Config, sources map[string]string, validateServer ...func([]byte) error) backup.Participant {
+	p := &backupParticipant{config: cfg, sources: sources, validateServer: validateServer}
 	p.files = backup.FileParticipant{Root: cfg.DataDir, Prefix: "data", Required: []string{"identities.json"}, Include: func(rel string, kind backup.Kind) bool {
 		if rel == "identities.json" || rel == "mdm/state.json" || rel == "vless/vless-state.json" {
 			return true
@@ -41,12 +43,49 @@ func (p *backupParticipant) Prepare(ctx context.Context, kind backup.Kind) error
 	}
 	p.prepared = map[string][]byte{}
 	p.hashes = map[string][32]byte{}
-	raw, err := json.MarshalIndent(p.config, "", "  ")
+	p.currentSources = map[string]string{}
+	for name, path := range p.sources {
+		p.currentSources[name] = path
+	}
+	current := p.config
+	identities, err := os.ReadFile(filepath.Join(p.config.DataDir, "identities.json"))
+	if err != nil {
+		return err
+	}
+	var state diskState
+	if json.Unmarshal(identities, &state) != nil {
+		return errors.New("invalid durable identities")
+	}
+	if state.VLESSPending != nil {
+		return errors.New("VLESS configuration update in progress; retry backup")
+	}
+	if state.VLESS != nil {
+		current.VLESS = state.VLESS
+	}
+	delete(p.currentSources, "config/vless-cert.pem")
+	delete(p.currentSources, "config/vless-key.pem")
+	if current.VLESS != nil && current.VLESS.Security == "tls" {
+		cert, key := current.VLESS.TLSCertificateFile, current.VLESS.TLSKeyFile
+		if cert == "/run/credentials/quic-lab-vless.service/cert.pem" && key == "/run/credentials/quic-lab-vless.service/key.pem" {
+			cert, key = p.sources["config/cert.pem"], p.sources["config/key.pem"]
+		}
+		p.currentSources["config/vless-cert.pem"], p.currentSources["config/vless-key.pem"] = cert, key
+	}
+	raw, err := json.MarshalIndent(current, "", "  ")
 	if err != nil {
 		return err
 	}
 	p.prepared["config/admin.json"] = raw
-	for name, src := range p.sources {
+	// The AWG worker startup file is a projection of the loaded admin settings;
+	// permanent private keys remain in identities.json, never in this projection.
+	if current.AWG != nil {
+		raw, e := json.Marshal(map[string]any{"data_dir": current.DataDir, "awg": current.AWG})
+		if e != nil {
+			return e
+		}
+		p.prepared["config/awg.json"] = raw
+	}
+	for name, src := range p.currentSources {
 		if !strings.HasPrefix(name, "config/") || strings.Contains(name, "..") || strings.ContainsAny(name, "\\\x00") {
 			return errors.New("invalid backup inventory name")
 		}
@@ -80,8 +119,17 @@ func (p *backupParticipant) Pin(ctx context.Context, kind backup.Kind, dir strin
 	}
 	return nil, nil
 }
-func (p *backupParticipant) Transform(ctx context.Context, kind backup.Kind, dir string) error {
-	for name, src := range p.sources {
+func (p *backupParticipant) Transform(ctx context.Context, kind backup.Kind, dir string) (result error) {
+	defer func() {
+		if result == nil && len(p.validateServer) > 0 {
+			result = ValidateBackup(&backup.Verified{Dir: dir, Manifest: backup.Manifest{Kind: kind}}, false, p.validateServer...)
+		}
+	}()
+	for name, src := range p.currentSources {
+		info, err := os.Stat(src)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+			return errors.New("external credential unavailable")
+		}
 		raw, err := os.ReadFile(src)
 		if err != nil || sha256.Sum256(raw) != p.hashes[name] {
 			return errors.New("external configuration changed while creating backup")

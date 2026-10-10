@@ -2,9 +2,12 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"quiclab/internal/awgserver"
 	"quiclab/internal/backup"
+	"quiclab/internal/vlessserver"
 	"testing"
 	"time"
 )
@@ -84,5 +87,61 @@ func TestSnapshotFullAndConfig(t *testing.T) {
 			t.Fatal("history lost")
 		}
 		snap.Release()
+	}
+}
+
+func TestBackupUsesDurableVLESSCredentials(t *testing.T) {
+	root := t.TempDir()
+	s, e := OpenStore(root)
+	if e != nil {
+		t.Fatal(e)
+	}
+	creds := t.TempDir()
+	cert := filepath.Join(creds, "current-cert")
+	key := filepath.Join(creds, "current-key")
+	os.WriteFile(cert, []byte("current-certificate"), 0600)
+	os.WriteFile(key, []byte("current-key"), 0600)
+	cfg := Config{DataDir: root, VLESS: &vlessserver.Config{Security: "reality"}}
+	p := NewBackupParticipant(cfg, nil)
+	s.state.VLESS = &vlessserver.Config{Security: "tls", TLSCertificateFile: cert, TLSKeyFile: key}
+	raw, _ := json.Marshal(s.state)
+	os.WriteFile(s.path, raw, 0600)
+	backup.EnablePublication(root)
+	c := backup.NewCoordinator(root, []backup.Participant{p}, "test")
+	snap, e := c.Capture(context.Background(), backup.Config)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer snap.Release()
+	b, e := os.ReadFile(filepath.Join(snap.Dir, "config/vless-cert.pem"))
+	if e != nil || string(b) != "current-certificate" {
+		t.Fatal("durable VLESS secret missing", e)
+	}
+}
+
+func TestBackupIncludesAWGWorkerConfig(t *testing.T) {
+	root := t.TempDir()
+	_, e := OpenStore(root)
+	if e != nil {
+		t.Fatal(e)
+	}
+	backup.EnablePublication(root)
+	cfg := Config{DataDir: root, AWG: &awgserver.Config{Interface: "ql-awg0"}}
+	c := backup.NewCoordinator(root, []backup.Participant{NewBackupParticipant(cfg, nil)}, "test")
+	snap, e := c.Capture(context.Background(), backup.Config)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer snap.Release()
+	b, e := os.ReadFile(filepath.Join(snap.Dir, "config/awg.json"))
+	if e != nil {
+		t.Fatal("worker startup configuration missing", e)
+	}
+	var worker struct {
+		DataDir string           `json:"data_dir"`
+		AWG     awgserver.Config `json:"awg"`
+	}
+	if json.Unmarshal(b, &worker) != nil || worker.DataDir != root || worker.AWG.Interface != "ql-awg0" {
+		t.Fatal("invalid worker configuration")
 	}
 }

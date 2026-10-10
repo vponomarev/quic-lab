@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"quiclab/internal/admin"
 	"quiclab/internal/backup"
+	"strings"
+	"syscall"
 )
 
 func backupPassword(path string, fd int, stdin io.Reader, stderr io.Writer) ([]byte, error) {
@@ -138,18 +140,18 @@ func runBackup(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return 4
 	}
 	defer file.Close()
-	staging, e := os.MkdirTemp("", "quic-backup-verify-")
+	staging, cleanup, e := backupVerificationStaging(filepath.Join(os.TempDir(), fmt.Sprintf("quic-backup-cli-%d", os.Getuid())))
 	if e != nil {
 		return 4
 	}
-	defer os.RemoveAll(staging)
+	defer cleanup()
 	verified, e := backup.Verify(ctx, file, password, staging, backup.Limits{MaxFiles: 100000, MaxBytes: 64 << 30})
 	if e != nil {
 		fmt.Fprintln(stderr, "backup authentication or validation failed")
 		return 2
 	}
 	defer verified.Release()
-	if e = admin.ValidateBackup(verified, command == "restore"); e != nil {
+	if e = admin.ValidateBackup(verified, command == "restore", validateBackupServerConfig); e != nil {
 		fmt.Fprintln(stderr, e)
 		return 2
 	}
@@ -185,4 +187,58 @@ func runBackup(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		fmt.Fprintln(stdout, "Backup verified")
 	}
 	return 0
+}
+
+func validateBackupServerConfig(raw []byte) error {
+	var c serverConfig
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if e := d.Decode(&c); e != nil {
+		return e
+	}
+	if d.Decode(new(any)) != io.EOF {
+		return errors.New("trailing JSON")
+	}
+	return c.validate()
+}
+
+func backupVerificationStaging(base string) (string, func(), error) {
+	if e := os.MkdirAll(base, 0700); e != nil {
+		return "", nil, e
+	}
+	info, e := os.Lstat(base)
+	if e != nil {
+		return "", nil, e
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 || !ok || int(stat.Uid) != os.Getuid() {
+		return "", nil, errors.New("unsafe verification staging")
+	}
+	lock, e := backup.AcquireProcessLock(base, ".owner.lock")
+	if e != nil {
+		return "", nil, errors.New("another verification is running")
+	}
+	good := false
+	defer func() {
+		if !good {
+			lock.Close()
+		}
+	}()
+	entries, e := os.ReadDir(base)
+	if e != nil {
+		return "", nil, e
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "work-") {
+			if e = os.RemoveAll(filepath.Join(base, entry.Name())); e != nil {
+				return "", nil, e
+			}
+		}
+	}
+	dir, e := os.MkdirTemp(base, "work-")
+	if e != nil {
+		return "", nil, e
+	}
+	good = true
+	return dir, func() { os.RemoveAll(dir); lock.Close() }, nil
 }

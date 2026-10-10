@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"quiclab/internal/backup"
 	"syscall"
 	"time"
 
@@ -47,6 +48,11 @@ func run() error {
 	if cfg.DataDir == "" {
 		return errors.New("data_dir required")
 	}
+	installation, e := backup.AcquireInstallationLock(cfg.DataDir, false)
+	if e != nil {
+		return e
+	}
+	defer installation.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if _, err := net.InterfaceByName(cfg.AWG.Interface); err == nil {

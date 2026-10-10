@@ -50,10 +50,17 @@ func installationData(root string) (string, error) {
 		return "", e
 	}
 	if s.Mode()&os.ModeSymlink != 0 {
-		resolved, e := filepath.EvalSymlinks(p)
+		resolved, e := os.Readlink(p)
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(filepath.Dir(p), resolved)
+		}
+		resolved = filepath.Clean(resolved)
 		expected := filepath.Join(root, "var/lib/private/quic-lab")
 		if e != nil || resolved != expected {
 			return "", errors.New("unexpected installation symlink")
+		}
+		if e = checkParents(root, expected); e != nil {
+			return "", e
 		}
 		return expected, nil
 	}
@@ -61,6 +68,68 @@ func installationData(root string) (string, error) {
 		return "", errors.New("invalid installation data directory")
 	}
 	return p, nil
+}
+func installationControl(data string) (string, error) {
+	data, e := filepath.Abs(data)
+	if e != nil {
+		return "", e
+	}
+	parent := filepath.Dir(data)
+	if filepath.Base(data) == "quic-lab" && filepath.Base(parent) == "private" {
+		parent = filepath.Dir(parent)
+	}
+	return filepath.Join(parent, filepath.Base(data)+"-control"), nil
+}
+func setRestorePending(data string, pending bool) error {
+	dir, e := installationControl(data)
+	if e != nil {
+		return e
+	}
+	path := filepath.Join(dir, "restore-pending")
+	if pending {
+		f, e := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+		if e != nil {
+			return e
+		}
+		e = f.Sync()
+		f.Close()
+		if e != nil {
+			return e
+		}
+	} else if e = os.Remove(path); e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	return syncDirectory(dir)
+}
+func durableRename(src, dst string) error {
+	if e := os.Rename(src, dst); e != nil {
+		return e
+	}
+	if e := syncDirectory(filepath.Dir(src)); e != nil {
+		return e
+	}
+	return syncDirectory(filepath.Dir(dst))
+}
+func syncTreeDirs(root string) error {
+	dirs := []string{}
+	e := filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	if e != nil {
+		return e
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if e = syncDirectory(dirs[i]); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 func checkParents(root, path string) error {
 	rel, e := filepath.Rel(root, path)
@@ -196,11 +265,18 @@ func syncDirectory(path string) error {
 	return f.Sync()
 }
 func restoreLocks(data string) ([]*os.File, error) {
-	if e := os.MkdirAll(data, 0700); e != nil {
+	if _, e := os.Stat(data); os.IsNotExist(e) {
+		return nil, nil
+	} else if e != nil {
 		return nil, e
 	}
 	files := []*os.File{}
 	for _, name := range []string{".server-owner.lock", ".awg-worker.lock", ".awg-admission.lock", ".vless-admission.sock.lock", ".transit-worker.lock"} {
+		if _, e := os.Lstat(filepath.Join(data, name)); os.IsNotExist(e) {
+			continue
+		} else if e != nil {
+			return nil, e
+		}
 		f, e := AcquireProcessLock(data, name)
 		if e != nil {
 			for _, f := range files {
@@ -211,7 +287,7 @@ func restoreLocks(data string) ([]*os.File, error) {
 		files = append(files, f)
 	}
 	vless := filepath.Join(data, "vless")
-	if _, e := os.Stat(vless); e == nil {
+	if _, e := os.Stat(filepath.Join(vless, ".vless-control.sock.lock")); e == nil {
 		f, e := AcquireProcessLock(vless, ".vless-control.sock.lock")
 		if e != nil {
 			for _, f := range files {
@@ -230,6 +306,11 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 	if e := checkVerified(p.verified); e != nil {
 		return e
 	}
+	gate, e := AcquireInstallationLock(filepath.Join(p.root, "var/lib/quic-lab"), true)
+	if e != nil {
+		return e
+	}
+	defer gate.Close()
 	data, e := installationData(p.root)
 	if e != nil {
 		return e
@@ -264,14 +345,17 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 	if e = os.MkdirAll(base, 0700); e != nil {
 		return e
 	}
-	if e = os.Mkdir(p.RollbackDir, 0700); e != nil {
+	// Publish the first journal atomically; an unpublished preparation never
+	// contains moved installation data and cannot block a later transaction.
+	prep, e := os.MkdirTemp(base, ".prepare-")
+	if e != nil {
 		return e
 	}
-	if e = os.Mkdir(filepath.Join(p.RollbackDir, "old"), 0700); e != nil {
-		return e
-	}
-	if e = os.Mkdir(filepath.Join(p.RollbackDir, "new"), 0700); e != nil {
-		return e
+	defer os.RemoveAll(prep)
+	for _, name := range []string{"old", "new"} {
+		if e = os.Mkdir(filepath.Join(prep, name), 0700); e != nil {
+			return e
+		}
 	}
 	j := restoreJournal{Root: p.root, Phase: "preparing"}
 	for _, target := range p.Targets {
@@ -293,11 +377,20 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 			return e
 		}
 		j.Targets = append(j.Targets, restoreStep{Destination: want, Name: name, HadOld: e == nil})
-		if e = os.MkdirAll(filepath.Join(p.RollbackDir, "new", name), 0700); e != nil {
+		if e = os.MkdirAll(filepath.Join(prep, "new", name), 0700); e != nil {
 			return e
 		}
 	}
-	if e = persistJournal(p.RollbackDir, j); e != nil {
+	if e = persistJournal(prep, j); e != nil {
+		return e
+	}
+	if e = syncTreeDirs(prep); e != nil {
+		return e
+	}
+	if e = durableRename(prep, p.RollbackDir); e != nil {
+		return e
+	}
+	if e = syncDirectory(filepath.Dir(base)); e != nil {
 		return e
 	}
 	for _, entry := range p.verified.Manifest.Entries {
@@ -349,7 +442,17 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 			return e
 		}
 	}
-	if e = copyOwnership(data, filepath.Join(p.RollbackDir, "new/data")); e != nil {
+	if _, e = os.Stat(data); e == nil {
+		if e = copyOwnership(data, filepath.Join(p.RollbackDir, "new/data")); e != nil {
+			return e
+		}
+	} else if !os.IsNotExist(e) {
+		return e
+	}
+	if e = syncTreeDirs(p.RollbackDir); e != nil {
+		return e
+	}
+	if e = setRestorePending(data, true); e != nil {
 		return e
 	}
 
@@ -366,7 +469,7 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 			return e
 		}
 		if step.HadOld {
-			if e = os.Rename(step.Destination, filepath.Join(p.RollbackDir, "old", step.Name)); e != nil {
+			if e = durableRename(step.Destination, filepath.Join(p.RollbackDir, "old", step.Name)); e != nil {
 				return e
 			}
 			step.OldMoved = true
@@ -374,7 +477,7 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 				return e
 			}
 		}
-		if e = os.Rename(filepath.Join(p.RollbackDir, "new", step.Name), step.Destination); e != nil {
+		if e = durableRename(filepath.Join(p.RollbackDir, "new", step.Name), step.Destination); e != nil {
 			return e
 		}
 		step.NewMoved = true
@@ -386,7 +489,10 @@ func ApplyRestore(ctx context.Context, p RestorePlan) error {
 		}
 	}
 	j.Phase = "complete"
-	return persistJournal(p.RollbackDir, j)
+	if e = persistJournal(p.RollbackDir, j); e != nil {
+		return e
+	}
+	return setRestorePending(data, false)
 }
 func RollbackRestore(ctx context.Context, journalPath string) error {
 	raw, e := os.ReadFile(journalPath)
@@ -404,6 +510,11 @@ func RollbackRestore(ctx context.Context, journalPath string) error {
 	if e = checkParents(j.Root, dir); e != nil {
 		return e
 	}
+	gate, e := AcquireInstallationLock(filepath.Join(j.Root, "var/lib/quic-lab"), true)
+	if e != nil {
+		return e
+	}
+	defer gate.Close()
 	data, e := installationData(j.Root)
 	if e != nil {
 		return e
@@ -418,7 +529,7 @@ func RollbackRestore(ctx context.Context, journalPath string) error {
 		}
 	}()
 	if j.Phase == "rolled_back" {
-		return nil
+		return setRestorePending(data, false)
 	}
 	seen := map[string]bool{}
 	for _, step := range j.Targets {
@@ -440,6 +551,12 @@ func RollbackRestore(ctx context.Context, journalPath string) error {
 	if e = os.MkdirAll(failed, 0700); e != nil {
 		return e
 	}
+	if e = syncDirectory(dir); e != nil {
+		return e
+	}
+	if e = setRestorePending(data, true); e != nil {
+		return e
+	}
 	j.Phase = "rolling_back"
 	if e = persistJournal(dir, j); e != nil {
 		return e
@@ -458,14 +575,24 @@ func RollbackRestore(ctx context.Context, journalPath string) error {
 		if shouldRestore || shouldRemove {
 			if targetErr == nil {
 				if _, e = os.Stat(filepath.Join(failed, step.Name)); !os.IsNotExist(e) {
-					return fmt.Errorf("rollback destination occupied: %s", step.Name)
+					// systemd can recreate an empty StateDirectory before the binary
+					// observes restore-pending. Never discard nonempty data.
+					if e = os.Remove(step.Destination); e != nil {
+						return fmt.Errorf("rollback destination occupied: %s", step.Name)
+					}
+					if e = syncDirectory(filepath.Dir(step.Destination)); e != nil {
+						return e
+					}
+					targetErr = os.ErrNotExist
 				}
-				if e = os.Rename(step.Destination, filepath.Join(failed, step.Name)); e != nil {
-					return e
+				if targetErr == nil {
+					if e = durableRename(step.Destination, filepath.Join(failed, step.Name)); e != nil {
+						return e
+					}
 				}
 			}
 			if shouldRestore {
-				if e = os.Rename(old, step.Destination); e != nil {
+				if e = durableRename(old, step.Destination); e != nil {
 					return e
 				}
 			}
@@ -475,5 +602,8 @@ func RollbackRestore(ctx context.Context, journalPath string) error {
 		}
 	}
 	j.Phase = "rolled_back"
-	return persistJournal(dir, j)
+	if e = persistJournal(dir, j); e != nil {
+		return e
+	}
+	return setRestorePending(data, false)
 }

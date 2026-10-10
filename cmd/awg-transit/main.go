@@ -75,6 +75,11 @@ func run() error {
 	if filepath.Base(cfg.Transit.ProbeSocket) != "transit.sock" {
 		return errors.New("unexpected probe socket name")
 	}
+	installation, e := backup.AcquireInstallationLock(filepath.Dir(cfg.Transit.ProbeSocket), false)
+	if e != nil {
+		return e
+	}
+	defer installation.Close()
 	owner, e := backup.AcquireProcessLock(filepath.Dir(cfg.Transit.ProbeSocket), ".transit-worker.lock")
 	if e != nil {
 		return e

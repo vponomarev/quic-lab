@@ -29,3 +29,28 @@ func TestBackupPasswordPermissions(t *testing.T) {
 		t.Fatal("unsafe password source accepted")
 	}
 }
+
+func TestBackupVerificationStagingCrashCleanup(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "private")
+	stage, cleanup, e := backupVerificationStaging(base)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(filepath.Join(stage, "key"), []byte("private"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	// Simulate a dead process: its lock is released, but plaintext remains.
+	old := stage + "-interrupted"
+	if e = os.Rename(stage, old); e != nil {
+		t.Fatal(e)
+	}
+	cleanup()
+	stage, cleanup, e = backupVerificationStaging(base)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer cleanup()
+	if _, e = os.Stat(old); !os.IsNotExist(e) {
+		t.Fatal("plaintext staging survived restart")
+	}
+}

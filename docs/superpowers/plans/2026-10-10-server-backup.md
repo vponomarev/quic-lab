@@ -47,6 +47,24 @@
 
 Типы пакета `backup` (задача 1): `Kind string` со значениями `config`, `full`; `Entry {Path string; Size int64; SHA256 string}`; `Manifest {FormatVersion int; Kind Kind; CreatedAt time.Time; ServerVersion string; Components []string; Entries []Entry}`; `Limits {MaxFiles int; MaxBytes int64}`; `Snapshot {Dir string; Manifest Manifest; Release func() error}`; `Verified {Dir string; Manifest Manifest; Release func() error}`. Dir всегда приватный staging, пути в manifest относительные. Формат v1. Лимиты чтения обязательны, не выводятся из недоверенного архива.
 
+## Фактическое выполнение — 10.10.2026
+
+Все семь функциональных задач реализованы; сервер обновлён до `0.9.1-backup.2`. Подробные исходные пункты ниже сохранены как план; часть проверок объединена в общие тесты и сквозной harness, а коммиты задач 2–6 объединены из-за общей интеграции запуска.
+
+| Задача | Результат |
+| --- | --- |
+| 1. Контейнер | Выполнено: age, manifest, аутентификация и ограничения |
+| 2. Снимок | Выполнено: межпроцессный publication flock, immutable файлы, текущие VLESS-секреты, AWG startup config; 3000 записей за 11,3 мс |
+| 3. Задания | Выполнено: квота, 3 файла/24 ч, download lease, cleanup |
+| 4. CLI create | Выполнено: password file/FD, JSON, atomic output; проверена независимая внешняя отправка только после успеха |
+| 5. WEB | Выполнено: создание/скачивание/удаление проверены на тестовой и рабочей установках |
+| 6. Восстановление | Выполнено: verify/inspect, offline restore/rollback, shared lifetime gate, аварийные границы и systemd symlink |
+| 7. Приёмка | Выполнено: Go/race, 59 installer tests, сквозной тест пакета, независимое ревью и исправления, deployment и реальный архив |
+
+Реализация барьера уточнена: общий файловый flock на публикации заменяет исходный порядок store mutex, который создавал бы инверсию блокировок диагностики. VPN data plane flock не берёт. Общая блокировка установки хранится отдельно от заменяемого каталога данных. Восстановление проверялось на изолированной установке; аппаратное отключение питания не моделировалось.
+
+Полный рабочий архив: 2192 файла, 3435301 байт; SHA256 `0826f6417541ddcc1c9a09cfabe1e4e2b319a89535018fd664fd28da61741475`. Архив, пароль и служебные сведения о восстановлении находятся только в приватном игнорируемом каталоге. Инструкция: [server-backup.md](../../server-backup.md).
+
 ## Task 1: Контейнер и полная проверка
 
 **Interfaces:** produces `Write(ctx context.Context, dst io.Writer, snapshot Snapshot, password []byte) error`; `Verify(ctx context.Context, src io.Reader, password []byte, staging string, limits Limits) (*Verified, error)`.

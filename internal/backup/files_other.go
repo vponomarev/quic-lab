@@ -20,3 +20,7 @@ func AcquireProcessLock(string, string) (*os.File, error) {
 }
 
 func copyOwnership(string, string) error { return errors.New("server restore requires Linux") }
+
+func AcquireInstallationLock(string, bool) (*os.File, error) {
+	return nil, errors.New("server restore requires Linux")
+}

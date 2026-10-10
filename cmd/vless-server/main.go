@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"quiclab/internal/backup"
 	"quiclab/internal/vless"
 	"quiclab/internal/vlessserver"
 	"syscall"
@@ -34,6 +35,11 @@ func run() error {
 		_, e := vlessserver.ReadConfig(*check)
 		return e
 	}
+	installation, e := backup.AcquireInstallationLock(*admission, false)
+	if e != nil {
+		return e
+	}
+	defer installation.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	w, e := vlessserver.OpenWorker(ctx, *dir, func(ctx context.Context, id, uuid string) (time.Duration, error) {

@@ -187,14 +187,20 @@ type FileParticipant struct {
 func (p *FileParticipant) Prepare(ctx context.Context, kind Kind) error {
 	p.files = nil
 	seen := map[string]bool{}
-	err := filepath.WalkDir(p.Root, func(name string, d fs.DirEntry, e error) error {
+	// systemd exposes StateDirectory through one top-level symlink. Resolve
+	// that configured root only; links inside the inventory remain rejected.
+	walkRoot, err := filepath.EvalSymlinks(p.Root)
+	if err != nil {
+		return err
+	}
+	err = filepath.WalkDir(walkRoot, func(name string, d fs.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rel, e := filepath.Rel(p.Root, name)
+		rel, e := filepath.Rel(walkRoot, name)
 		if e != nil {
 			return e
 		}
