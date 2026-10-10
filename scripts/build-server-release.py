@@ -24,7 +24,7 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
     name = f"quic-lab-server-{a.version}-linux-{arch}"
     with tempfile.TemporaryDirectory() as tmp:
         binary = Path(tmp) / "quic-lab-server"
-        subprocess.run(["go", "build", "-trimpath", "-o", str(binary), "./cmd/server"], cwd=root,
+        subprocess.run(["go", "build", "-trimpath", "-ldflags", f"-X quiclab/internal/backup.BuildVersion={a.version}", "-o", str(binary), "./cmd/server"], cwd=root,
                        env={**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}, check=True)
         worker = Path(tmp) / "quic-lab-awg"
         subprocess.run(["go", "build", "-trimpath", "-o", str(worker), "./cmd/awg-server"], cwd=root,
@@ -48,6 +48,7 @@ for arch in (["amd64", "arm64"] if a.arch == "all" else [a.arch]):
                  (root / "docs/install-server.md", "README.md", 0o644),
                  (root / "docs/phase1-upgrade.md", "phase1-upgrade.md", 0o644),
                  (root / "docs/server-config.md", "server-config.md", 0o644),
+                 (root / "docs/server-backup.md", "server-backup.md", 0o644),
                  (root / "docs/client-diagnostics.md", "client-diagnostics.md", 0o644),
                  (root / "docs/vless-server.md", "vless-server.md", 0o644),
                  (root / "docs/unified-ingress.md", "unified-ingress.md", 0o644),

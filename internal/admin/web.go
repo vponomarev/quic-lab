@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"quiclab/internal/backup"
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/mdm"
 	"strconv"
@@ -26,6 +27,7 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	backups        *backup.Manager
 	MDM            *mdm.Store
 	diagnosticSync func(string) error
 	// Serialize capture creation with identity changes and AWG address reuse.
@@ -52,6 +54,7 @@ func NewWeb(c Config, s *Store) *Web {
 }
 func (w *Web) Handler() http.Handler {
 	m := http.NewServeMux()
+	w.backupRoutes(m)
 	w.captureRoutes(m)
 	m.HandleFunc("GET /mdm", w.mdmPage)
 	m.HandleFunc("POST /mdm/invite", w.mdmInvite)

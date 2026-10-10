@@ -16,7 +16,7 @@ require (
 	github.com/xtls/xray-core v1.260327.0
 	golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e
 	golang.org/x/net v0.59.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	google.golang.org/protobuf v1.36.11
 	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0
 )
@@ -24,6 +24,7 @@ require (
 require (
 	filippo.io/age v1.3.2 // indirect
 	filippo.io/hpke v0.4.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
 )
 
 require (

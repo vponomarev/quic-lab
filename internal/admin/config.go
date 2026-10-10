@@ -41,6 +41,7 @@ type Profile struct {
 	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
+	BackupMiB       int                   `json:"backup_mib,omitempty"`
 	DiagnosticsDays int                   `json:"diagnostics_days,omitempty"`
 	DiagnosticsMiB  int                   `json:"diagnostics_mib,omitempty"`
 	VLESS           *vlessserver.Config   `json:"vless,omitempty"`
@@ -72,6 +73,9 @@ func ReadConfig(file string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.BackupMiB < 0 || c.BackupMiB > 1048576 {
+		return errors.New("invalid backup disk quota")
+	}
 	if c.DiagnosticsDays < 0 || c.DiagnosticsDays > 365 || c.DiagnosticsMiB < 0 || c.DiagnosticsMiB > 10240 {
 		return errors.New("invalid diagnostics retention")
 	}

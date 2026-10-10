@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	serverbackup "quiclab/internal/backup"
 	"regexp"
 	"sort"
 	"time"
@@ -241,7 +242,7 @@ func writeRadioAtomic(path string, raw []byte) error {
 	if e != nil {
 		return e
 	}
-	if e = os.Rename(f.Name(), path); e != nil {
+	if e = serverbackup.Replace(f.Name(), path); e != nil {
 		return e
 	}
 	d, e := os.Open(filepath.Dir(path))
@@ -283,7 +284,7 @@ func (s *Store) pruneRadioLocked(dir string, days int, now time.Time) error {
 				continue
 			}
 			if len(kept) == 0 {
-				if e = os.Remove(path); e != nil {
+				if e = serverbackup.Remove(path); e != nil {
 					return e
 				}
 			} else {
@@ -357,7 +358,7 @@ func (s *Store) DeleteTelemetry(id string) error {
 		return ErrUnauthorized
 	}
 	// id is an existing, server-generated binding, never a user-supplied path.
-	return os.RemoveAll(filepath.Join(s.dir, "radio", id))
+	return serverbackup.RemoveTree(filepath.Join(s.dir, "radio", id))
 }
 
 // PruneTelemetry also runs with no uploads or administrator visits.

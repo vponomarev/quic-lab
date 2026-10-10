@@ -139,7 +139,12 @@ func TestRevisionCASAndRestart(t *testing.T) {
 	if n != 1 {
 		t.Fatal("event replay", n)
 	}
-	if e = reopened.Prune(testNow.Add(91 * 24 * time.Hour)); e != nil {
+	// SetDesired records server wall time, while Sync uses testNow. Expire both.
+	pruneAt := time.Now().Add(91 * 24 * time.Hour)
+	if bound := testNow.Add(91 * 24 * time.Hour); bound.After(pruneAt) {
+		pruneAt = bound
+	}
+	if e = reopened.Prune(pruneAt); e != nil {
 		t.Fatal(e)
 	}
 	audit, _ = reopened.Audit(b.ID)

@@ -32,6 +32,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		os.Exit(runBackup(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	opts, err := parseServerConfig(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -118,6 +121,12 @@ func main() {
 		if uplink != nil {
 			echoProbe = uplink.Probe
 		}
+		releaseStorage, storageErr := initBackupStorage(cfg.DataDir)
+		if storageErr != nil {
+			log.Error("backup_storage", "error", storageErr)
+			os.Exit(1)
+		}
+		defer releaseStorage()
 		managed, e = admin.OpenStore(cfg.DataDir)
 		if e != nil {
 			log.Error("admin_store", "error", e)
@@ -200,6 +209,12 @@ func main() {
 			defer publicAWG.Close()
 			ui.PublicAWG = publicAWG
 		}
+		stopBackups, backupErr := startServerBackups(ctx, ui, opts)
+		if backupErr != nil {
+			log.Error("backup_start", "error", backupErr)
+			os.Exit(1)
+		}
+		defer stopBackups()
 		ui.ListenerBindings = map[string]string{"public": *publicHTTPS, "echo-https": *webListen, "echo-quic": *addr, "vpn-quic": *gatewayQUIC, "vpn-https": *gatewayHTTPS}
 		publicAdmin = ui.Handler()
 		adminBase = cfg.PublicURL

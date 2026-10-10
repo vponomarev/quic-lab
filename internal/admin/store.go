@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"quiclab/internal/awgserver"
+	serverbackup "quiclab/internal/backup"
 	"quiclab/internal/vlessserver"
 	"sort"
 	"sync"
@@ -222,7 +223,7 @@ func (s *Store) save() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if e = os.Rename(name, s.path); e != nil {
+	if e = serverbackup.Replace(name, s.path); e != nil {
 		return e
 	}
 	if e = s.syncStateDirectory(); e != nil {

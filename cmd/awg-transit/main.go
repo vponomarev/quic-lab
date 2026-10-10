@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"quiclab/internal/awg"
+	"quiclab/internal/backup"
 	"quiclab/internal/transit"
 	"syscall"
 	"time"
@@ -71,6 +72,14 @@ func run() error {
 	if parsed.Address != cfg.Transit.SourceIP {
 		return errors.New("transit source mismatch")
 	}
+	if filepath.Base(cfg.Transit.ProbeSocket) != "transit.sock" {
+		return errors.New("unexpected probe socket name")
+	}
+	owner, e := backup.AcquireProcessLock(filepath.Dir(cfg.Transit.ProbeSocket), ".transit-worker.lock")
+	if e != nil {
+		return e
+	}
+	defer owner.Close()
 	full := false
 	for _, p := range parsed.Allowed {
 		full = full || p == "0.0.0.0/0"

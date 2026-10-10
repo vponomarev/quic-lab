@@ -314,6 +314,10 @@ def legacy_policy(path):
     return "0.0.0.0/0"
 
 
+def backup_transit_dropin():
+    return MARKER + "\n[Service]\nLoadCredential=backup-transit.json:/etc/quic-lab/transit.json\n"
+
+
 def unit_config(cert, key, ports=None, frontend="nginx"):
     ports = ports or DEFAULT_PORTS
     capability = "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" if frontend == "direct" or min(ports.values()) < 1024 else ""
@@ -868,6 +872,9 @@ def install(args):
     binary = OPT / "quic-lab-server"
     old_binary = binary.read_bytes() if binary.exists() else None
     old_unit = UNIT.read_bytes() if UNIT.exists() else None
+    backup_dropin = UNIT.with_name(UNIT.name + ".d") / "40-backup-transit.conf"
+    owned(backup_dropin)
+    old_backup_dropin = backup_dropin.read_bytes() if backup_dropin.exists() else None
     was_active = subprocess.run(["systemctl", "is-active", "--quiet", "quic-lab"]).returncode == 0
     worker_binary = OPT / "quic-lab-vless"
     old_worker_binary = worker_binary.read_bytes() if worker_binary.exists() else None
@@ -892,6 +899,10 @@ def install(args):
         replaced = True
         atomic(binary, args.binary.read_bytes(), 0o755)
         atomic(UNIT, unit_config(cert, key, ports, frontend))
+        if cfg.get("transit"):
+            atomic(backup_dropin, backup_transit_dropin())
+        else:
+            backup_dropin.unlink(missing_ok=True)
         if vless_managed:
             if old_worker_binary is not None:
                 atomic(OPT / "quic-lab-vless.previous", old_worker_binary, 0o755)
@@ -957,6 +968,10 @@ def install(args):
             run("systemctl", "daemon-reload")
         if snapshot_complete and not preserve_revocations:
             restore_identities(DATA, backup)
+        if old_backup_dropin is not None:
+            atomic(backup_dropin, old_backup_dropin)
+        else:
+            backup_dropin.unlink(missing_ok=True)
         if old_server is not None:
             atomic(server_file, old_server, 0o600)
         elif old_config is not None:

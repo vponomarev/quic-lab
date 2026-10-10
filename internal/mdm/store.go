@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	serverbackup "quiclab/internal/backup"
 	"sync"
 	"time"
 )
@@ -135,7 +136,7 @@ func (s *Store) save(n snapshot) error {
 	if e != nil {
 		return e
 	}
-	if e = os.Rename(name, filepath.Join(s.dir, "state.json")); e != nil {
+	if e = serverbackup.Replace(name, filepath.Join(s.dir, "state.json")); e != nil {
 		return e
 	}
 	d, e := os.Open(s.dir)

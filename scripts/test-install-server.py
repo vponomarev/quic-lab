@@ -16,6 +16,24 @@ spec.loader.exec_module(i)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_backup_transit_credential_is_readable_by_dynamic_user(self):
+        if not Path("/run/systemd/system").exists():
+            self.skipTest("requires systemd Linux host")
+        with tempfile.TemporaryDirectory() as tmp:
+            flags = []
+            unit = i.backup_transit_dropin()
+            for line in unit.splitlines():
+                if line.startswith("LoadCredential="):
+                    name = line.split("=", 1)[1].split(":", 1)[0]
+                    source = Path(tmp) / name
+                    source.write_bytes(b"test-private-material")
+                    source.chmod(0o600)
+                    flags.extend(["-p", f"LoadCredential={name}:{source}"])
+            result = subprocess.run(["systemd-run", "--quiet", "--wait", "--pipe", "-p", "DynamicUser=yes", *flags,
+                "/usr/bin/python3", "-c", "import os,pathlib; p=pathlib.Path(os.environ['CREDENTIALS_DIRECTORY'])/'backup-transit.json'; assert p.read_bytes()==b'test-private-material'; print('credential-ok')"],
+                check=True, text=True, capture_output=True)
+            self.assertEqual(result.stdout.strip(), "credential-ok")
+
     def test_upgrade_preserves_phase_one_server_metadata(self):
         previous = i.server_config(i.DEFAULT_PORTS, "direct", "lab.example.org")
         self.assertEqual(previous["capabilities"]["control_version"], 1)
@@ -444,7 +462,7 @@ class ReleaseArchiveTests(unittest.TestCase):
             (root / 'scripts/build-server-release.py').write_bytes(builder.read_bytes())
             for name in ('install-transit.py', 'transit-network.py', 'install-awg.py', 'awg-network.py', 'install-server.py', 'reload-certificate.py', 'publish-apk.sh'):
                 (root / 'scripts' / name).write_text('fixture\n')
-            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'client-diagnostics.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md', 'unified-ingress.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
+            for folder, names in [('docs', ('install-server.md', 'phase1-upgrade.md', 'server-config.md', 'server-backup.md', 'client-diagnostics.md', 'wireshark-capture.md', 'vless-server.md', 'vless-compatibility.md', 'unified-ingress.md')), ('deploy', ('quic-lab.service', 'quic-lab-public.service')), ('examples', ('server.json',))]:
                 (root / folder).mkdir()
                 for name in names: (root / folder / name).write_text('fixture\n')
             (root / 'THIRD_PARTY_NOTICES.md').write_text('fixture\n')

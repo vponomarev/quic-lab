@@ -174,7 +174,7 @@ func Verify(ctx context.Context, src io.Reader, password []byte, staging string,
 	if err != nil {
 		return nil, errors.New("invalid backup password")
 	}
-	identity.SetMaxWorkFactor(20)
+	identity.SetMaxWorkFactor(18)
 	plain, err := age.Decrypt(contextReader{ctx, src}, identity)
 	if err != nil {
 		return nil, errors.New("cannot decrypt backup")

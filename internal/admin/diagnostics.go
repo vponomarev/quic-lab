@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	serverbackup "quiclab/internal/backup"
 	"sort"
 	"strings"
 	"sync"
@@ -90,7 +91,7 @@ func (w *Web) pruneDiagnostics(incoming int64) error {
 	count := len(files)
 	for _, f := range files {
 		if time.Since(f.modified) > age || total+incoming > limit || count >= 5000 {
-			if e := os.Remove(f.path); e != nil {
+			if e := serverbackup.Remove(f.path); e != nil {
 				return e
 			}
 			total -= f.size
@@ -197,7 +198,7 @@ func (w *Web) clientDiagnostics(rw http.ResponseWriter, r *http.Request) {
 			e = closeErr
 		}
 		if e == nil {
-			e = os.Rename(temp, path)
+			e = serverbackup.Replace(temp, path)
 		}
 		if e == nil {
 			dir, err := os.Open(directory)
@@ -388,7 +389,7 @@ func (w *Web) recordServerDiagnostic(device, text string) {
 	}
 	f.Close()
 	if e == nil {
-		os.Rename(name, filepath.Join(dir, "server-"+batch.Records[0].ID+".json"))
+		serverbackup.Replace(name, filepath.Join(dir, "server-"+batch.Records[0].ID+".json"))
 	}
 }
 
@@ -477,7 +478,7 @@ func saveDeviceVersion(directory string, records []diagnosticRecord) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return serverbackup.Replace(f.Name(), path)
 }
 func (w *Web) deviceVersions(users []User) (map[string]string, map[string]int) {
 	result := map[string]string{}

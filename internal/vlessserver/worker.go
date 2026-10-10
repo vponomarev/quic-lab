@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	serverbackup "quiclab/internal/backup"
 	"quiclab/internal/vless"
 	"reflect"
 	"strings"
@@ -154,7 +155,7 @@ func (w *Worker) save(r workerRecord) error {
 	if e != nil {
 		return errApply
 	}
-	if e = os.Rename(tmp, filepath.Join(w.dir, "vless-state.json")); e != nil {
+	if e = serverbackup.Replace(tmp, filepath.Join(w.dir, "vless-state.json")); e != nil {
 		return errApply
 	}
 	dir, e := os.Open(w.dir)

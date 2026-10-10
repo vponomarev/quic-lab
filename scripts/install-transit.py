@@ -17,14 +17,15 @@ def main():
     admin=Path('/etc/quic-lab/admin.json');cfg=json.loads(admin.read_text())
     drops=[Path('/etc/systemd/system')/(s+'.service.d/quic-lab-transit.conf') for s in ['quic-lab','quic-lab-awg']]
     worker=Path('/etc/systemd/system/quic-lab-transit.service');guard=Path('/etc/systemd/system/quic-lab-transit-guard.service')
-    for path in [worker,guard,*drops]:i.owned(path)
+    backup_drop=Path("/etc/systemd/system/quic-lab.service.d/40-backup-transit.conf")
+    for path in [worker,guard,*drops,backup_drop]:i.owned(path)
     if a.disable:
         if not cfg.get('transit'):p.error('Transit is not enabled')
         i.run('systemctl','stop','quic-lab')
         if cfg.get('awg'):i.run('systemctl','stop','quic-lab-awg')
         i.run('systemctl','stop','quic-lab-transit')
         i.run(sys.executable,'/opt/quic-lab/transit-network.py','stop')
-        for path in drops:path.unlink(missing_ok=True)
+        for path in [*drops,backup_drop]:path.unlink(missing_ok=True)
         cfg.pop('transit',None);i.atomic(admin,json.dumps(cfg,indent=2)+'\n',0o600)
         i.run('systemctl','disable','--now','quic-lab-transit','quic-lab-transit-guard')
         i.run('systemctl','daemon-reload');i.run('systemctl','start','quic-lab')
@@ -66,6 +67,7 @@ def configure(a,p,cfg,admin,drops,worker,guard):
     i.atomic(worker,unit());i.atomic(guard,unit(True))
     for path in drops:
         i.atomic(path,i.MARKER+'\n[Unit]\nRequires=quic-lab-transit-guard.service\nAfter=quic-lab-transit-guard.service\n')
+    i.atomic(Path('/etc/systemd/system/quic-lab.service.d/40-backup-transit.conf'),i.backup_transit_dropin())
     i.run('systemctl','daemon-reload')
     i.run('systemctl','stop','quic-lab')
     if cfg.get('awg'):i.run('systemctl','stop','quic-lab-awg')
