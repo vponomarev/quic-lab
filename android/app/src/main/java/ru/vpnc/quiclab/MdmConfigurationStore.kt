@@ -80,4 +80,18 @@ internal class MdmConfigurationStore(
    j.put("configEpoch",Math.addExact(j.optLong("configEpoch"),1));j.remove("externalRuntime");j.remove("external");j.remove("owner");j.remove("revision");j.remove("mode")
   }
  }
-}
+ /** Local caller must hold MdmConfiguration.lock and check current management rights. */
+ fun applyLocal(document:JSONObject,runtime:JSONObject,expectedEpoch:Long) {
+  mobile.Mobile.validateMDMConfiguration(document.toString())
+  store.edit{j->
+   check(j.optLong("configEpoch")==expectedEpoch){"Настройки изменились. Подготовьте импорт заново."}
+   check(!j.has("external") && !j.has("externalRuntime")){"Внешний конфиг MDM ещё активен"}
+   check(j.has("personal") && j.has("personalRuntime")){"Личный конфиг ещё не сохранён"}
+   beforeWrite()
+   j.put("localRollback",JSONObject().put("document",JSONObject(j.getJSONObject("personal").toString()))
+    .put("runtime",JSONObject(j.getJSONObject("personalRuntime").toString())))
+   j.put("personal",JSONObject(document.toString())).put("personalRuntime",JSONObject(runtime.toString()))
+   j.put("configEpoch",Math.addExact(expectedEpoch,1))
+  }
+ }
+ fun localRollback():JSONObject?=store.document().optJSONObject("localRollback")}
