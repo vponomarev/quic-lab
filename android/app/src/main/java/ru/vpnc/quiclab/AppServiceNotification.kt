@@ -36,7 +36,8 @@ internal object AppServiceNotification {
   if(owners.isNotEmpty()) context.getSystemService(NotificationManager::class.java).notify(ID, build(context))
  }
 
- internal fun title(base: String, mdm: Boolean, geo: Boolean): String =
+ internal fun title(base: String, mdm: Boolean, geo: Boolean, vpn: Boolean = true): String =
+  if(!vpn) base else
   (if(mdm) "[MDM]" else "") + (if(geo) "[GEO]" else "") +
    (if(mdm || geo) " " else "") + base
 
@@ -47,7 +48,7 @@ internal object AppServiceNotification {
   val open = PendingIntent.getActivity(context, 2, Intent(context, VpnActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   return Notification.Builder(context, "vpn")
    .setSmallIcon(android.R.drawable.ic_lock_lock)
-   .setContentTitle(title(content.title, owners.containsValue("mdm"), owners.containsValue("geo")))
+   .setContentTitle(title(content.title, owners.containsValue("mdm"), owners.containsValue("geo"), owners.containsValue("vpn")))
    .setContentText(content.text).setStyle(Notification.BigTextStyle().bigText(content.details))
    .setContentIntent(open).setOnlyAlertOnce(true).setShowWhen(false).setOngoing(true).build()
  }

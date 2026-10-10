@@ -53,3 +53,4 @@ The live fixture does not prove camera scanning, consent-screen interaction, con
 - Second approved session: Android am force-stop removed the process; reopening the editor showed disabled with no invitation or active session. This proves force-stop/reopen only, NOT low-memory process death or reboot. run-as kill returned unknown pid and did not terminate the original process.
 - VPN service recovered; MDM resumed using the normal UI. Test service stopped, listener 18449 absent, executable and temporary server password removed. Production VPN services/configuration were not replaced.
 - Camera QR scanning, low-memory/reboot and sustained traffic/manual-stop race acceptance remain pending.
+2026-10-11 user acceptance ruling: low-memory process-death and reboot checks waived by user; no longer release acceptance blockers for this iteration.

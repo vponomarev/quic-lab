@@ -13,6 +13,10 @@ class AppServiceNotificationTest {
   assertEquals("[GEO] WiFi · AWG",AppServiceNotification.title("WiFi · AWG",false,true))
   assertEquals("[MDM][GEO] WiFi · AWG",AppServiceNotification.title("WiFi · AWG",true,true))
  }
+ @Test fun tagsHiddenWithoutVpn() {
+  for(mdm in listOf(false,true)) for(geo in listOf(false,true))
+   assertEquals("VPN выключен",AppServiceNotification.title("VPN выключен",mdm,geo,false))
+ }
  @Test fun standaloneMdmUsesSharedNotificationWithoutActionsAndRemovesItOnStop() {
   val c=InstrumentationRegistry.getInstrumentation().targetContext
   val nm=c.getSystemService(NotificationManager::class.java)
@@ -28,7 +32,7 @@ class AppServiceNotificationTest {
    val notices=nm.activeNotifications
    assertEquals(1,notices.size)
    val n=notices.single().notification
-   assertEquals("[MDM] VPN выключен",n.extras.getString("android.title"))
+   assertEquals("VPN выключен",n.extras.getString("android.title"))
    assertTrue(n.actions.isNullOrEmpty())
    assertEquals("ru.vpnc.quiclab",n.contentIntent.creatorPackage)
   } finally {
@@ -56,9 +60,9 @@ class AppServiceNotificationTest {
    assertTrue(LabVpnService.active)
    assertEquals(listOf(42),nm.activeNotifications.map{it.id})
    c.startService(Intent(c,LabVpnService::class.java).setAction("stop"))
-   waitFor{text()=="[MDM] VPN выключен"}
+   waitFor{text()=="VPN выключен"}
    Thread.sleep(500)
-   assertEquals("[MDM] VPN выключен",text())
+   assertEquals("VPN выключен",text())
    c.startForegroundService(Intent(c,LabVpnService::class.java))
    waitFor{LabVpnService.active && text().startsWith("[MDM]") && !text().contains("VPN выключен")}
    MdmService.stop(c)
