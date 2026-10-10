@@ -73,4 +73,39 @@ class ConfigurationTransferTest {
   val c=InstrumentationRegistry.getInstrumentation().targetContext
   val d=doc("Apps");d.put("globalApps",org.json.JSONArray().put("nonexistent.transfer.fixture.app"))
   assertEquals(listOf("nonexistent.transfer.fixture.app"),ConfigurationTransfer.missingApplications(c,d))
- }}
+ } @Test fun persistedImportRecoveryMatrix(){
+  val real=InstrumentationRegistry.getInstrumentation().targetContext
+  // Each case reconstructs stores from disk, as startup does after process death.
+  for(committed in listOf(false,true))for(reason in listOf("resume","stopped","newBoot","newOwner","idle")){
+   val suffix="transfer-recovery-${System.nanoTime()}"
+   val dir=File(real.noBackupFilesDir,suffix).apply{mkdirs()}
+   val c=object:android.content.ContextWrapper(real){
+    override fun getNoBackupFilesDir()=dir
+    override fun getFilesDir()=dir
+    override fun getApplicationContext():android.content.Context=this
+    override fun getSharedPreferences(name:String,mode:Int)=real.getSharedPreferences("$suffix-$name",mode)
+   }
+   var starts=0
+   val port=object:MdmVpnPort{override fun active()=false;override fun stop(){fail("recovery must not stop VPN")};override fun start():String{starts++;return "starting"}}
+   try{
+    val store=MdmConfigurationStore(c)
+    store.initialize(doc("Before"),JSONObject())
+    val epoch=store.configEpoch()
+    val boot=android.provider.Settings.Global.getInt(c.contentResolver,android.provider.Settings.Global.BOOT_COUNT,-1)
+    store.beginLocalOperation(JSONObject().put("wasRunning",reason!="idle").put("userStop",0)
+     .put("generation",0).put("boot",if(reason=="newBoot")boot-1 else boot).put("incomplete",false).put("epoch",epoch))
+    if(committed)store.applyLocal(doc("After"),JSONObject(),epoch)
+    if(reason=="stopped")MdmStore(c).edit{it.put("user_stop",1)}
+    if(reason=="newOwner")MdmStore(c).erase()
+    LocalConfigurationApply.recover(c,port)
+    assertEquals("$committed/$reason",if(reason=="resume")1 else 0,starts)
+    val reopened=MdmConfigurationStore(c)
+    assertNull(reopened.localOperation())
+    assertEquals(if(committed)"After" else "Before",reopened.effective()!!.getJSONArray("profiles").getJSONObject(0).getString("name"))
+    assertEquals(committed,reopened.localRollback()!=null)
+    LocalConfigurationApply.recover(c,port)
+    assertEquals("recovery must be idempotent",if(reason=="resume")1 else 0,starts)
+   }finally{dir.deleteRecursively()}
+  }
+ }
+}
