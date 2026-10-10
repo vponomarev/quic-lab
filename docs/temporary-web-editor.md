@@ -44,3 +44,12 @@ The live fixture does not prove camera scanning, consent-screen interaction, con
 - Linux editor/admin race tests and vet PASS. Real Chromium + HTTPS broker test PASS: export/import into draft only, Apply/ACK/audit, conflict after phone generation changes, phone revoke. The device in this browser fixture is simulated.
 - Backup polling under actual CSP with controlled responses PASS; this does not claim real backup creation/download acceptance.
 - Only Note9 / Android 11 is connected. No new Android build or production deployment in this continuation; Android 12/16 consent/process-lifecycle acceptance remains pending.
+
+## Note12Pro acceptance — 2026-10-11 (Android 12)
+
+- Installed 0.9.4-pre.1 (57), preserving working data. TemporaryEditorTest + ConfigurationTransferTest + MdmConfigurationStoreTest: 15/15 PASS (3.004 s).
+- Active MDM correctly blocked temporary editing. User explicitly paused MDM and personally approved both temporary sessions.
+- Real phone UI consent -> trusted public HTTPS on isolated port 18449 -> browser changed detailed diagnostics -> real phone ACK revision 1 -> browser restored original value -> real phone ACK revision 2 -> phone Stop -> browser lost access. Audit confirmed both applied revisions and revoked_device.
+- Second approved session: Android am force-stop removed the process; reopening the editor showed disabled with no invitation or active session. This proves force-stop/reopen only, NOT low-memory process death or reboot. run-as kill returned unknown pid and did not terminate the original process.
+- VPN service recovered; MDM resumed using the normal UI. Test service stopped, listener 18449 absent, executable and temporary server password removed. Production VPN services/configuration were not replaced.
+- Camera QR scanning, low-memory/reboot and sustained traffic/manual-stop race acceptance remain pending.
