@@ -18,6 +18,7 @@ type Rights struct {
 	Config      bool   `json:"config"`
 	VPN         bool   `json:"vpn"`
 	Telemetry   bool   `json:"telemetry"`
+	Research    bool   `json:"research"`
 	Geo         bool   `json:"geo"`
 	Coordinates bool   `json:"coordinates"`
 	LANMode     string `json:"lanMode"`

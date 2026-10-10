@@ -183,10 +183,19 @@ func TestSharedQUICCallbackCannotDowngradeVPN(t *testing.T) {
 func TestSharedQUICBoundedDispatch(t *testing.T) {
 	e, v, client := sharedQUICCertificates(t)
 	ln := sharedQUICTestListener(t, e, v)
-	var excess *quic.Conn
-	for i := 0; i <= sharedQUICQueueSize; i++ {
-		excess = sharedQUICDial(t, ln.Addr().String(), []string{protocol.ALPN}, nil)
+	for i := 0; i < sharedQUICQueueSize; i++ {
+		sharedQUICDial(t, ln.Addr().String(), []string{protocol.ALPN}, nil)
 	}
+	// Dial completion does not order the server's asynchronous Accept dispatch.
+	// Fill the queue before opening the connection whose rejection we assert.
+	deadline := time.Now().Add(3 * time.Second)
+	for len(ln.Echo.connections) < sharedQUICQueueSize && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(ln.Echo.connections) != sharedQUICQueueSize {
+		t.Fatal("echo queue did not fill")
+	}
+	excess := sharedQUICDial(t, ln.Addr().String(), []string{protocol.ALPN}, nil)
 	select {
 	case <-excess.Context().Done():
 	case <-time.After(3 * time.Second):

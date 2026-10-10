@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal enum class MdmRight { CONFIG,VPN,TELEMETRY,GEO,COORDINATES,LAN }
+internal enum class MdmRight { CONFIG,VPN,TELEMETRY,GEO,COORDINATES,LAN,RESEARCH }
 internal data class MdmInvitation(val endpoint:String,val token:String,val rights:MdmRights,val mode:String="current"){
  init{
   MdmBinding("",endpoint,0,rights,false)
@@ -40,10 +40,11 @@ internal class MdmController(
  private val gateways:()->MdmGateway,
  private val cleanup:()->Unit,
  private val rightsChanged:()->Unit={},
+ private val stateChanged:()->Unit={},
 ) {
  private val calls=ConcurrentHashMap<MdmGateway,Boolean>()
  fun read()=store.read()
- private fun mutate(change:(JSONObject)->Unit):MdmState=synchronized(this){synchronized(MdmConfiguration.lock){store.edit(change)}}
+ private fun mutate(change:(JSONObject)->Unit):MdmState=synchronized(this){synchronized(MdmConfiguration.lock){store.edit(change).also{stateChanged()}}}
  fun recover(){ MdmApplyCoordinator.onMain { synchronized(this) {
   if(!store.read().cleanupPending)return@synchronized
   if(store.document().optBoolean("configCleanupPending") && !store.document().optBoolean("cleanupPending"))rightsChanged() else cleanup()
@@ -66,7 +67,7 @@ internal class MdmController(
     j.put("secret",newSecret()).put("pending",JSONObject().put("endpoint",invitation.endpoint)
      .put("token",invitation.token).put("registrationId",UUID.randomUUID().toString()))
    }
-   j.put("rights",rights.json()).put("radio_manual",false).put("active",false)
+   j.put("rights",rights.json()).put("radio_manual",false).put("research_standalone",false).put("active",false)
     .put("generation",Math.addExact(j.getLong("generation"),1))
   }
   val saved=store.document();val pending=saved.getJSONObject("pending")
@@ -126,7 +127,7 @@ internal class MdmController(
   if(!s.active || s.cleanupPending || s.localGeneration!=generation)return false
   return when(right){
    MdmRight.CONFIG->s.rights.config;MdmRight.VPN->s.rights.vpn;MdmRight.TELEMETRY->s.rights.telemetry
-   MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
+   MdmRight.RESEARCH->s.rights.research;MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
   }
  }
  internal fun poll(consume:(MdmState,MdmSyncResponse)->Unit):Boolean{

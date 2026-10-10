@@ -113,6 +113,17 @@ class VpnActivity:Activity() {
   val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
   ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
   ui.add(card,ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
+  val researchState=MdmStore(this).read()
+  val managed=researchState.binding!=null || researchState.pendingEnrollment
+  val research=CheckBox(this).apply {
+   text="Режим исследования";isChecked=ResearchSettings.allowed(researchState)
+   setOnClickListener {
+    if(managed){isChecked=ResearchSettings.allowed(this@VpnActivity);startActivity(Intent(this@VpnActivity,MdmEnrollActivity::class.java))}
+    else action{ResearchSettings.setStandalone(this@VpnActivity,isChecked)}
+   }
+  }
+  card.addView(research);card.addView(ui.text(ResearchSettings.explanation))
+  if(managed)card.addView(ui.text("Согласие задаётся в правах MDM. Сервер управляет сбором отдельно от этого разрешения."))
   ui.add(card,ui.button("Импорт и экспорт настроек"){startActivity(Intent(this,ConfigurationTransferActivity::class.java))})
   ui.add(card,ui.button("Временный WEB-редактор"){startActivity(Intent(this,TemporaryEditorActivity::class.java))})
   ui.add(card,ui.button("Разрешения и фоновая работа"){startActivity(Intent(this,PermissionsActivity::class.java))})

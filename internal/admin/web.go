@@ -14,6 +14,7 @@ import (
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/editor"
 	"quiclab/internal/mdm"
+	"quiclab/internal/research"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,9 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	ResearchOpen   func() (*research.Store, error)
+	Research       *research.Store
+	researchMu     sync.Mutex
 	backups        *backup.Manager
 	MDM            *mdm.Store
 	Editor         *editor.Store
@@ -62,6 +66,7 @@ func (w *Web) Handler() http.Handler {
 	w.editorRoutes(m)
 	w.backupRoutes(m)
 	w.captureRoutes(m)
+	w.researchRoutes(m)
 	m.HandleFunc("GET /mdm", w.mdmPage)
 	m.HandleFunc("POST /mdm/invite", w.mdmInvite)
 	m.HandleFunc("POST /mdm/assign", w.mdmAssign)

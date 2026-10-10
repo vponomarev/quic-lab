@@ -14,7 +14,8 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 internal data class MdmState(val binding:MdmBinding?,val active:Boolean,val localGeneration:Long,
- val rights:MdmRights,val cleanupPending:Boolean=false,val pendingEnrollment:Boolean=false,val appliedRevision:Long=0)
+ val rights:MdmRights,val cleanupPending:Boolean=false,val pendingEnrollment:Boolean=false,val appliedRevision:Long=0,
+ val standaloneResearch:Boolean=false)
 
 /** Separate from VPN identities/imports/backups. Corruption never silently unbinds a managed client. */
 internal class MdmStore(private val file:File,private val alias:String="quic-lab-mdm-identity") {
@@ -65,6 +66,10 @@ internal class MdmStore(private val file:File,private val alias:String="quic-lab
  }
  fun read():MdmState=synchronized(lock){state(load())}
  internal fun document():JSONObject=synchronized(lock){load()}
+ fun setStandaloneResearch(enabled:Boolean){edit{j->
+  check(!j.has("binding") && !j.has("pending") && !state(j).cleanupPending){"Согласие на исследование изменяется в правах MDM"}
+  j.put("research_standalone",enabled)
+ }}
  fun manualTelemetry():Boolean=synchronized(lock){load().optBoolean("radio_manual")}
  fun setManualTelemetry(enabled:Boolean){edit{j->
   if(enabled)check(MdmTelemetryPolicy.consented(state(j))){"Включите MDM и разрешите отправку данных"}
@@ -94,7 +99,7 @@ internal class MdmStore(private val file:File,private val alias:String="quic-lab
    }
    return MdmState(b,j.optBoolean("active") && b!=null,j.getLong("generation"),
     MdmRights.parse(j.optJSONObject("rights")?:JSONObject()),j.optBoolean("cleanupPending") || j.optBoolean("configCleanupPending"),
-    j.has("pending"),j.optLong("appliedRevision"))
+    j.has("pending"),j.optLong("appliedRevision"),j.optBoolean("research_standalone",false))
   }
  }
 }

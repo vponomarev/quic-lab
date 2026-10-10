@@ -26,6 +26,7 @@ import (
 	"quiclab/internal/labcert"
 	"quiclab/internal/mdm"
 	"quiclab/internal/protocol"
+	"quiclab/internal/research"
 	"quiclab/internal/servertls"
 	"quiclab/internal/transit"
 	"quiclab/internal/vlessserver"
@@ -107,6 +108,7 @@ func main() {
 	var publicAdmin http.Handler
 	var adminBase string
 	var captureManager *debugcapture.Manager
+	var researchReceiver *gateway.ResearchReceiver
 	var managed *admin.Store
 	var vlessRoutes *managedRouteController
 	var uplink *transit.Config
@@ -172,6 +174,34 @@ func main() {
 		}
 		cfg.Capabilities = opts.Capabilities
 		ui := admin.NewWeb(cfg, managed)
+		researchStores := newResearchStoreManager(func() (research.StoreOptions, error) {
+			policy := ui.ResearchSettings()
+			if policy.MaxBytes <= 0 || policy.RetentionHours <= 0 || policy.RetentionHours > 87600 {
+				return research.StoreOptions{}, fmt.Errorf("research storage requires a positive quota and retention")
+			}
+			return research.StoreOptions{Dir: filepath.Join(cfg.DataDir, "research"), MaxBytes: policy.MaxBytes, Retention: time.Duration(policy.RetentionHours) * time.Hour}, nil
+		})
+		ui.ResearchOpen = researchStores.Open
+		defer func() {
+			if e := researchStores.Close(); e != nil {
+				log.Warn("research_store_close_failed")
+			}
+		}()
+		if policy := ui.ResearchSettings(); policy.MaxBytes > 0 {
+			if _, e := researchStores.Open(); e != nil {
+				log.Warn("research_store_unavailable")
+			}
+		}
+		researchReceiver = gateway.NewResearchReceiver(func(cs tls.ConnectionState) (string, string, bool) {
+			device, e := managed.DeviceForTLS(cs)
+			if e != nil {
+				return "", "", false
+			}
+			return device.UserID, device.ID, ui.ResearchAllowed(device.UserID)
+		}, func(record research.Record) bool {
+			store, e := researchStores.Open()
+			return e == nil && store.TryAppend(record)
+		})
 		ui.MDM, err = mdm.OpenStore(filepath.Join(cfg.DataDir, "mdm"))
 		if err != nil {
 			log.Error("mdm_store", "error", err)
@@ -237,6 +267,7 @@ func main() {
 			log.Error("gateway_policy", "error", e)
 			os.Exit(1)
 		}
+		gw.Research = researchReceiver
 		gw.BondContext = ctx
 		gw.BondOptions = bond.Options{DisconnectGrace: time.Duration(opts.BondDisconnectGraceSeconds) * time.Second}
 		if uplink != nil {
@@ -273,7 +304,7 @@ func main() {
 		if *gatewayQUIC != "" {
 			var ql gateway.QUICListener
 			qt := servertls.AllowServerNames(mtls, *tlsHost, opts.VPNSNINames)
-			qc := &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxFlows, MaxIncomingUniStreams: -1}
+			qc := &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second, MaxIncomingStreams: gateway.MaxIncomingStreams, MaxIncomingUniStreams: -1}
 			if *addr == *gatewayQUIC {
 				shared, listenErr := newSharedQUICListener(ctx, *addr, echoTLS, qt, qc)
 				if listenErr != nil {

@@ -107,7 +107,8 @@ internal class VpnSession(
             cellRequest = null
         }
     }
-    private var client: Gateway? = null
+    @Volatile private var client: Gateway? = null
+    private var researchSubscription:AutoCloseable?=null
     private val exitEchoLock = Any()
     private class ExitEchoLease(var output: ((JSONObject) -> Unit)?) {
         var gateway: Gateway? = null
@@ -222,6 +223,7 @@ internal class VpnSession(
     init {
         require(service != null || (tunFD == -1 && attached != null)) { "Probe sessions must not attach a TUN" }
         service?.let {
+            researchSubscription=ResearchSettings.observe { client?.researchChanged() }
             androidx.core.content.ContextCompat.registerReceiver(it, rttReceiver,
                 android.content.IntentFilter().apply { addAction(android.content.Intent.ACTION_SCREEN_ON); addAction(android.content.Intent.ACTION_SCREEN_OFF) },
                 androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -344,6 +346,7 @@ internal class VpnSession(
                         .put("hostname", name.ifBlank { resolved.hostname })
                     config.put("initial_path", if (kind == WIFI) "wifi" else "cell")
                     current.start(config.toString(), binder(network))
+                    service?.let { current.setResearch(ResearchBridge.observer(it)) }
                     if (isBond) bondNetworks[kind] = network
                     if (attached != null) attached.invoke(current) else current.attach(tunFD.toLong())
                     nextExitCheckAt = 0L
@@ -423,6 +426,7 @@ internal class VpnSession(
             runtimeNetworks[kind]=Triple(network,true,reserveAllowed(kind,network));runtimeGenerations[kind]=1
             val gateway=requireNotNull(runtime.gateway())
             client=gateway
+            service?.let { gateway.setResearch(ResearchBridge.observer(it)) }
             if(attached!=null) attached.invoke(gateway) else gateway.attach(tunFD.toLong())
             alive=true;activeKind=kind;activeNetwork=network;selected(network,kind)
             lastReplyAt=now();lastEchoAt=now();nextExitCheckAt=0;reconnectRequired=false
@@ -736,6 +740,7 @@ internal class VpnSession(
         synchronized(worker) {
             if (closed) return
             closed = true
+            researchSubscription?.close();researchSubscription=null
             service?.let {
                 it.unregisterReceiver(rttReceiver)
                 VpnRttSettings.preferences(it).unregisterOnSharedPreferenceChangeListener(rttListener)

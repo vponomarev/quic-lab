@@ -27,7 +27,13 @@ import (
 	"quiclab/internal/protocol"
 )
 
+// Header and research capacity are separate from established VPN flows.
+const ResearchControlStreams = 4
+const ResearchHandshakeStreams = MaxFlows
+const MaxIncomingStreams = MaxFlows + ResearchControlStreams + ResearchHandshakeStreams
+
 type Server struct {
+	Research         *ResearchReceiver
 	Multiplexed      func(tls.ConnectionState) (func(), error)
 	BondContext      context.Context
 	BondOptions      bond.Options
@@ -42,10 +48,12 @@ type Server struct {
 	Allowed          []netip.Prefix
 	Log              *slog.Logger
 	slots            chan struct{}
+	handshakes       chan struct{}
+	researchSlots    chan struct{}
 }
 
 func New(allow string, log *slog.Logger) (*Server, error) {
-	s := &Server{Log: log, slots: make(chan struct{}, 1024)}
+	s := &Server{Log: log, slots: make(chan struct{}, 1024), handshakes: make(chan struct{}, 1024), researchSlots: make(chan struct{}, 32)}
 	for _, v := range strings.Split(allow, ",") {
 		p, e := netip.ParsePrefix(strings.TrimSpace(v))
 		if e != nil || !p.Addr().Is4() {
@@ -179,6 +187,8 @@ func (s *Server) serve(ctx context.Context, datagrams *DatagramMux, transport st
 	stop := context.AfterFunc(ctx, closeSession)
 	defer stop()
 	slots := make(chan struct{}, MaxFlows)
+	researchSlots := make(chan struct{}, ResearchControlStreams)
+	handshakes := make(chan struct{}, ResearchHandshakeStreams)
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	defer cancel()
@@ -188,23 +198,56 @@ func (s *Server) serve(ctx context.Context, datagrams *DatagramMux, transport st
 			return
 		}
 		select {
-		case slots <- struct{}{}:
+		case handshakes <- struct{}{}:
 		default:
 			st.Close()
 			continue
 		}
 		select {
-		case s.slots <- struct{}{}:
+		case s.handshakes <- struct{}{}:
 		default:
-			<-slots
+			<-handshakes
 			st.Close()
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer func() { <-slots; <-s.slots }()
-			s.handleDatagrams(ctx, st, id, log, datagrams, counters...)
+			defer st.Close()
+			stop := context.AfterFunc(ctx, func() { st.Close() })
+			defer stop()
+			held := true
+			defer func() {
+				if held {
+					<-handshakes
+					<-s.handshakes
+				}
+			}()
+			st.SetDeadline(time.Now().Add(10 * time.Second))
+			var req Request
+			if ReadJSON(st, &req) != nil {
+				return
+			}
+			<-handshakes
+			<-s.handshakes
+			held = false
+			local, global := slots, s.slots
+			if req.Network == "research-v1" {
+				local, global = researchSlots, s.researchSlots
+			}
+			select {
+			case local <- struct{}{}:
+			default:
+				return
+			}
+			select {
+			case global <- struct{}{}:
+			default:
+				<-local
+				return
+			}
+			defer func() { <-local; <-global }()
+			s.handleRequest(ctx, st, req, id, log, datagrams, counters...)
 		}()
 	}
 }
@@ -219,6 +262,13 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 	st.SetDeadline(time.Now().Add(10 * time.Second))
 	var req Request
 	if ReadJSON(st, &req) != nil {
+		return
+	}
+	s.handleRequest(ctx, st, req, id, log, datagrams, counters...)
+}
+func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id string, log *slog.Logger, datagrams *DatagramMux, counters ...func(int, int)) {
+	if req.Network == "research-v1" {
+		s.serveResearch(ctx, st)
 		return
 	}
 	if req.Network == "udp-stream-v1" {

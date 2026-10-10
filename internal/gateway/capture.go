@@ -10,6 +10,7 @@ type captureContextKey struct{}
 type captureWrap func(string, string, net.Conn) net.Conn
 
 func (s *Server) captureContext(ctx context.Context, cs tls.ConnectionState) context.Context {
+	ctx = s.researchContext(ctx,cs)
 	if s.Capture == nil {
 		return ctx
 	}

@@ -144,7 +144,9 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 		}
 		h.tcpFlows.Add(1)
 		h.g.emit("flow_open", map[string]any{"network": "tcp", "destination": dst})
-		up, down := gateway.Relay(h.ctx, trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}, c)
+		flow := h.g.researchFlow(6, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+		defer flow.close()
+		up, down := gateway.Relay(h.ctx, researchStream{Stream: trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}, flow: flow}, c)
 		h.g.emit("flow_closed", map[string]any{"network": "tcp", "destination": dst, "up": up, "down": down})
 	}()
 }
@@ -200,6 +202,8 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 			return
 		}
 		h.udpFlows.Add(1)
+		flow := h.g.researchFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+		defer flow.close()
 		s = trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}
 		defer s.Close()
 		stop := context.AfterFunc(h.ctx, func() { c.Close(); s.Close() })
@@ -216,6 +220,8 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 				return
 			}
 			h.udpTx.Add(1)
+			flow.add(uint64(n), 0, 1, 0)
+			flow.dnsPacket(b[:n], true)
 			reply, e := gateway.ReadPacket(s, 4096)
 			if e != nil {
 				return
@@ -224,6 +230,8 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 			if _, e = c.WriteTo(reply, from); e != nil {
 				return
 			}
+			flow.add(0, uint64(len(reply)), 0, 1)
+			flow.dnsPacket(reply, false)
 		}
 	}()
 }
@@ -240,6 +248,8 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 		return
 	}
 	h.udpFlows.Add(1)
+	flow := h.g.researchFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+	defer flow.close()
 	h.g.emit("flow_open", map[string]any{"network": "udp", "destination": dst})
 	defer h.g.emit("flow_closed", map[string]any{"network": "udp", "destination": dst})
 	defer out.Close()
@@ -257,6 +267,8 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 	}
 	h.tx.Add(int64(n))
 	h.udpTx.Add(1)
+	flow.add(uint64(n), 0, 1, 0)
+	flow.dnsPacket(b[:n], true)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -272,6 +284,8 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 			}
 			h.rx.Add(int64(n))
 			h.udpRx.Add(1)
+			flow.add(0, uint64(n), 0, 1)
+			flow.dnsPacket(reply[:n], false)
 			c.SetDeadline(time.Now().Add(60 * time.Second))
 			out.SetDeadline(time.Now().Add(60 * time.Second))
 		}
@@ -287,6 +301,8 @@ func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 		}
 		h.tx.Add(int64(n))
 		h.udpTx.Add(1)
+		flow.add(uint64(n), 0, 1, 0)
+		flow.dnsPacket(b[:n], true)
 		c.SetDeadline(time.Now().Add(60 * time.Second))
 		out.SetDeadline(time.Now().Add(60 * time.Second))
 	}

@@ -50,6 +50,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	research            *researchCollector
 	vless               vless.Client
 	exitEchoDialGate    diagnosticDialGate
 	runtimeBond         *runtimeGateway
@@ -438,6 +439,10 @@ func (g *Gateway) LocalAddress() string {
 }
 func (g *Gateway) Stop() {
 	g.mu.Lock()
+	if g.research != nil {
+		g.research.stop()
+		g.research = nil
+	}
 	g.stopExitEchoLocked()
 	if g.vless != nil {
 		g.closeVLESSLocked()
@@ -506,6 +511,7 @@ func (g *Gateway) IsConnected() bool {
 func (g *Gateway) Reconnect(binder SocketBinder) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.research.reset()
 	if g.cfg.MaxAvailability {
 		return errors.New("maximum availability requires RestartBond with path name")
 	}

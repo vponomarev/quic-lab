@@ -26,7 +26,7 @@ internal object MdmRuntime {
   }},{
    MdmTelemetry.stop(app,true)
    MdmApplyCoordinator(app).detach()
-  },{MdmTelemetry.rightsChanged(app);if(!MdmStore(app).read().rights.config)MdmApplyCoordinator(app).detach()})
+  },{MdmTelemetry.rightsChanged(app);if(!MdmStore(app).read().rights.config)MdmApplyCoordinator(app).detach()},stateChanged={ResearchSettings.changed()})
  }
  fun restore(context:Context,foreground:Boolean=false){
   runCatching {
