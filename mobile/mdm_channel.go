@@ -57,11 +57,24 @@ func (c *MDMChannel) Close() {
 
 // Exchange never follows redirects, persists credentials, or exposes server bodies in errors.
 func (c *MDMChannel) Exchange(endpoint, secret, body string, binder SocketBinder) (string, error) {
+	return c.exchange(endpoint, secret, body, binder, false)
+}
+
+// ExchangeEditor uses the same physical-network/TLS/budget boundary with a
+// separate fixed operation allowlist. It does not grant permanent MDM access.
+func (c *MDMChannel) ExchangeEditor(endpoint, secret, body string, binder SocketBinder) (string, error) {
+	return c.exchange(endpoint, secret, body, binder, true)
+}
+func (c *MDMChannel) exchange(endpoint, secret, body string, binder SocketBinder, editor bool) (string, error) {
 	u, e := serviceURL(endpoint)
 	if e != nil {
 		return "", e
 	}
-	if u.Path != "/mdm/v1/enroll" && u.Path != "/mdm/v1/activate" && u.Path != "/mdm/v1/sync" && u.Path != "/mdm/v1/pause" && u.Path != "/mdm/v1/telemetry" && u.Path != "/mdm/v1/report" {
+	if editor {
+		if u.RawQuery != "" || (u.Path != "/api/editor/v1/pair" && u.Path != "/api/editor/v1/poll" && u.Path != "/api/editor/v1/report" && u.Path != "/api/editor/v1/ack" && u.Path != "/api/editor/v1/revoke") {
+			return "", errors.New("invalid editor operation")
+		}
+	} else if u.Path != "/mdm/v1/enroll" && u.Path != "/mdm/v1/activate" && u.Path != "/mdm/v1/sync" && u.Path != "/mdm/v1/pause" && u.Path != "/mdm/v1/telemetry" && u.Path != "/mdm/v1/report" {
 		return "", errors.New("invalid MDM operation")
 	}
 	if len(secret) > 4096 || strings.ContainsAny(secret, "\r\n") || len(body) > 1<<20 || !json.Valid([]byte(body)) {
