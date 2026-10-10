@@ -113,6 +113,7 @@ class VpnActivity:Activity() {
   val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
   ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
   ui.add(card,ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
+  ui.add(card,ui.button("Импорт и экспорт настроек"){startActivity(Intent(this,ConfigurationTransferActivity::class.java))})
   ui.add(card,ui.button("Разрешения и фоновая работа"){startActivity(Intent(this,PermissionsActivity::class.java))})
   val updates=ui.card(content);updates.addView(ui.text("Обновление приложения",18f,true))
   updates.addView(ui.text("Установлено: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"))

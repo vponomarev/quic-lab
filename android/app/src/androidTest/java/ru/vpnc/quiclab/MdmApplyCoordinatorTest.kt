@@ -9,6 +9,15 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 class MdmApplyCoordinatorTest {
+ companion object {
+  private var wasRunning=false
+  @org.junit.BeforeClass @JvmStatic fun suspendRealVpnForIsolatedPorts(){
+   androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync{wasRunning=LabVpnService.active;if(wasRunning)LabVpnService.stopForMdm()}
+  }
+  @org.junit.AfterClass @JvmStatic fun restoreRealVpn(){
+   if(wasRunning)androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync{VpnProcessRecovery.restore(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext)}
+  }
+ }
  private class Isolated(base:Context):ContextWrapper(base){
   val prefix="mdm-apply-"+UUID.randomUUID();val names=mutableSetOf<String>();val dir=File(base.cacheDir,prefix).apply{mkdirs()}
   override fun getFilesDir()=dir

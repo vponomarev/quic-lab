@@ -12,6 +12,7 @@ class QuicLabApplication : Application() {
   // Restore saved intent only: active MDM and interrupted VPN from this OS boot.
   Handler(Looper.getMainLooper()).post {
    Diagnostics.init(this)
+   runCatching{LocalConfigurationApply.recover(this)}
    MdmRuntime.restore(this)
    VpnProcessRecovery.restore(this)
   }

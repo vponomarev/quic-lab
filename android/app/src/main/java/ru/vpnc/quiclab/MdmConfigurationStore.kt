@@ -81,17 +81,19 @@ internal class MdmConfigurationStore(
   }
  }
  /** Local caller must hold MdmConfiguration.lock and check current management rights. */
- fun applyLocal(document:JSONObject,runtime:JSONObject,expectedEpoch:Long) {
+ fun applyLocal(document:JSONObject,runtime:JSONObject,expectedEpoch:Long,previousDocument:JSONObject?=null) {
   mobile.Mobile.validateMDMConfiguration(document.toString())
   store.edit{j->
    check(j.optLong("configEpoch")==expectedEpoch){"Настройки изменились. Подготовьте импорт заново."}
    check(!j.has("external") && !j.has("externalRuntime")){"Внешний конфиг MDM ещё активен"}
    check(j.has("personal") && j.has("personalRuntime")){"Личный конфиг ещё не сохранён"}
    beforeWrite()
-   j.put("localRollback",JSONObject().put("document",JSONObject(j.getJSONObject("personal").toString()))
+   j.put("localRollback",JSONObject().put("document",JSONObject((previousDocument?:j.getJSONObject("personal")).toString()))
     .put("runtime",JSONObject(j.getJSONObject("personalRuntime").toString())))
    j.put("personal",JSONObject(document.toString())).put("personalRuntime",JSONObject(runtime.toString()))
    j.put("configEpoch",Math.addExact(expectedEpoch,1))
   }
  }
- fun localRollback():JSONObject?=store.document().optJSONObject("localRollback")}
+ fun localRollback():JSONObject?=store.document().optJSONObject("localRollback") fun localOperation():JSONObject?=store.document().optJSONObject("localOperation")
+ fun beginLocalOperation(operation:JSONObject){store.edit{it.put("localOperation",JSONObject(operation.toString()))}}
+ fun finishLocalOperation(){store.edit{it.remove("localOperation")}}}

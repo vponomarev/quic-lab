@@ -62,7 +62,17 @@ internal class VpnBudgetRun(private val file:File?=null,private val bootCount:In
   try{checkpoint()}catch(e:Exception){current=null;throw e}
   return meter
  }
- @Synchronized fun setResumeEligible(value:Boolean){resumeEligible=value;checkpoint()}
+  @Synchronized fun setResumeEligible(value:Boolean){
+  resumeEligible=value
+  if(!value && current==null && file!=null && (file.exists()||File(file.path+".bak").exists())){
+   val atomic=AtomicFile(file)
+   val saved=atomic.openRead().use{org.json.JSONObject(it.readBytes().toString(Charsets.UTF_8))}
+   Mobile.restoreTrafficBudget(saved.toString())
+   saved.put("resume",false)
+   val out=atomic.startWrite()
+   try{out.write(saved.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(out)}catch(e:Exception){atomic.failWrite(out);throw e}
+  }else checkpoint()
+ }
  @Synchronized fun checkpoint(){
   val raw=org.json.JSONObject(current?.snapshot() ?: return).put("boot_count",bootCount).put("resume",resumeEligible).toString()
   val target=file ?: return

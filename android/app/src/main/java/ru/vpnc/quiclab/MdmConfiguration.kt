@@ -103,7 +103,7 @@ internal object MdmConfiguration {
    .put("budget",JSONObject().put("limitBytes",VpnBudgetSettings.limitBytes(c)))
    .put("diagnostics",JSONObject().put("enabled",DiagnosticsPolicy.enabled(c)).put("detailed",DiagnosticsPolicy.detailed(c)))
  }
- private fun snapshotRuntime(c:Context):JSONObject {
+ internal fun snapshotRuntime(c:Context):JSONObject {
   val prefs=JSONObject();val identities=JSONObject()
   for(name in listOf("vpn_profiles","vpn_budget","vpn_rtt","vpn_reserve","diagnostics_settings")){
    prefs.put(name,encode(values(c,name)))
@@ -125,7 +125,7 @@ internal object MdmConfiguration {
   if(!hasLayer(c))target.initialize(snapshotLocal(c),snapshotRuntime(c))
   target.apply(s.binding!!.id,desired,::compile)
  }
- private fun compile(doc:JSONObject,previous:JSONObject):JSONObject {
+ internal fun compile(doc:JSONObject,previous:JSONObject):JSONObject {
   val oldPrefs=previous.getJSONObject("preferences")
   val oldKeys=previous.getJSONObject("identities")
   val prefs=JSONObject();val keys=JSONObject();val names=JSONArray()
