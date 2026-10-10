@@ -15,6 +15,7 @@ import (
 func (w *Web) editorRoutes(m *http.ServeMux) {
 	m.Handle("/api/editor/v1/", editor.NewHandler(w.Editor))
 	m.HandleFunc("GET /editor", w.editorPage)
+	m.HandleFunc("GET /editor/audit", w.editorAudit)
 	m.HandleFunc("POST /editor/transfer", w.editorTransfer)
 	for _, op := range []string{"create", "state", "submit", "revoke"} {
 		m.HandleFunc("POST /editor/"+op, w.editorAction)
@@ -38,6 +39,8 @@ func editorReply(rw http.ResponseWriter, value any, e error) {
 			code = 403
 		case editor.ErrConflict:
 			code = 409
+		case editor.ErrAudit:
+			code = 503
 		case editor.ErrLimit:
 			code = 429
 		}
@@ -143,4 +146,16 @@ func (w *Web) editorTransfer(rw http.ResponseWriter, r *http.Request) {
 	default:
 		editorReply(rw, nil, editor.ErrInvalid)
 	}
+}
+
+func (w *Web) editorAudit(rw http.ResponseWriter, r *http.Request) {
+	if _, ok := w.authorized(rw, r, false); !ok {
+		return
+	}
+	out, e := w.Editor.AuditEvents(r.URL.Query().Get("id"), r.URL.Query().Get("day"))
+	if e != nil {
+		http.Error(rw, "Audit unavailable", 503)
+		return
+	}
+	editorReply(rw, out, nil)
 }

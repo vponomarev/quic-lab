@@ -12,7 +12,7 @@ with sync_playwright() as p:
  page=b.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
  state={'paired':False,'generation':0,'status':'ready','expiresAt':'2099-01-01T00:00:00Z'}
  def route(r):
-  op=r.request.url.rsplit('/',1)[-1]
+  op=r.request.url.rsplit('/',1)[-1].split('?')[0]
   if op=='create':out={'id':'a'*64,'browserToken':'b'*64,'pairToken':'c'*64,'link':'quiclab://editor/pair#test','qr':'data:image/png;base64,'}
   elif op=='state':
    if state.get('revoked'):r.fulfill(status=403,body='Forbidden');return
@@ -22,6 +22,7 @@ with sync_playwright() as p:
    data=parse_qs(r.request.post_data);assert data['generation']==['0'];assert json.loads(data['document'][0])['profiles'][0]['name']=='Changed'
    state['pending']={'revision':1};state['status']='pending';out={'revision':1}
   elif op=='revoke':out={'accepted':True}
+  elif op=='audit':out=[]
   else:raise AssertionError(op)
   r.fulfill(status=200,content_type='application/json',body=json.dumps(out))
  page.route('https://editor.test/lab/editor/**',route)

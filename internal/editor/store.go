@@ -62,6 +62,7 @@ type session struct {
 	lastAckHash                        [32]byte
 }
 type Store struct {
+	audit     *Audit
 	realClock bool
 	mu        sync.Mutex
 	now       func() time.Time
@@ -93,6 +94,7 @@ func (s *Store) prune() {
 	now := s.now()
 	for id, x := range s.sessions {
 		if !now.Before(x.state.ExpiresAt) {
+			_ = s.record(id, "expired", x.revision)
 			s.drop(id)
 		}
 	}
@@ -117,6 +119,9 @@ func (s *Store) Create(owner string, duration time.Duration) (Ticket, error) {
 	}
 	browser, e := token()
 	if e != nil {
+		return Ticket{}, e
+	}
+	if e := s.record(id, "created", 0); e != nil {
 		return Ticket{}, e
 	}
 	until := s.now().Add(5 * time.Minute)
@@ -161,6 +166,9 @@ func (s *Store) Pair(id, secret string, generation int64, configuration json.Raw
 	}
 	credential, e := token()
 	if e != nil {
+		return Grant{}, e
+	}
+	if e := s.record(id, "paired", 0); e != nil {
 		return Grant{}, e
 	}
 	x.device = sha256.Sum256([]byte(credential))
@@ -236,6 +244,9 @@ func (s *Store) Submit(id, owner, secret string, base int64, document json.RawMe
 	if mdm.ValidateDocument(document) != nil {
 		return 0, ErrInvalid
 	}
+	if e := s.record(id, "submitted", x.revision+1); e != nil {
+		return 0, e
+	}
 	x.revision++
 	x.state.Pending = &Candidate{x.revision, base, copyRaw(document)}
 	x.state.Status = "pending"
@@ -267,6 +278,9 @@ func (s *Store) Acknowledge(id, secret string, revision, generation int64, confi
 	if !reportValid(configuration) {
 		return ErrInvalid
 	}
+	if e := s.record(id, status, revision); e != nil {
+		return e
+	}
 	x.state.Configuration = copyRaw(configuration)
 	x.state.Generation = generation
 	x.state.Pending = nil
@@ -293,6 +307,9 @@ func (s *Store) Report(id, secret string, generation int64, configuration json.R
 		}
 		return nil
 	}
+	if e := s.record(id, "local_edit", 0); e != nil {
+		return e
+	}
 	x.state.Generation = generation
 	x.state.Configuration = copyRaw(configuration)
 	// A local phone edit invalidates a draft pending for the previous generation.
@@ -306,6 +323,7 @@ func (s *Store) Revoke(id, owner, secret string) error {
 	if _, e := s.browserSession(id, owner, secret); e != nil {
 		return e
 	}
+	_ = s.record(id, "revoked_browser", 0)
 	s.drop(id)
 	return nil
 }
@@ -315,6 +333,7 @@ func (s *Store) RevokeDevice(id, secret string) error {
 	if _, e := s.deviceSession(id, secret); e != nil {
 		return e
 	}
+	_ = s.record(id, "revoked_device", 0)
 	s.drop(id)
 	return nil
 }
@@ -354,6 +373,7 @@ func (s *Store) RevokeOwner(owner string) {
 	defer s.mu.Unlock()
 	for id, x := range s.sessions {
 		if x.owner == owner {
+			_ = s.record(id, "logout", x.revision)
 			s.drop(id)
 		}
 	}

@@ -19,11 +19,11 @@ Active MDM configuration ownership is not delegated to a temporary editor token.
 
 The core local editor works end-to-end; this checkpoint is not a stable-release acceptance claim. Still pending:
 
-- Dedicated persisted editor lifecycle audit with the intended retention policy.
+- Temporary delegation of MDM-owned configurations remains a separate, unimplemented scope.
 - Full user-driven consent/QR UI acceptance and temporary-session OS process-death/reboot acceptance on Android 12/16; only Android 11 was connected in this turn.
 - Live-traffic configuration change, manual Stop race, and two-browser/newer-local-edit end-to-end acceptance beyond store/isolated runtime tests.
-- Full browser import/export interaction acceptance (routes/format validation tested; real HTTPS editor Apply tested).
-- Full backup-job browser acceptance after the CSP extraction.
+- Additional two-browser contention acceptance (local-edit conflict is now covered by the browser/HTTPS fixture).
+- Real backup creation/download browser acceptance; CSP polling has passed with controlled job responses.
 
 ## Evidence
 
@@ -36,3 +36,11 @@ The core local editor works end-to-end; this checkpoint is not a stable-release 
 - Independent review found three issues (stuck expired browser session; unused incomplete profiles blocking edits; payloads retained past expiry without requests). All three reproduced with regression tests and corrected.
 
 The live fixture does not prove camera scanning, consent-screen interaction, continuous VPN traffic or process-death behavior. Those remain explicit acceptance work.
+
+## 2026-10-11 continuation
+
+- Persisted editor lifecycle audit: 90-day retention, session/action/revision/time only; no configuration, credentials or application inventory. UTC day selector, latest 500 matching events, bounded daily file. Creating authority and accepting changes fail closed if auditing fails; revocation still proceeds.
+- Atomic daily file replacement prevents a partial append from poisoning later records. Regression covers recovery of an old truncated tail, retention, invalid metadata, selected-day/path validation and idempotent ACK. Historical reads release the writer mutex before reading.
+- Linux editor/admin race tests and vet PASS. Real Chromium + HTTPS broker test PASS: export/import into draft only, Apply/ACK/audit, conflict after phone generation changes, phone revoke. The device in this browser fixture is simulated.
+- Backup polling under actual CSP with controlled responses PASS; this does not claim real backup creation/download acceptance.
+- Only Note9 / Android 11 is connected. No new Android build or production deployment in this continuation; Android 12/16 consent/process-lifecycle acceptance remains pending.

@@ -9,10 +9,11 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"quiclab/internal/backup"
 	"quiclab/internal/debugcapture"
-	"quiclab/internal/mdm"
 	"quiclab/internal/editor"
+	"quiclab/internal/mdm"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,7 +31,7 @@ type ticket struct {
 type Web struct {
 	backups        *backup.Manager
 	MDM            *mdm.Store
-	Editor *editor.Store
+	Editor         *editor.Store
 	diagnosticSync func(string) error
 	// Serialize capture creation with identity changes and AWG address reuse.
 	userCaptureMu    sync.Mutex
@@ -52,6 +53,7 @@ func NewWeb(c Config, s *Store) *Web {
 	u, _ := url.Parse(c.PublicURL)
 	w := &Web{Config: c, Store: s, sessions: make(map[string]session), tickets: make(map[string]ticket), base: u.Path, origin: u.Scheme + "://" + u.Host}
 	w.Editor = editor.NewStore(nil)
+	w.Editor.EnableAudit(filepath.Join(c.DataDir, "editor-audit"))
 	w.loadSessions()
 	return w
 }
