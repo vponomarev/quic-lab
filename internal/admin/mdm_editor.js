@@ -1,16 +1,17 @@
 (()=>{'use strict';
-const $=s=>document.querySelector(s),root=$('#mdm-editor'),base=root.dataset.base,id=root.dataset.id,csrf=root.dataset.csrf;
+const $=s=>document.querySelector(s),root=$('#mdm-editor'),base=root.dataset.base,id=root.dataset.id,csrf=root.dataset.csrf,temporary=root.dataset.temporary==="true";
 const el=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
 let state,doc,original,revision=0,generation=0,dirty=false,busy=false,mode='current',applyRequest=null;
 const commandRequests={};
+let ticket=null,temporaryState=null;
 const copy=x=>JSON.parse(JSON.stringify(x)),message=(s,error=false)=>{$('#message').textContent=s;$('#message').className=error?'error':'';};
 const uuid=()=>crypto.randomUUID();
-const can=right=>state?.binding.active && state.binding.grantedRights[right] && state.report?.capabilities?.includes('web-control-v1');
+const can=right=>temporary?(right==='config' && temporaryState?.paired && !temporaryState.pending && new Date(temporaryState.expiresAt)>new Date()):state?.binding.active && state.binding.grantedRights[right] && state.report?.capabilities?.includes('web-control-v1');
 function changed(){dirty=true;applyRequest=null;$('#draft-note').textContent='Есть несохранённые изменения. Для отправки нажмите «Применить».';}
-async function post(path,fields){const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,id,...fields})});if(!r.ok)throw Error(r.status===409?'Конфликт или MDM приостановлено. Перечитайте состояние перед повтором.':r.status===403?'Нет разрешения на эту операцию.':'Сервер отклонил запрос ('+r.status+').');return r.json();}
+async function post(path,fields){const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,id:temporary?ticket?.id:id,token:temporary?ticket?.browserToken:undefined,...fields})});if(!r.ok){const error=Error(r.status===409?'Конфликт или MDM приостановлено. Перечитайте состояние перед повтором.':r.status===403?'Нет разрешения на эту операцию.':'Сервер отклонил запрос ('+r.status+').');error.status=r.status;throw error;}return r.json();}
 function field(host,title,value,set,type='text',choices){const label=el('label',title),input=el(choices?'select':'input');if(choices){for(const [v,t]of choices){const o=el('option',t);o.value=v;input.append(o);}input.value=value;}else{input.type=type;if(type==='checkbox')input.checked=!!value;else input.value=value??'';}input.onchange=()=>{set(type==='checkbox'?input.checked:type==='number'?Number(input.value):input.value);changed();};label.append(input);host.append(label);return input;}
 function renderConfig(){const host=$('#configuration');host.replaceChildren();if(!doc){host.append(el('p','Для редактирования нужен свежий отчёт телефона и разрешение на управление настройками.'));return;}
-field(host,'Режим конфигурации',mode,v=>mode=v,'text',[['current','Текущая — сохранить изменения после отключения MDM'],['external','Внешняя — вернуть личные настройки после отключения MDM']]);
+if(!temporary)field(host,'Режим конфигурации',mode,v=>mode=v,'text',[['current','Текущая — сохранить изменения после отключения MDM'],['external','Внешняя — вернуть личные настройки после отключения MDM']]);
 const grid=el('div');grid.className='grid';host.append(grid);const profiles=doc.profiles.map(p=>[p.id,p.name]);
 field(grid,'Основное подключение',doc.currentProfileId,v=>doc.currentProfileId=v,'text',profiles);
 field(grid,'Несколько выходов',doc.multiple,v=>doc.multiple=v,'checkbox');
@@ -42,7 +43,7 @@ const query=$('#app-search').value.toLowerCase();for(const[pkg,label]of [...item
 function appsTarget(){const id=$('#apps-profile').value,profile=doc.profiles.find(p=>p.id===id);return {profile,global:id==='global'||profile?.settings.global_apps===true};}
 function selectApps(){const target=appsTarget();return target.global?(doc.globalApps||[]):(target.profile?.settings.apps||[]);}
 function preview(){if(!doc)return;const lines=[];function walk(a,b,path){if(path.endsWith('.identity')){if(b)lines.push(path+': данные доступа будут заменены');return;}if(JSON.stringify(a)===JSON.stringify(b))return;if(a&&b&&typeof a==='object'&&typeof b==='object'){for(const k of new Set([...Object.keys(a),...Object.keys(b)]))walk(a[k],b[k],path+'.'+k);}else lines.push(path+': '+JSON.stringify(a)+' → '+JSON.stringify(b));}walk(original,doc,'Конфигурация');$('#diff').textContent=lines.join('\n')||'Параметры не изменены.';}
-function status(){const b=state.binding,r=state.report;$('#title').textContent=r?.name||'Управление устройством';const desired=state.desired?.revision||0,applied=r?.appliedRevision||0;const errors=(state.events||[]).filter(e=>e.kind==='config_result'&&e.revision===desired&&e.result!=='applied');
+function status(){if(temporary){temporaryStatus();return;}const b=state.binding,r=state.report;$('#title').textContent=r?.name||'Управление устройством';const desired=state.desired?.revision||0,applied=r?.appliedRevision||0;const errors=(state.events||[]).filter(e=>e.kind==='config_result'&&e.revision===desired&&e.result!=='applied');
 $('#status').replaceChildren(el('p',b.active?'MDM включено':'MDM приостановлено'),el('p','Версия: '+(r?.appVersion||'нет отчёта')),el('p','Последняя связь: '+(state.receivedAt&& !state.receivedAt.startsWith('0001')?new Date(state.receivedAt).toLocaleString():'нет данных')),el('p','VPN: '+({running:'служба запущена',stopped:'выключен',starting:'запускается',error:'ошибка'}[r?.vpnState]||'нет разрешения или данных')),el('p',desired?(applied>=desired?'Применено: ревизия '+applied:errors.length?'Ошибка применения: '+errors.at(-1).result:'Ожидает применения: ревизия '+desired):'Удалённые изменения ещё не отправлялись'));
 const vpnError=(state.events||[]).filter(e=>e.kind==='config_vpn_result'&&e.revision===desired).at(-1);if(vpnError&&vpnError.result!=='running')$('#status').append(el('p','Конфигурация сохранена; VPN не запустился: '+vpnError.result));
 const rights=Object.entries(b.grantedRights||{}).filter(([k,v])=>v===true).map(([k])=>({config:'настройки',vpn:'VPN',telemetry:'телеметрия',geo:'Wi-Fi/соты',coordinates:'координаты'}[k]||k));$('#status').append(el('p','Разрешено: '+(rights.join(', ')||'нет прав')));
@@ -50,10 +51,49 @@ const requests=(state.events||[]).filter(e=>e.actor==='admin'&&['vpn_start','vpn
 $('#start').disabled=busy||!can('vpn');$('#stop').disabled=busy||!can('vpn');$('#apply').disabled=busy||!can('config')||!doc;$('#preview').disabled=!doc;
 const events=$('#event-list');events.replaceChildren();const table=el('table');for(const e of [...(state.events||[])].reverse()){const tr=el('tr');for(const text of [new Date(e.occurredAt).toLocaleString(),e.actor,e.kind,e.result||'',e.revision?'r'+e.revision:''])tr.append(el('td',text));table.append(tr);}events.append(table);
 }
-async function load(reset=false){try{const r=await fetch(base+'mdm/state?id='+encodeURIComponent(id),{cache:'no-store'});if(!r.ok)throw Error('Не удалось получить состояние ('+r.status+').');state=await r.json();if(reset||!doc){const source=state.desired?.document||state.report?.configuration;doc=source?copy(source):null;original=doc?copy(doc):null;mode=state.desired?.mode||'current';revision=state.desired?.revision||0;generation=state.report?.configGeneration||0;dirty=false;applyRequest=null;renderConfig();renderApps();}status();if(reset)message(state.report?.capabilities?.includes('web-control-v1')?'Состояние обновлено.':'Для WEB-управления обновите приложение и разрешите управление настройками/VPN.');}catch(e){message(e.message,true);}}
+async function load(reset=false){if(temporary){await loadTemporary(reset);return;}try{const r=await fetch(base+'mdm/state?id='+encodeURIComponent(id),{cache:'no-store'});if(!r.ok)throw Error('Не удалось получить состояние ('+r.status+').');state=await r.json();if(reset||!doc){const source=state.desired?.document||state.report?.configuration;doc=source?copy(source):null;original=doc?copy(doc):null;mode=state.desired?.mode||'current';revision=state.desired?.revision||0;generation=state.report?.configGeneration||0;dirty=false;applyRequest=null;renderConfig();renderApps();}status();if(reset)message(state.report?.capabilities?.includes('web-control-v1')?'Состояние обновлено.':'Для WEB-управления обновите приложение и разрешите управление настройками/VPN.');}catch(e){message(e.message,true);}}
 $('#apps-profile').onchange=appList;$('#app-search').oninput=appList;$('#preview').onclick=preview;$('#reload').onclick=()=>{if(!dirty||confirm('Отбросить несохранённые изменения?'))load(true);};
-$('#apply').onclick=async()=>{if(busy||!can('config'))return;preview();if(!confirm('Применить настройки к телефону? VPN может кратковременно переподключиться.'))return;busy=true;status();try{applyRequest=applyRequest||uuid();const out=await post('mdm/config',{expectedRevision:revision,expectedGeneration:generation,requestID:applyRequest,mode,document:JSON.stringify(doc)});revision=out.revision;original=copy(doc);dirty=false;applyRequest=null;$('#draft-note').textContent='Изменения отправлены. Подтверждение телефона показано в обзоре.';$('#diff').textContent='';message('Отправлено: ревизия '+revision+'. Ожидаем подтверждение телефона.');}catch(e){message(e.message,true);}finally{busy=false;status();}};
+$('#apply').onclick=async()=>{if(busy||!can('config'))return;preview();if(!confirm('Применить настройки к телефону? VPN может кратковременно переподключиться.'))return;busy=true;status();try{applyRequest=applyRequest||uuid();const out=await post(temporary?'editor/submit':'mdm/config',{expectedRevision:revision,expectedGeneration:generation,generation,requestID:applyRequest,mode,document:JSON.stringify(doc)});revision=out.revision;if(temporary){temporaryState.pending={revision};temporaryState.status="pending";}original=copy(doc);dirty=false;applyRequest=null;$('#draft-note').textContent='Изменения отправлены. Подтверждение телефона показано в обзоре.';$('#diff').textContent='';message('Отправлено: ревизия '+revision+'. Ожидаем подтверждение телефона.');}catch(e){message(e.message,true);}finally{busy=false;status();}};
 for(const[kind,button]of [['vpn_start','#start'],['vpn_stop','#stop']])$(button).onclick=async()=>{if(busy)return;busy=true;status();try{const out=await post('mdm/command',{kind,requestID:commandRequests[kind]||(commandRequests[kind]=uuid())});delete commandRequests[kind];message('Команда отправлена. Действует до '+new Date(out.expiresAt).toLocaleTimeString());}catch(e){message(e.message,true);}finally{busy=false;status();}};
 for(const button of document.querySelectorAll('[data-tab]'))button.onclick=()=>{for(const b of document.querySelectorAll('[data-tab]')){const active=b===button;b.setAttribute('aria-selected',String(active));$('#'+b.dataset.tab).hidden=!active;}};
+function clearTemporary(){ticket=null;temporaryState=null;doc=null;original=null;dirty=false;$('#pair-details').hidden=true;$('#pair-link').value='';$('#pair-qr').removeAttribute('src');$('#create-session').disabled=false;renderConfig();renderApps();temporaryStatus();}
+function temporaryStatus(){
+ $('#title').textContent='Временное редактирование';const s=temporaryState;
+ $('#status').replaceChildren(el('p',!s?'Создайте сессию и подтвердите доступ на телефоне.':!s.paired?'Ожидаем согласие телефона.':({ready:'Телефон подключён.',pending:'Настройки отправлены, ожидаем подтверждение телефона.',applied:'Телефон подтвердил применение настроек.',error:'Телефон отклонил изменения. Перечитайте настройки и проверьте права и приложения.'}[s.status]||s.status)),el('p',s?'Доступ до: '+new Date(s.expiresAt).toLocaleString():''));
+ $('#apply').disabled=busy||!can('config')||!doc;$('#preview').disabled=!doc;$('#reload').disabled=!ticket;$('#end-session').disabled=!ticket;
+}
+async function loadTemporary(reset){if(!ticket){temporaryStatus();return;}try{
+ const next=await post('editor/state',{});temporaryState=next;state={report:{configuration:next.configuration,inventory:next.inventory}};
+ if(reset||!doc||(!dirty&&!next.pending&&generation!==next.generation)){doc=next.configuration?copy(next.configuration):null;original=doc?copy(doc):null;generation=next.generation;dirty=false;renderConfig();renderApps();}
+ if(next.paired){$('#pair-details').hidden=true;$('#pair-link').value='';$('#pair-qr').removeAttribute('src');ticket.pairToken=null;}
+ temporaryStatus();if(reset)message('Состояние обновлено.');
+ }catch(e){if(e.status===403){clearTemporary();message('Сессия завершена или срок доступа истёк. Создайте новую сессию.',true);}else{message(e.message,true);$('#apply').disabled=true;}}}
+if(temporary){
+ for(const selector of ['#start','#stop','#overview form','[data-tab="telemetry"]','[data-tab="events"]'])$(selector).hidden=true;
+ $('#create-session').onclick=async()=>{if(ticket){message('Завершите текущую сессию перед созданием новой.',true);return;}try{ticket=await post('editor/create',{duration:$('#duration').value});$('#pair-link').value=ticket.link;$('#pair-qr').src=ticket.qr;$('#pair-details').hidden=false;$('#create-session').disabled=true;await load(true);}catch(e){message(e.message,true);}};
+ $('#copy-link').onclick=async()=>{try{await navigator.clipboard.writeText($('#pair-link').value);message('Ссылка скопирована.');}catch(e){message('Выделите и скопируйте ссылку вручную.',true);}};
+ $('#end-session').onclick=async()=>{try{await post('editor/revoke',{});clearTemporary();message('Доступ завершён.');}catch(e){if(e.status===403)clearTemporary();message(e.message,true);}};
+}
+$('#export-config').onclick=async()=>{if(!doc)return;try{
+ const sections=[...document.querySelectorAll('#transfer-sections input:checked')].map(x=>x.value);
+ const out=await post('editor/transfer',{action:'export',document:JSON.stringify(doc),selection:JSON.stringify({sections})});
+ const url=URL.createObjectURL(new Blob([JSON.stringify(out.bundle,null,2)],{type:'application/json'})),a=el('a');a.href=url;a.download='quic-lab-config.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);message('Сохранён конфиг без ключей.');
+ }catch(e){message(e.message,true);}};
+$('#import-config').onclick=async()=>{if(!doc)return;try{
+ const file=$('#import-file').files[0];if(!file)throw Error('Выберите файл.');if(file.size>1048576)throw Error('Максимум 1 МиБ.');
+ const raw=await file.text(),bundle=JSON.parse(raw);if(bundle.credentials!=='omitted')throw Error('Зашифрованный перенос ключей выполняется на телефоне.');
+ const importMode=$('#import-mode').value,mapping={};
+ const ids=new Set((bundle.payload?.profiles||[]).map(p=>p.id));const routing=bundle.payload?.routing;
+ if(routing){ids.add(routing.currentProfileId);for(const x of routing.enabledProfileIds||[])ids.add(x);for(const x of Object.keys(routing.settings||{}))ids.add(x);}
+ if(bundle.payload?.network?.dns?.profileId)ids.add(bundle.payload.network.dns.profileId);
+ if(importMode==='replace'&&!confirm('Заменить все подключения и настройки в черновике? Новым подключениям понадобятся ключи.'))return;
+ for(const source of ids){if(importMode!=='update'){mapping[source]=uuid();continue;}
+  const list=doc.profiles.map((p,i)=>(i+1)+'. '+p.name+' ['+p.id+']').join('\n');
+  const choice=prompt('Куда импортировать '+source+'? Введите номер подключения:\n'+list);if(choice===null)return;
+  const index=Number(choice)-1;if(!Number.isInteger(index)||index<0||index>=doc.profiles.length)throw Error('Неверный номер подключения.');mapping[source]=doc.profiles[index].id;
+ }
+ const out=await post('editor/transfer',{action:'import',document:JSON.stringify(doc),bundle:raw,options:JSON.stringify({mode:importMode,mapping})});
+ doc=out.candidate;changed();renderConfig();renderApps();preview();message('Черновик подготовлен.'+(out.missingCredentials?.length?' Есть подключения без ключей: заполните данные доступа до применения.':''));
+ }catch(e){message(e.message,true);}};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});load(true);setInterval(()=>{if(!busy)load(false);},10000);
 })();

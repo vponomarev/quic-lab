@@ -7,9 +7,9 @@ import org.json.JSONObject
 
 internal object LocalConfigurationApply {
  fun canRestart(wasRunning:Boolean,oldStop:Long,currentStop:Long,incomplete:Boolean)=wasRunning&&oldStop==currentStop&&!incomplete
- fun apply(c:Context,p:TransferPreview,vpn:MdmVpnPort=Port(c))=MdmApplyCoordinator.onMain {
+ fun apply(c:Context,p:TransferPreview,vpn:MdmVpnPort=Port(c),guard:()->Unit={})=MdmApplyCoordinator.onMain {
   synchronized(MdmConfiguration.lock){
-   MdmConfiguration.assertEditable(c,p.token)
+   guard();MdmConfiguration.assertEditable(c,p.token)
    check(ConfigurationTransfer.snapshot(c,true).toString()==p.before){"Настройки изменились. Подготовьте импорт заново."}
    val store=MdmConfigurationStore(c);val doc=JSONObject(p.candidate)
    check(ConfigurationTransfer.missingApplications(c,doc).isEmpty()){"Установите отсутствующие приложения или исправьте конфиг перед применением"}
@@ -38,7 +38,7 @@ internal object LocalConfigurationApply {
    store.beginLocalOperation(op)
    try{
     if(vpn.active())vpn.stop()
-    MdmConfiguration.assertEditable(c,p.token)
+    guard();MdmConfiguration.assertEditable(c,p.token)
     store.applyLocal(doc,runtime,p.token.second,JSONObject(p.before))
     if(incomplete)VpnBudgetRun.sharedForContext(c).setResumeEligible(false)
    }finally{recover(c,vpn)}

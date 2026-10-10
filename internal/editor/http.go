@@ -50,12 +50,17 @@ func NewHandler(store *Store) http.Handler {
 		}
 		var req struct {
 			ID            string          `json:"id"`
+			Inventory     json.RawMessage `json:"inventory,omitempty"`
 			Generation    *int64          `json:"generation,omitempty"`
 			Revision      *int64          `json:"revision,omitempty"`
 			Configuration json.RawMessage `json:"configuration,omitempty"`
 			Status        string          `json:"status,omitempty"`
 		}
 		if !strictJSON(raw, &req) || req.ID == "" {
+			fail(400)
+			return
+		}
+		if req.Inventory != nil && op != "pair" {
 			fail(400)
 			return
 		}
@@ -86,7 +91,7 @@ func NewHandler(store *Store) http.Handler {
 		var result any = map[string]bool{"accepted": true}
 		switch op {
 		case "pair":
-			result, e = store.Pair(req.ID, secret, *req.Generation, req.Configuration)
+			result, e = store.Pair(req.ID, secret, *req.Generation, req.Configuration, req.Inventory)
 		case "poll":
 			result, e = store.Poll(req.ID, secret)
 		case "report":

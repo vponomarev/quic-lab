@@ -23,6 +23,7 @@ func managementPublicHandler(admin http.Handler, base string) http.Handler {
 	}
 	mux.Handle(u.Path, http.StripPrefix(strings.TrimSuffix(u.Path, "/"), admin))
 	mux.Handle("/mdm/v1/", admin)
+	mux.Handle("/api/editor/v1/", admin)
 	if u.Path != "/" {
 		mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, u.Path, http.StatusFound) })
 	}

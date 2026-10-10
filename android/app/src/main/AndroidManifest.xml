@@ -60,5 +60,11 @@
             </intent-filter>
         </activity>
     <activity android:name=".ConfigurationTransferActivity" android:exported="false" />
+        <service android:name=".TemporaryEditorService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Explicitly approved temporary browser configuration editing with local stop and expiry; never restored after process death" />
+        </service>
+        <activity android:name=".TemporaryEditorActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="quiclab" android:host="editor" android:path="/pair" /></intent-filter>
+        </activity>
     </application>
 </manifest>

@@ -27,7 +27,12 @@ internal class MdmTransport(context:Context,private val secret:()->String,privat
   require(request.bindingId==binding.id && request.epoch==binding.epoch)
   return MdmSyncResponse.parse(post(binding,"sync",request.json().toString()))
  }
- fun post(binding:MdmBinding,operation:String,body:String):String {
+ fun post(binding:MdmBinding,operation:String,body:String):String = postURL(binding.url(operation),body,if(operation=="enroll")"" else secret(),false)
+ fun postEditor(endpoint:String,operation:String,body:String):String {
+  require(operation in setOf("pair","poll","report","ack","revoke"))
+  return postURL(endpoint+"/api/editor/v1/"+operation,body,secret(),true)
+ }
+ private fun postURL(url:String,body:String,credential:String,editor:Boolean):String {
   check(!closed.get()) { "MDM канал закрыт" }
   val network=cm.allNetworks.filter { n ->
    cm.getNetworkCapabilities(n)?.let { c ->
@@ -73,7 +78,7 @@ internal class MdmTransport(context:Context,private val secret:()->String,privat
      ParcelFileDescriptor.fromFd(fd.toInt()).use{network.bindSocket(it.fileDescriptor)}
     }
    }
-   val response=created.exchange(binding.url(operation),if(operation=="enroll")"" else secret(),body,budget.bind(binder,physical))
+   val response=if(editor)created.exchangeEditor(url,credential,body,budget.bind(binder,physical)) else created.exchange(url,credential,body,budget.bind(binder,physical))
    check(!closed.get() && !lost.get())
    return response
   } finally {

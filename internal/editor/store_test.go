@@ -157,3 +157,53 @@ func TestAcknowledgementRetryAndLocalEdit(t *testing.T) {
 		t.Fatal("stale apply acknowledged", e)
 	}
 }
+
+func TestEditorInventoryIsBoundedAndCopied(t *testing.T) {
+	s := NewStore(nil)
+	ticket, _ := s.Create("owner", 30*time.Minute)
+	bad := json.RawMessage(`{"complete":false,"entries":[{"packageId":"bad package","label":"App"}]}`)
+	if _, e := s.Pair(ticket.ID, ticket.PairToken, 0, document, bad); e != ErrInvalid {
+		t.Fatal("invalid inventory", e)
+	}
+	good := json.RawMessage(`{"complete":false,"entries":[{"packageId":"org.example.app","label":"Приложение"}]}`)
+	grant, e := s.Pair(ticket.ID, ticket.PairToken, 0, document, good)
+	if e != nil {
+		t.Fatal(e)
+	}
+	good[0] = '!'
+	a, _ := s.Poll(ticket.ID, grant.DeviceToken)
+	a.Inventory[0] = '!'
+	b, _ := s.Read(ticket.ID, "owner", ticket.BrowserToken)
+	if len(b.Inventory) == 0 || b.Inventory[0] != '{' {
+		t.Fatal("inventory alias")
+	}
+}
+
+func TestEditorOwnerLogoutInvalidatesDevice(t *testing.T) {
+	s := NewStore(nil)
+	ticket, _ := s.Create("owner", 30*time.Minute)
+	grant, _ := s.Pair(ticket.ID, ticket.PairToken, 0, document)
+	s.RevokeOwner("other")
+	if _, e := s.Poll(ticket.ID, grant.DeviceToken); e != nil {
+		t.Fatal(e)
+	}
+	s.RevokeOwner("owner")
+	if _, e := s.Poll(ticket.ID, grant.DeviceToken); e != ErrUnauthorized {
+		t.Fatal("logout still active", e)
+	}
+}
+
+func TestExpiryDeletesPayloadWithoutFurtherRequests(t *testing.T) {
+	s := NewStore(nil)
+	ticket, _ := s.Create("owner", 30*time.Minute)
+	s.mu.Lock()
+	s.sessions[ticket.ID].state.ExpiresAt = time.Now().Add(10 * time.Millisecond)
+	s.scheduleExpiry(ticket.ID)
+	s.mu.Unlock()
+	time.Sleep(60 * time.Millisecond)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.sessions) != 0 {
+		t.Fatal("expired payload retained without traffic")
+	}
+}

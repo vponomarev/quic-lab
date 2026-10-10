@@ -12,6 +12,7 @@ import (
 	"quiclab/internal/backup"
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/mdm"
+	"quiclab/internal/editor"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type ticket struct {
 type Web struct {
 	backups        *backup.Manager
 	MDM            *mdm.Store
+	Editor *editor.Store
 	diagnosticSync func(string) error
 	// Serialize capture creation with identity changes and AWG address reuse.
 	userCaptureMu    sync.Mutex
@@ -49,11 +51,13 @@ type Web struct {
 func NewWeb(c Config, s *Store) *Web {
 	u, _ := url.Parse(c.PublicURL)
 	w := &Web{Config: c, Store: s, sessions: make(map[string]session), tickets: make(map[string]ticket), base: u.Path, origin: u.Scheme + "://" + u.Host}
+	w.Editor = editor.NewStore(nil)
 	w.loadSessions()
 	return w
 }
 func (w *Web) Handler() http.Handler {
 	m := http.NewServeMux()
+	w.editorRoutes(m)
 	w.backupRoutes(m)
 	w.captureRoutes(m)
 	m.HandleFunc("GET /mdm", w.mdmPage)
@@ -127,17 +131,17 @@ func (w *Web) Handler() http.Handler {
 				http.Redirect(rw, r, w.base+"mdm", http.StatusSeeOther)
 				return
 			}
-			allowed := path == "/" || path == "/login" || path == "/logout" || path == "/download/quic-lab.apk" || path == "/ui.css" || path == "/ui.js" || path == "/mdm-editor.js" || path == "/mdm" || strings.HasPrefix(path, "/mdm/") || path == "/backups" || strings.HasPrefix(path, "/backups/")
+			allowed := path == "/" || path == "/login" || path == "/logout" || path == "/download/quic-lab.apk" || path == "/ui.css" || path == "/ui.js" || path == "/editor" || strings.HasPrefix(path, "/editor/") || strings.HasPrefix(path, "/api/editor/v1/") || path == "/mdm-editor.js" || path == "/mdm" || strings.HasPrefix(path, "/mdm/") || path == "/backups" || strings.HasPrefix(path, "/backups/")
 			if !allowed {
 				http.NotFound(rw, r)
 				return
 			}
 		}
 		limit := int64(16384)
-		if r.URL.Path == "/mdm/config" {
+		if r.URL.Path == "/mdm/config" || r.URL.Path == "/editor/submit" || r.URL.Path == "/editor/transfer" {
 			limit = 4 << 20
 		}
-		if strings.HasPrefix(r.URL.Path, "/mdm/v1/") {
+		if strings.HasPrefix(r.URL.Path, "/mdm/v1/") || strings.HasPrefix(r.URL.Path, "/api/editor/v1/") {
 			limit = 1 << 20
 		}
 		if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/v1/devices/") && strings.HasSuffix(r.URL.Path, "/diagnostics") {
@@ -250,6 +254,7 @@ func (w *Web) logout(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.mu.Unlock()
+	w.Editor.RevokeOwner(previous.CSRF)
 	if w.Capture != nil {
 		w.Capture.StopOwner(previous.CSRF)
 	}

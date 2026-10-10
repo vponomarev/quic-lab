@@ -43,6 +43,7 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 		mux.Handle(base, http.StripPrefix(strings.TrimSuffix(base, "/"), admin))
 		mux.Handle("/api/v1/devices/", publicDeviceConfigRoute(admin))
 		mux.Handle("/mdm/v1/", admin)
+	mux.Handle("/api/editor/v1/", admin)
 		if base != "/" {
 			mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, base, http.StatusFound) })
 		}

@@ -27,6 +27,11 @@ class ProfileScanActivity : Activity() {
     }
     private fun importText(raw:String) {
         try {
+            if(raw.startsWith("quiclab://editor/")){
+                TemporaryEditorInvitation.parse(raw)
+                startActivity(Intent(this,TemporaryEditorActivity::class.java).putExtra("editor_invitation",raw));finish();return
+            }
+            require(!intent.getBooleanExtra("editor_only",false)){"Нужен QR временного редактора"}
             if(raw.startsWith("quiclab://mdm/")){
                 MdmInvitation.parse(raw)
                 startActivity(Intent(this,MdmEnrollActivity::class.java).putExtra("mdm_invitation",raw))

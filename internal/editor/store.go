@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"quiclab/internal/mdm"
+	"regexp"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -38,6 +41,7 @@ type Candidate struct {
 	Document       json.RawMessage `json:"document,omitempty"`
 }
 type State struct {
+	Inventory     json.RawMessage `json:"inventory,omitempty"`
 	ID            string          `json:"id"`
 	Paired        bool            `json:"paired"`
 	ExpiresAt     time.Time       `json:"expiresAt"`
@@ -47,6 +51,7 @@ type State struct {
 	Status        string          `json:"status"`
 }
 type session struct {
+	expiry                             *time.Timer
 	state                              State
 	owner                              string
 	pair, browser, device              [32]byte
@@ -57,16 +62,18 @@ type session struct {
 	lastAckHash                        [32]byte
 }
 type Store struct {
-	mu       sync.Mutex
-	now      func() time.Time
-	sessions map[string]*session
+	realClock bool
+	mu        sync.Mutex
+	now       func() time.Time
+	sessions  map[string]*session
 }
 
 func NewStore(now func() time.Time) *Store {
+	realClock := now == nil
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{now: now, sessions: map[string]*session{}}
+	return &Store{realClock: realClock, now: now, sessions: map[string]*session{}}
 }
 func token() (string, error) {
 	var b [32]byte
@@ -86,7 +93,7 @@ func (s *Store) prune() {
 	now := s.now()
 	for id, x := range s.sessions {
 		if !now.Before(x.state.ExpiresAt) {
-			delete(s.sessions, id)
+			s.drop(id)
 		}
 	}
 }
@@ -114,6 +121,7 @@ func (s *Store) Create(owner string, duration time.Duration) (Ticket, error) {
 	}
 	until := s.now().Add(5 * time.Minute)
 	s.sessions[id] = &session{state: State{ID: id, ExpiresAt: until, Status: "waiting"}, owner: owner, pair: sha256.Sum256([]byte(pair)), browser: sha256.Sum256([]byte(browser)), duration: duration}
+	s.scheduleExpiry(id)
 	return Ticket{id, pair, browser, until}, nil
 }
 func reportValid(raw json.RawMessage) bool {
@@ -130,7 +138,17 @@ func reportValid(raw json.RawMessage) bool {
 	return true
 }
 func copyRaw(raw json.RawMessage) json.RawMessage { return append(json.RawMessage(nil), raw...) }
-func (s *Store) Pair(id, secret string, generation int64, configuration json.RawMessage) (Grant, error) {
+func (s *Store) Pair(id, secret string, generation int64, configuration json.RawMessage, inventory ...json.RawMessage) (Grant, error) {
+	var inv json.RawMessage
+	if len(inventory) > 1 {
+		return Grant{}, ErrInvalid
+	}
+	if len(inventory) == 1 {
+		inv = inventory[0]
+		if len(inv) > 0 && !validInventory(inv) {
+			return Grant{}, ErrInvalid
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prune()
@@ -152,6 +170,8 @@ func (s *Store) Pair(id, secret string, generation int64, configuration json.Raw
 	x.state.Generation = generation
 	x.state.Configuration = copyRaw(configuration)
 	x.state.Status = "ready"
+	x.state.Inventory = copyRaw(inv)
+	s.scheduleExpiry(id)
 	return Grant{id, credential, x.state.ExpiresAt}, nil
 }
 func (s *Store) browserSession(id, owner, secret string) (*session, error) {
@@ -173,6 +193,7 @@ func (s *Store) deviceSession(id, secret string) (*session, error) {
 func clone(x *session, device bool) State {
 	out := x.state
 	out.Configuration = copyRaw(out.Configuration)
+	out.Inventory = copyRaw(out.Inventory)
 	if out.Pending != nil {
 		c := *out.Pending
 		out.Pending = &c
@@ -285,7 +306,7 @@ func (s *Store) Revoke(id, owner, secret string) error {
 	if _, e := s.browserSession(id, owner, secret); e != nil {
 		return e
 	}
-	delete(s.sessions, id)
+	s.drop(id)
 	return nil
 }
 func (s *Store) RevokeDevice(id, secret string) error {
@@ -294,6 +315,67 @@ func (s *Store) RevokeDevice(id, secret string) error {
 	if _, e := s.deviceSession(id, secret); e != nil {
 		return e
 	}
-	delete(s.sessions, id)
+	s.drop(id)
 	return nil
+}
+
+var appPackage = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$`)
+
+func validInventory(raw json.RawMessage) bool {
+	if len(raw) > 512<<10 {
+		return false
+	}
+	var inv struct {
+		Complete bool `json:"complete"`
+		Entries  []struct {
+			PackageID string `json:"packageId"`
+			Label     string `json:"label"`
+		} `json:"entries"`
+	}
+	if !strictJSON(raw, &inv) || len(inv.Entries) > 2048 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, a := range inv.Entries {
+		if len(a.PackageID) > 256 || !appPackage.MatchString(a.PackageID) || seen[a.PackageID] || utf8.RuneCountInString(a.Label) > 256 || a.Label == "" {
+			return false
+		}
+		for _, r := range a.Label {
+			if unicode.IsControl(r) {
+				return false
+			}
+		}
+		seen[a.PackageID] = true
+	}
+	return true
+}
+func (s *Store) RevokeOwner(owner string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, x := range s.sessions {
+		if x.owner == owner {
+			s.drop(id)
+		}
+	}
+}
+
+// Called under mu. Real-clock sessions erase payloads even if every peer disappears.
+func (s *Store) scheduleExpiry(id string) {
+	if !s.realClock {
+		return
+	}
+	x := s.sessions[id]
+	if x == nil {
+		return
+	}
+	if x.expiry != nil {
+		x.expiry.Stop()
+	}
+	x.expiry = time.AfterFunc(time.Until(x.state.ExpiresAt), func() { s.mu.Lock(); defer s.mu.Unlock(); s.prune() })
+}
+func (s *Store) drop(id string) {
+	if x := s.sessions[id]; x != nil && x.expiry != nil {
+		x.expiry.Stop()
+	}
+	delete(s.sessions, id)
 }

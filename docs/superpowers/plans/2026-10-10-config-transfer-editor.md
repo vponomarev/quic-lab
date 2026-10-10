@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-04-client-management-design.md`, sections 7–8, 9.3, 10–12; current configuration/report contracts and accepted amendments through 0.9.1.
 
-Status 2026-10-10: Tasks 1–2 implementation shipped in 0.9.3. Acceptance limits are recorded in docs/configuration-transfer-acceptance.md (full UI import/apply and live-traffic crash acceptance remain open). Task 3 is in progress: ephemeral store and lifecycle/CAS tests implemented; HTTPS/admin wiring remains pending. Tasks 4–5 are not complete. Original detailed checkboxes below are not a substitute for the release acceptance evidence.
+Status 2026-10-10: Tasks 1–2 shipped in 0.9.3. Tasks 3–4 core editor implemented in development 0.9.4-pre.1: admin QR, Android consent/runtime, shared form, import/export, CAS and revocation. Real HTTPS browser to isolated Note9 to ACK to revoke passed. Managed temporary delegation and remaining release acceptance/audit are tracked in docs/temporary-web-editor.md. Task 5 remains incomplete; production unchanged.
 
 ## Global constraints
 

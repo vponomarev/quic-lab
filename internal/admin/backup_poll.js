@@ -1,0 +1,3 @@
+
+const labels={snapshot:'Получение снимка',packing:'Упаковка и шифрование',ready:'Готово',error:'Ошибка создания'};
+async function update(){try{const r=await fetch(document.querySelector('[data-backup-state]').dataset.backupState,{cache:'no-store'});if(!r.ok)return;const jobs=await r.json();for(const j of jobs){const row=document.querySelector('[data-job="'+j.id+'"]');if(!row)continue;row.querySelector('.state').textContent=(labels[j.state]||j.state)+(j.state==='ready'?' · '+j.size_bytes+' байт':'');row.querySelector('.download').hidden=j.state!=='ready';row.querySelector('button').disabled=j.state==='snapshot'||j.state==='packing';}}catch(e){} } update();setInterval(update,2000);

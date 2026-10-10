@@ -32,6 +32,7 @@ type mdmRow struct {
 }
 type mdmView struct {
 	ManagementOnly                 bool
+	Temporary bool
 	UserID                         string
 	Users                          []User
 	Dropped                        int64
