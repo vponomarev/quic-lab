@@ -70,11 +70,12 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 			flows[key] = f
 		}
 		if r.Type != "app" && d.ExitRef != (ExitRef{}) {
-			if f.ExitRef != (ExitRef{}) && f.ExitRef != d.ExitRef {
+			merged, compatible := mergeObservedExit(f.ExitRef, d.ExitRef)
+			if !compatible {
 				result.Partial = true
 				return nil
 			}
-			f.ExitRef = d.ExitRef
+			f.ExitRef = merged
 		}
 		if len(d.App.Packages) > 0 {
 			f.App = d.App
@@ -151,4 +152,19 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 		return strings.Join(a.App.Packages, ",") < strings.Join(b.App.Packages, ",")
 	})
 	return result, err
+}
+
+// Unknown fields may be enriched after flow ownership arrives. Known conflicts
+// are not merged across exits, but enrichment must not discard byte deltas.
+func mergeObservedExit(a, b ExitRef) (ExitRef, bool) {
+	fields := [][2]*string{{&a.Route, &b.Route}, {&a.ID, &b.ID}, {&a.Type, &b.Type}}
+	for _, f := range fields {
+		old, next := *f[0], *f[1]
+		if old == "" || old == "unknown" {
+			*f[0] = next
+		} else if next != "" && next != "unknown" && next != old {
+			return a, false
+		}
+	}
+	return a, true
 }

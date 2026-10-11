@@ -102,6 +102,7 @@ internal object MdmConfiguration {
    .put("reserve",JSONObject().also{r->val p=VpnReserveSettings.preferences(c);for(k in listOf("wifi_on","wifi_off","cell_on","cell_off","metered_wifi"))r.put(k,p.getBoolean(k,k.startsWith("wifi_")))})
    .put("budget",JSONObject().put("limitBytes",VpnBudgetSettings.limitBytes(c)))
    .put("diagnostics",JSONObject().put("enabled",DiagnosticsPolicy.enabled(c)).put("detailed",DiagnosticsPolicy.detailed(c)))
+   .also{doc->val scope=MdmStore(c).read().researchScope;if(scope.mode!="vpn_only" || scope.packages.isNotEmpty())doc.put("researchScope",scope.json())}
  }
  internal fun snapshotRuntime(c:Context):JSONObject {
   val prefs=JSONObject();val identities=JSONObject()
@@ -123,7 +124,24 @@ internal object MdmConfiguration {
   mobile.Mobile.validateMDMConfiguration(desired.document.toString())
   val target=store(c)
   if(!hasLayer(c))target.initialize(snapshotLocal(c),snapshotRuntime(c))
-  target.apply(s.binding!!.id,desired,::compile)
+  val applied=target.apply(s.binding!!.id,desired,::compile)
+  repairResearchScope(c)
+  applied
+ }
+ internal fun repairResearchScope(c:Context)=synchronized(lock){
+  val mdm=MdmStore(c);val state=mdm.read();val binding=state.binding?:return@synchronized
+  val target=store(c);val revision=target.revision(binding.id)
+  if(revision<=mdm.document().optLong("research_scope_applied_revision"))return@synchronized
+  val raw=target.effective()?.optJSONObject("researchScope")
+  mdm.edit{j->
+   if(raw!=null){
+    val scope=ResearchScope.parse(raw)
+    val blocked=revision<=j.optLong("research_scope_revoked_revision",-1)
+    j.put("research_scope",(if(blocked || !ResearchSettings.directAllowed(mdm.read()))scope.vpnOnly() else scope).json())
+   }
+   j.put("research_scope_applied_revision",revision)
+  }
+  ResearchSettings.changed()
  }
  internal fun compile(doc:JSONObject,previous:JSONObject):JSONObject {
   val oldPrefs=previous.getJSONObject("preferences")
@@ -156,6 +174,13 @@ internal object MdmConfiguration {
  fun detach(c:Context)=synchronized(lock){
   if(!hasLayer(c))return@synchronized
   check(store(c).mode()!="external" || !LabVpnService.active){"Сначала остановите VPN с внешним конфигом"}
+  val wasExternal=store(c).mode()=="external"
   store(c).detach()
+  val mdm=MdmStore(c)
+  mdm.edit{j->
+   j.remove("research_scope_applied_revision");j.remove("research_scope_seen_revision")
+   if(wasExternal){val saved=ResearchScope.parse(store(c).effective()?.optJSONObject("researchScope"));j.put("research_scope",(if(ResearchSettings.directAllowed(mdm.read()))saved else saved.vpnOnly()).json())}
+  }
+  ResearchSettings.changed()
  }
 }

@@ -66,7 +66,13 @@ func (w *Web) researchRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /lab/research/settings", w.researchSettingsPost)
 }
 func researchQuery(v url.Values) (research.Query, error) {
-	q := research.Query{Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	q := research.Query{Route: v.Get("route"), ExitID: v.Get("exit"), Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	if q.Route != "" && q.Route != "vpn" && q.Route != "direct" && q.Route != "unknown" {
+		return q, fmt.Errorf("unknown route")
+	}
+	if len(q.ExitID) > 256 || strings.ContainsRune(q.ExitID, 0) {
+		return q, fmt.Errorf("invalid exit")
+	}
 	switch q.Origin {
 	case "", "legacy_unknown", "client", "server_gateway", "server_awg", "server_vless":
 	default:
@@ -353,6 +359,8 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 				source = "Старый формат"
 			}
 			links.Set("application", key)
+			links.Set("route", a.ExitRef.Normalized().Route)
+			links.Set("exit", a.ID)
 			if a.Origin == "" {
 				links.Set("origin", "legacy_unknown")
 			} else {

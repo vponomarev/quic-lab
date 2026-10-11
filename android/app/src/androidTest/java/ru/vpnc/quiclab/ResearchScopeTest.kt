@@ -7,6 +7,41 @@ import org.junit.Test
 import java.io.File
 
 class ResearchScopeTest {
+ @Test fun scopeScreenRendersWithoutChangingConsent(){
+  org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("research_ui")=="true")
+  val inst=InstrumentationRegistry.getInstrumentation();val c=inst.targetContext;val before=MdmStore(c).read()
+  inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity").use{android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()}
+  inst.runOnMainSync{c.startActivity(android.content.Intent(c,ResearchScopeActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))}
+  val deadline=android.os.SystemClock.elapsedRealtime()+10000
+  while(android.os.SystemClock.elapsedRealtime()<deadline && inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Охват исследования").isNullOrEmpty())android.os.SystemClock.sleep(100)
+  assertFalse("Research screen did not become visible",inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Охват исследования").isNullOrEmpty())
+  android.os.SystemClock.sleep(600) // Let the activity transition finish before visual inspection.
+  val screenshot=inst.uiAutomation.takeScreenshot()
+  java.io.File(c.cacheDir,"research-scope-ui.png").outputStream().use{out->screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out)}
+  screenshot.recycle()
+
+  assertEquals(before,MdmStore(c).read())
+ }
+
+ @Test fun initialSubscriptionReadsLatestState(){
+  var granted=true;var published=true
+  granted=false // revoke before the collector subscribes
+  val subscription=ResearchSettings.observeCurrent{published=granted}
+  try {assertFalse(published);granted=true;ResearchSettings.changed();assertTrue(published)}finally{subscription.close()}
+ }
+
+ @Test fun captureUnionDoesNotOverwriteVpnSelection(){
+  val vpn=setOf("app.vpn")
+  val extra=ResearchScope("vpn_plus_apps",setOf("app.direct"))
+  val selected=ResearchCapturePlan.build(1,vpn,extra)
+  assertEquals(setOf("app.vpn","app.direct"),selected.allowedApps)
+  assertEquals(vpn,selected.vpnApps)
+  assertNull(ResearchCapturePlan.build(1,vpn,ResearchScope("all_apps")).allowedApps)
+  val excluded=ResearchCapturePlan.build(2,setOf("app.direct","app.other"),extra)
+  assertEquals(setOf("app.other"),excluded.excludedApps)
+  assertTrue(ResearchCapturePlan.build(3,emptySet(),extra).allRoutes)
+  assertFalse(ResearchCapturePlan.build(3,emptySet(),ResearchScope()).allRoutes)
+ }
  @Test fun legacyRightsDoNotGrantDirectResearch(){
   assertFalse(MdmRights.parse(JSONObject().put("research",true)).researchDirect)
   assertTrue(MdmRights.parse(MdmRights(researchDirect=true).json()).researchDirect)

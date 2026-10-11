@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal enum class MdmRight { CONFIG,VPN,TELEMETRY,GEO,COORDINATES,LAN,RESEARCH }
+internal enum class MdmRight { CONFIG,VPN,TELEMETRY,GEO,COORDINATES,LAN,RESEARCH,RESEARCH_DIRECT }
 internal data class MdmInvitation(val endpoint:String,val token:String,val rights:MdmRights,val mode:String="current"){
  init{
   MdmBinding("",endpoint,0,rights,false)
@@ -127,7 +127,7 @@ internal class MdmController(
   if(!s.active || s.cleanupPending || s.localGeneration!=generation)return false
   return when(right){
    MdmRight.CONFIG->s.rights.config;MdmRight.VPN->s.rights.vpn;MdmRight.TELEMETRY->s.rights.telemetry
-   MdmRight.RESEARCH->s.rights.research;MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
+   MdmRight.RESEARCH->s.rights.research;MdmRight.RESEARCH_DIRECT->s.rights.researchDirect;MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
   }
  }
  internal fun poll(consume:(MdmState,MdmSyncResponse)->Unit):Boolean{
@@ -137,7 +137,7 @@ internal class MdmController(
   val events=store.document().optJSONArray("events")?:org.json.JSONArray()
   val sent=org.json.JSONArray();for(i in 0 until minOf(100,events.length()))sent.put(events.getJSONObject(i))
   val response=MdmSyncResponse.parse(send(b,"sync",
-   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,grantedRights=state.rights).json(),state.localGeneration,store.secret()).toString())
+   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,grantedRights=state.rights).json().also{if(!store.document().optBoolean("server_research_scope_v1"))it.optJSONObject("grantedRights")?.remove("researchDirect")},state.localGeneration,store.secret()).toString())
   synchronized(this){
    val latest=store.read()
    if(!latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
@@ -147,6 +147,7 @@ internal class MdmController(
     if(!permitted.active || permitted.cleanupPending || permitted.localGeneration!=state.localGeneration)return false
     val ids=(0 until sent.length()).map{sent.getJSONObject(it).getString("id")}.toSet()
     store.edit{j->val pending=j.optJSONArray("events")?:org.json.JSONArray();val keep=org.json.JSONArray();for(i in 0 until pending.length())if(pending.getJSONObject(i).optString("id") !in ids)keep.put(pending.getJSONObject(i));j.put("events",keep)}
+    store.edit{it.put("server_research_scope_v1",response.researchScopeSupported)}
     consume(permitted,response)
    }
   }

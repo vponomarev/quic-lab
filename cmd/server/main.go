@@ -207,6 +207,7 @@ func main() {
 			log.Error("mdm_store", "error", err)
 			os.Exit(1)
 		}
+		researchReceiver.DirectAllowed = ui.MDM.ResearchDirectAllowed
 		ui.StartMDMMaintenance(ctx)
 		ui.StartDiagnosticsMaintenance(ctx)
 		if cfg.Capture != nil {

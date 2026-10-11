@@ -54,6 +54,9 @@ func (s *Store) SetDesired(id string, expected int64, mode string, document json
 	if !ok {
 		return ConfigRevision{}, ErrUnauthorized
 	}
+	if !allowsResearchScope(b, document) {
+		return ConfigRevision{}, ErrUnauthorized
+	}
 	revision := int64(0)
 	if b.Desired != nil {
 		revision = b.Desired.Revision
@@ -183,7 +186,7 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 			return SyncResponse{}, e
 		}
 	}
-	out := SyncResponse{Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
+	out := SyncResponse{Capabilities: []string{"research_scope_v1"}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
 	if b.Desired != nil && b.Desired.Revision > req.AppliedRevision {
 		r := *b.Desired
 		r.Document = append(json.RawMessage(nil), r.Document...)

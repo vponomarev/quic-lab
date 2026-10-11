@@ -38,14 +38,18 @@ class MdmWireTest {
     }
     override fun close(){transport?.close()}
    }},{MdmConfiguration.detach(c)})
-   controller.enroll(MdmInvitation(endpoint,args.getString("mdm_token")!!,MdmRights(config=true,vpn=true)),MdmRights(config=true,vpn=true))
+   val rights=MdmRights(config=true,vpn=true,research=args.getString("mdm_research_scope")=="true",researchDirect=args.getString("mdm_research_scope")=="true")
+   controller.enroll(MdmInvitation(endpoint,args.getString("mdm_token")!!,rights),rights)
    assertTrue(controller.poll{_,_->}) // Deliver granted rights before sending report.
+   assertTrue(controller.poll{_,_->}) // New-server capability then direct right delivery.
    assertTrue(controller.report{s->MdmDeviceReport.snapshot(c,s).put("name","Wire test")})
    var desired:MdmConfigRevision?=null
    assertTrue(controller.poll{_,response->desired=response.desiredConfig})
    assertNotNull("Server did not create desired config from report",desired)
    val port=object:MdmVpnPort{override fun active()=false;override fun stop(){};override fun start()="stopped"}
-   val result=MdmApplyCoordinator(c,port).apply(store.read(),desired!!)
+   MdmApplyCoordinatorTest.suspendRealVpnForIsolatedPorts()
+   val result=try{MdmApplyCoordinator(c,port).apply(store.read(),desired!!)}finally{MdmApplyCoordinatorTest.restoreRealVpn()}
+   if(args.getString("mdm_research_scope")=="true")assertEquals("all_apps",store.read().researchScope.mode)
    assertTrue(result.errorCode,result.configurationApplied)
    assertEquals("org.example.selected",MdmConfiguration.snapshotLocal(c).getJSONArray("globalApps").getString(0))
    controller.report{s->MdmDeviceReport.snapshot(c,s).put("name","Wire test")}

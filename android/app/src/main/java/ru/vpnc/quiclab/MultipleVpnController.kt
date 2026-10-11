@@ -25,6 +25,7 @@ internal class MultipleVpnController(
         dashboardTokens[id]=token
         createSession(currentProfiles.getValue(id), token)
     }
+    private var researchScopeSubscription:AutoCloseable?=null
     private val networks = mutableMapOf<String, Network>()
     private val starting = mutableSetOf<String>()
     private val paused = mutableSetOf<String>()
@@ -77,6 +78,8 @@ internal class MultipleVpnController(
         MultipleVpnState.reset(plan.profiles)
         try {
             router.setTrafficBudget(budget)
+            researchScopeSubscription=ResearchSettings.observeCurrent {router.setResearchScope(ResearchBridge.scopeJSON(service))}
+            router.setResearch(ResearchBridge.observer(service,direct=true))
             dnsPolicy.attach(router)
             router.attach(fd.toLong())
             plan.profiles.forEach { exits.start(it.id) }
@@ -222,6 +225,7 @@ internal class MultipleVpnController(
     fun close() {
         if (closed) return
         closed = true
+        researchScopeSubscription?.close();researchScopeSubscription=null
         dnsPolicy.close()
         plan.profiles.forEach {
             VpnDashboardEvents.stopExit(it.id,dashboardTokens[it.id] ?: 0L)

@@ -16,6 +16,7 @@ class LabVpnService : VpnService() {
     private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
     private var singleRouter: mobile.MultiRouter? = null
+    private var researchScopeSubscription:AutoCloseable?=null
     private var singleRouterToken: Any? = null
     private var dnsPolicy: VpnDnsPolicy? = null
     private var tun: ParcelFileDescriptor? = null
@@ -57,6 +58,7 @@ class LabVpnService : VpnService() {
             }
             return restartPolicy()
         }
+        if(intent?.action=="research-reconfigure" && active)shutdown()
         if (session != null || multiple != null) return restartPolicy()
         if(intent==null && !budgetRun.shouldResume())return restartPolicy()
         Diagnostics.event("vpn", JSONObject().put("event", if (intent == null) "system_restart" else "start_requested"))
@@ -108,6 +110,10 @@ class LabVpnService : VpnService() {
             exitEnabled = mode != 3
             exitState = if (exitEnabled) "Ожидаем туннель" else "Не проверяется в режиме подсетей"
             val apps = VpnProfiles.apps(this).filter { it != packageName }
+            val researchScope=ResearchSettings.effectiveScope(this)
+            val expanded=researchScope.mode!="vpn_only"
+            if(expanded)require(prefs.getString("transport","quic") in setOf("quic","https")){"Расширенный анализ доступен для QUIC/HTTPS"}
+            val capture=ResearchCapturePlan.build(mode,apps.toSet(),researchScope)
             val builder =
                 Builder()
                     .setSession("QUIC Lab VPN")
@@ -115,22 +121,20 @@ class LabVpnService : VpnService() {
                     .addAddress("10.254.254.1", 32)
                     .setBlocking(true)
                     .setConfigureIntent(open)
-            if (mode == 3)
+            if (!capture.allRoutes)
                 VpnRoutes.parse(prefs.getString("routes", "")!!).forEach {
                     builder.addRoute(it.first, it.second)
                 }
             else {
                 builder.addRoute("0.0.0.0", 0)
             }
-            when (mode) {
-                1 -> {
-                    require(apps.isNotEmpty()) { "Выберите приложения" }
-                    apps.forEach { builder.addAllowedApplication(it) }
-                }
-                2 -> {
-                    (apps + packageName).forEach { builder.addDisallowedApplication(it) }
-                }
-                else -> builder.addDisallowedApplication(packageName)
+            if(capture.allowedApps!=null) {
+                require(apps.isNotEmpty()) {"Выберите приложения"}
+                val installed=capture.allowedApps.filter{it!=packageName && runCatching{packageManager.getApplicationInfo(it,0)}.isSuccess}
+                require(installed.isNotEmpty()) {"Выбранные приложения не установлены"}
+                installed.forEach {builder.addAllowedApplication(it)}
+            } else (capture.excludedApps+packageName).forEach {pkg->
+                if(runCatching{packageManager.getApplicationInfo(pkg,0)}.isSuccess)builder.addDisallowedApplication(pkg)
             }
             // Do not allowFamily(AF_INET6) or add IPv6 addresses: VpnService blocks the
             // unconfigured family for captured apps; the IPv4 router also rejects IPv6.
@@ -163,8 +167,8 @@ class LabVpnService : VpnService() {
             val routerToken=Any()
             singleRouterToken=routerToken
             val router=mobile.Mobile.createMultiRouterWithDNS(
-                org.json.JSONArray().put(JSONObject().put("id",exitId).put("mode","all")).toString(),
-                dnsOwner.snapshot(null).toString(), null,
+                org.json.JSONArray().put(if(expanded)ResearchBridge.rule(this,exitId,mode,apps.toSet(),prefs.getString("routes","").orEmpty()) else JSONObject().put("id",exitId).put("mode","all")).toString(),
+                dnsOwner.snapshot(null).toString(), ResearchBridge.flowOwner(this),
                 object:mobile.SocketBinder {override fun bind(fd:Long) {check(protect(fd.toInt())) {"Cannot protect direct socket"}}},
                 object:mobile.EventSink {
                     override fun onEvent(eventJSON:String) {
@@ -178,6 +182,8 @@ class LabVpnService : VpnService() {
                 },
             )
             singleRouter=router
+            researchScopeSubscription=ResearchSettings.observeCurrent {router.setResearchScope(ResearchBridge.scopeJSON(this))}
+            router.setResearch(ResearchBridge.observer(this,direct=true))
             router.setTrafficBudget(runBudget)
             dnsOwner.attach(router)
             router.attach(tun!!.fd.toLong())
@@ -296,6 +302,7 @@ class LabVpnService : VpnService() {
         multiple = null
         runCatching { dnsPolicy?.close() }
         dnsPolicy = null
+        researchScopeSubscription?.close();researchScopeSubscription=null
         singleRouterToken=null
         val closingRouter=singleRouter
         singleRouter=null

@@ -73,7 +73,7 @@ func TestServerResearchConsentAndCounters(t *testing.T) {
 	_ = json.Unmarshal(records[0].Data, &d)
 	first := records[0]
 	mu.Unlock()
-	if first.Origin != "server_gateway" || d.BytesUp != 3 || d.BytesDown != 5 || d.ClientFlow == nil || d.ClientFlow.DeviceID != "device" || d.ClientFlow.FlowID != 7 || d.App.Attribution != "unknown" {
+	if d.Route != "vpn" || first.Origin != "server_gateway" || d.BytesUp != 3 || d.BytesDown != 5 || d.ClientFlow == nil || d.ClientFlow.DeviceID != "device" || d.ClientFlow.FlowID != 7 || d.App.Attribution != "unknown" {
 		t.Fatalf("%+v %+v", first, d)
 	}
 	r.Receive(context.Background(), tls.ConnectionState{}, ResearchBatch{Session: ref.Session, Generation: 4, Enabled: true})

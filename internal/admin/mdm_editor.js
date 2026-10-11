@@ -20,6 +20,17 @@ field(grid,'Выход для DNS',doc.dns.profileId,v=>doc.dns.profileId=v,'tex
 field(grid,'Общий лимит LTE, МиБ (0 — без лимита)',doc.budget.limitBytes/1048576,v=>doc.budget.limitBytes=Math.round(v*1048576),'number');
 field(grid,'Диагностические журналы',doc.diagnostics.enabled,v=>doc.diagnostics.enabled=v,'checkbox');
 field(grid,'Подробные журналы',doc.diagnostics.detailed,v=>doc.diagnostics.detailed=v,'checkbox');
+if(!temporary && state?.report?.capabilities?.includes('research_scope_v1')){
+ const current=doc.researchScope||{mode:'vpn_only',packages:[]};
+ const scope=el('fieldset');scope.append(el('legend','Клиентский анализ трафика'));host.append(scope);
+ const effective=state.report?.researchScopeStatus;if(effective)scope.append(el('p','Желаемый охват: '+effective.desired+' · фактический: '+effective.effective+(effective.reason?' · '+effective.reason:'')));
+ const grant=!!state.binding.grantedRights.research && !!state.binding.grantedRights.researchDirect;
+ scope.append(el('p',grant?'Согласие на анализ прямого трафика получено.':'Нет отдельного согласия на прямой трафик. Доступен только VPN.'));
+ field(scope,'Охват',current.mode,v=>{doc.researchScope={...current,mode:v};current.mode=v;},'text',grant?[['vpn_only','Только VPN'],['vpn_plus_apps','VPN + выбранные приложения'],['all_apps','Все приложения']]:[['vpn_only','Только VPN']]);
+ field(scope,'Дополнительные приложения (package ID через запятую)',current.packages.join(', '),v=>{current.packages=[...new Set(v.split(',').map(x=>x.trim()).filter(Boolean))];doc.researchScope={...current};});
+ scope.append(el('p','Список независим от VPN-маршрутизации. Только QUIC/HTTPS; применение может переподключить VPN.'));
+}
+
 if(doc.reserve){const reserve=el('fieldset');reserve.append(el('legend','Резервные сети'));host.append(reserve);for(const[k,label]of Object.entries({wifi_on:'Wi-Fi при включённом экране',wifi_off:'Wi-Fi при выключенном экране',cell_on:'LTE при включённом экране',cell_off:'LTE при выключенном экране',metered_wifi:'Разрешить проверки лимитного Wi-Fi'}))field(reserve,label,doc.reserve[k],v=>doc.reserve[k]=v,'checkbox');}
 for(const p of doc.profiles){const box=el('div');box.className='profile';host.append(box);field(box,'Название подключения',p.name,v=>{p.name=v;});const s=p.settings;
 field(box,'Включено в набор выходов',doc.enabledProfileIds.includes(p.id),v=>{doc.enabledProfileIds=doc.enabledProfileIds.filter(x=>x!==p.id);if(v)doc.enabledProfileIds.push(p.id);},'checkbox');

@@ -26,19 +26,20 @@ type auditEntry struct {
 	ReceivedAt time.Time
 }
 type bindingState struct {
-	Report           *DeviceReport
-	ReportHash       string
-	ReceivedAt       time.Time
-	Requests         map[string]requestRecord
-	UserID           string
-	TelemetryDropped int64
-	Telemetry        TelemetryPolicy
-	Binding          Binding
-	SecretHash       string
-	Desired          *ConfigRevision
-	Commands         []Command
-	Audit            []auditEntry
-	Seen             map[string]time.Time
+	ResearchDeviceIDs []string
+	Report            *DeviceReport
+	ReportHash        string
+	ReceivedAt        time.Time
+	Requests          map[string]requestRecord
+	UserID            string
+	TelemetryDropped  int64
+	Telemetry         TelemetryPolicy
+	Binding           Binding
+	SecretHash        string
+	Desired           *ConfigRevision
+	Commands          []Command
+	Audit             []auditEntry
+	Seen              map[string]time.Time
 }
 type snapshot struct {
 	Version     int

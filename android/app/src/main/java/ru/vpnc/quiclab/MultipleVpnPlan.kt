@@ -31,6 +31,7 @@ internal data class MultipleVpnPlan(
             val profiles =
                 ps.map { profile ->
                     val p = VpnProfiles.preferences(c, profile.id)
+                    if(ResearchSettings.effectiveScope(c).mode!="vpn_only")require(p.getString("transport","quic") in setOf("quic","https")){"Расширенный анализ доступен только для QUIC/HTTPS"}
                     val mode = p.getInt("mode", 0)
                     val rule =
                         JSONObject()

@@ -262,10 +262,13 @@ func (f *observedConnection) flush(closed bool) {
 		if f.network == "udp4" {
 			proto = "udp"
 		}
-		data := research.FlowData{UserID: f.user, App: research.App{Attribution: "unknown"}, Protocol: proto, Destination: f.destination, ClientFlow: &ref, ObservedFrom: from, ObservedTo: now, BytesUp: up, BytesDown: down, PacketsUp: pu, PacketsDown: pd, CounterKind: "delta", MeasurementLevel: "exit_socket_payload", Incomplete: true, Reason: "observation_window_not_full_connection"}
+		data := research.FlowData{ExitRef: research.ExitRef{Route: "vpn", Type: "unknown"}, UserID: f.user, App: research.App{Attribution: "unknown"}, Protocol: proto, Destination: f.destination, ClientFlow: &ref, ObservedFrom: from, ObservedTo: now, BytesUp: up, BytesDown: down, PacketsUp: pu, PacketsDown: pd, CounterKind: "delta", MeasurementLevel: "exit_socket_payload", Incomplete: true, Reason: "observation_window_not_full_connection"}
 		if app, ok := r.apps[appKey(ref)]; ok && app.generation == generation && now.Sub(app.at) <= 2*time.Minute && app.protocol == proto && app.destination == f.destination {
 			data.App = app.app
 			data.AppSource = "client"
+			if app.exit.Route == "vpn" {
+				data.ExitRef = app.exit
+			}
 		}
 		kind := "flow_delta"
 		if closed {
@@ -279,6 +282,9 @@ func (f *observedConnection) flush(closed bool) {
 			}
 			fields := m.Fields()
 			fields["user_id"] = f.user
+			fields["route"] = data.Route
+			fields["exit_id"] = data.ID
+			fields["exit_type"] = data.Type
 			fields["app"] = data.App
 			fields["app_source"] = data.AppSource
 			fields["protocol"] = "udp"
@@ -313,6 +319,7 @@ func (f *observedConnection) emitLocked(kind string, data any, at time.Time, gen
 }
 
 type observedApp struct {
+	exit                  research.ExitRef
 	generation            uint64
 	at                    time.Time
 	app                   research.App
@@ -337,6 +344,7 @@ func (r *ResearchReceiver) rememberAppLocked(rec research.Record) {
 		if json.Unmarshal(rec.Data, &d.App) != nil {
 			return
 		}
+		d.ExitRef = previous.exit
 		d.Protocol = previous.protocol
 		d.Destination = previous.destination
 	} else {
@@ -361,7 +369,7 @@ func (r *ResearchReceiver) rememberAppLocked(rec research.Record) {
 			return
 		}
 	}
-	r.apps[key] = observedApp{rec.Generation, now, d.App, d.Protocol, d.Destination}
+	r.apps[key] = observedApp{d.ExitRef, rec.Generation, now, d.App, d.Protocol, d.Destination}
 }
 
 type observedIdentity struct{ user, device string }

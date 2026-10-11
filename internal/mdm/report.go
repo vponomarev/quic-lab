@@ -14,17 +14,24 @@ type AppInventory struct {
 	Hash     string     `json:"hash"`
 	Complete bool       `json:"complete"`
 }
+type ResearchScopeStatus struct {
+	Desired   string `json:"desired"`
+	Effective string `json:"effective"`
+	Reason    string `json:"reason,omitempty"`
+}
 type DeviceReport struct {
-	Version          int             `json:"version"`
-	Sequence         int64           `json:"sequence"`
-	ConfigGeneration int64           `json:"configGeneration"`
-	Capabilities     []string        `json:"capabilities"`
-	Name             string          `json:"name"`
-	AppVersion       string          `json:"appVersion"`
-	VPNState         string          `json:"vpnState,omitempty"`
-	AppliedRevision  int64           `json:"appliedRevision"`
-	Configuration    json.RawMessage `json:"configuration,omitempty"`
-	Inventory        *AppInventory   `json:"inventory,omitempty"`
+	ResearchDeviceIDs []string             `json:"researchDeviceIds,omitempty"`
+	ResearchScope     *ResearchScopeStatus `json:"researchScopeStatus,omitempty"`
+	Version           int                  `json:"version"`
+	Sequence          int64                `json:"sequence"`
+	ConfigGeneration  int64                `json:"configGeneration"`
+	Capabilities      []string             `json:"capabilities"`
+	Name              string               `json:"name"`
+	AppVersion        string               `json:"appVersion"`
+	VPNState          string               `json:"vpnState,omitempty"`
+	AppliedRevision   int64                `json:"appliedRevision"`
+	Configuration     json.RawMessage      `json:"configuration,omitempty"`
+	Inventory         *AppInventory        `json:"inventory,omitempty"`
 }
 type DeviceState struct {
 	Binding    Binding         `json:"binding"`
@@ -53,6 +60,20 @@ func supported(b bindingState) bool {
 	return false
 }
 func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) error {
+	if len(r.ResearchDeviceIDs) > 256 {
+		return ErrInvalid
+	}
+	for _, id := range r.ResearchDeviceIDs {
+		if !displayName(id, 128) {
+			return ErrInvalid
+		}
+	}
+	if r.ResearchScope != nil {
+		x := r.ResearchScope
+		if !oneOf(x.Desired, "vpn_only", "vpn_plus_apps", "all_apps") || !oneOf(x.Effective, "vpn_only", "vpn_plus_apps", "all_apps") || len(x.Reason) > 64 {
+			return ErrInvalid
+		}
+	}
 	raw, e := json.Marshal(r)
 	if e != nil || len(raw) > 1<<20 || r.Version != 1 || r.Sequence < 1 || r.ConfigGeneration < 0 || r.AppliedRevision < 0 || !displayName(r.Name, 100) || !displayName(r.AppVersion, 100) || len(r.Capabilities) > 16 {
 		return ErrInvalid
@@ -130,6 +151,18 @@ func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) er
 	copied, _ := json.Marshal(r)
 	var own DeviceReport
 	_ = json.Unmarshal(copied, &own)
+	if len(r.ResearchDeviceIDs) > 0 {
+		seen := map[string]bool{}
+		for _, id := range b.ResearchDeviceIDs {
+			seen[id] = true
+		}
+		for _, id := range r.ResearchDeviceIDs {
+			if !seen[id] && len(b.ResearchDeviceIDs) < 256 {
+				b.ResearchDeviceIDs = append(b.ResearchDeviceIDs, id)
+				seen[id] = true
+			}
+		}
+	}
 	b.Report = &own
 	b.ReportHash = hash
 	b.ReceivedAt = now
@@ -177,6 +210,9 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 		return ConfigRevision{}, ErrPaused
 	}
 	if !b.Binding.GrantedRights.Config || !supported(b) {
+		return ConfigRevision{}, ErrUnauthorized
+	}
+	if !allowsResearchScope(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	raw, _ := json.Marshal([]any{revision, generation, mode, json.RawMessage(document)})
@@ -276,4 +312,45 @@ func (s *Store) QueueVPNOnce(id, kind, requestID string, now time.Time) (Command
 	b.Audit = append(b.Audit, auditEntry{Event: Event{ID: randomID(), Actor: "admin", Kind: kind, CommandID: c.ID, OccurredAt: now}, ReceivedAt: now})
 	n.Bindings[id] = b
 	return c, s.save(n)
+}
+
+func allowsResearchScope(b bindingState, raw json.RawMessage) bool {
+	var d ConfigurationDocument
+	if json.Unmarshal(raw, &d) != nil {
+		return false
+	}
+	if d.ResearchScope == nil {
+		return true
+	}
+	capable := false
+	if b.Report != nil {
+		for _, c := range b.Report.Capabilities {
+			capable = capable || c == "research_scope_v1"
+		}
+	}
+	if !capable {
+		return false
+	}
+	return d.ResearchScope.Mode == "vpn_only" || (b.Binding.GrantedRights.Research && b.Binding.GrantedRights.ResearchDirect)
+}
+
+// The MDM report links local VPN registrations to the authenticated MDM binding.
+// Unknown devices remain standalone; they still require the explicit wire grant.
+func (s *Store) ResearchDirectAllowed(user, device string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failed {
+		return false
+	}
+	for _, b := range s.state.Bindings {
+		if b.UserID != user || b.Report == nil {
+			continue
+		}
+		for _, id := range b.ResearchDeviceIDs {
+			if id == device && (!b.Binding.Active || !b.Binding.GrantedRights.Research || !b.Binding.GrantedRights.ResearchDirect) {
+				return false
+			}
+		}
+	}
+	return true
 }

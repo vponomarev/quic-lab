@@ -20,3 +20,14 @@ internal data class ResearchScope(val mode:String="vpn_only",val packages:Set<St
   }
  }
 }
+
+internal data class ResearchCapturePlan(val allowedApps:Set<String>?,val excludedApps:Set<String>,val vpnApps:Set<String>,val allRoutes:Boolean) {
+ companion object {
+  fun build(vpnMode:Int,vpnApps:Set<String>,scope:ResearchScope):ResearchCapturePlan {
+   val expanded=scope.mode!="vpn_only"
+   val allowed=if(vpnMode==1 && scope.mode!="all_apps")vpnApps+(if(expanded)scope.packages else emptySet()) else null
+   val excluded=if(vpnMode==2)when(scope.mode){"all_apps"->emptySet();"vpn_plus_apps"->vpnApps-scope.packages;else->vpnApps} else emptySet()
+   return ResearchCapturePlan(allowed,excluded,vpnApps.toSet(),vpnMode!=3 || expanded)
+  }
+ }
+}

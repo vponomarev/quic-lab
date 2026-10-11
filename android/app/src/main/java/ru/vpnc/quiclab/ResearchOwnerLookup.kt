@@ -22,7 +22,12 @@ internal class ResearchOwnerLookup(context:Context) {
    val uid=cm.getConnectionOwnerUid(protocol,
     InetSocketAddress(InetAddresses.parseNumericAddress(local),localPort),
     InetSocketAddress(InetAddresses.parseNumericAddress(remote),remotePort))
-   if(uid<0)return unknown()
+   lookupUID(uid)
+  }catch(_:Exception){unknown()}
+ }
+ fun lookupUID(uid:Int):String {
+  if(uid<0)return unknown()
+  return try {
    val now=SystemClock.elapsedRealtime()
    synchronized(cache){cache[uid]?.takeIf{now-it.at<30_000}?.let{return it.json}}
    val packages=pm.getPackagesForUid(uid)?.sorted()?.take(32).orEmpty()

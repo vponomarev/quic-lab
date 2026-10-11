@@ -15,13 +15,14 @@ var (
 )
 
 type Rights struct {
-	Config      bool   `json:"config"`
-	VPN         bool   `json:"vpn"`
-	Telemetry   bool   `json:"telemetry"`
-	Research    bool   `json:"research"`
-	Geo         bool   `json:"geo"`
-	Coordinates bool   `json:"coordinates"`
-	LANMode     string `json:"lanMode"`
+	ResearchDirect bool   `json:"researchDirect,omitempty"`
+	Config         bool   `json:"config"`
+	VPN            bool   `json:"vpn"`
+	Telemetry      bool   `json:"telemetry"`
+	Research       bool   `json:"research"`
+	Geo            bool   `json:"geo"`
+	Coordinates    bool   `json:"coordinates"`
+	LANMode        string `json:"lanMode"`
 }
 type Binding struct {
 	ID              string `json:"id"`
@@ -74,6 +75,7 @@ type SyncRequest struct {
 	GrantedRights   *Rights `json:"grantedRights,omitempty"`
 }
 type SyncResponse struct {
+	Capabilities  []string        `json:"capabilities,omitempty"`
 	Telemetry     TelemetryPolicy `json:"telemetry"`
 	Version       int             `json:"version"`
 	Epoch         int64           `json:"epoch"`

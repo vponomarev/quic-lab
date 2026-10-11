@@ -25,7 +25,7 @@ internal class MdmApplyCoordinator(private val context:Context,private val vpn:M
     check(desired.expectedGeneration<0 || desired.expectedGeneration==generation || store.document().optBoolean("resume_config")){"generation_conflict"}
     val operation=JSONObject().put("binding",binding).put("revision",desired.revision).put("phase","prepared")
      .put("wasRunning",vpn.active()).put("userStop",store.document().optLong("user_stop"))
-    store.edit{it.put("apply_operation",operation)};checkpoint("prepared")
+    store.edit{it.put("apply_operation",operation);it.put("research_scope_seen_revision",maxOf(it.optLong("research_scope_seen_revision"),desired.revision))};checkpoint("prepared")
     if(vpn.active())vpn.stop()
     check(allowed(state)){"permission_denied"}
     MdmConfiguration.apply(context,desired,state.localGeneration);checkpoint("committed")
@@ -42,7 +42,7 @@ internal class MdmApplyCoordinator(private val context:Context,private val vpn:M
    }
   }
  }
- private fun ack(revision:Long){store.edit{it.put("appliedRevision",revision);it.remove("resume_config")}}
+ private fun ack(revision:Long){MdmConfiguration.repairResearchScope(context);store.edit{it.put("appliedRevision",revision);it.remove("resume_config")}}
  private fun restart(op:JSONObject):String {
   if(op.optBoolean("wasRunning") && store.document().optLong("user_stop")==op.optLong("userStop"))return runCatching{vpn.start()}.getOrDefault("error")
   return if(vpn.active())"running" else "stopped"

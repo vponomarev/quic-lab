@@ -90,3 +90,30 @@ func TestResearchExitFilters(t *testing.T) {
 		t.Fatal("legacy classification")
 	}
 }
+
+func TestSummaryLateExitAttributionKeepsCounters(t *testing.T) {
+	opts := StoreOptions{Dir: t.TempDir(), MaxBytes: 1 << 20}
+	s, e := OpenStore(opts)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i, exit := range []ExitRef{{Route: "vpn", Type: "unknown"}, {Route: "vpn", ID: "home", Type: "quic"}} {
+		data, _ := json.Marshal(FlowData{ExitRef: exit, CounterKind: "delta", BytesUp: 10, MeasurementLevel: "exit_socket_payload", App: App{Attribution: "unknown"}})
+		if !s.TryAppend(Record{SchemaVersion: 1, Origin: "server_gateway", Type: "flow_delta", ID: fmt.Sprint(i), At: time.Now(), Flow: FlowKey{SessionID: "s", FlowID: 1}, Data: data}) {
+			t.Fatal("append")
+		}
+	}
+	s.Close()
+	s, e = OpenStore(opts)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	summary, e := s.ApplicationSummary(context.Background(), Query{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if summary.Partial || len(summary.Applications) != 1 || summary.Applications[0].BytesUp != 20 || summary.Applications[0].ID != "home" {
+		t.Fatalf("late exit lost data: %+v", summary)
+	}
+}

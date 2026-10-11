@@ -89,7 +89,7 @@ internal class MdmStore(private val file:File,private val alias:String="quic-lab
   val after=state(j)
   if(ResearchSettings.directAllowed(before) && !ResearchSettings.directAllowed(after)) {
    j.put("research_scope",after.researchScope.vpnOnly().json())
-   j.put("research_scope_revoked_revision",maxOf(j.optLong("research_scope_revoked_revision"),j.optLong("appliedRevision")))
+   j.put("research_scope_revoked_revision",maxOf(j.optLong("research_scope_revoked_revision"),j.optLong("appliedRevision"),j.optLong("research_scope_seen_revision")))
   }
   val result=state(j);save(j);result
  }

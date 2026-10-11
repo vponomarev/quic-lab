@@ -15,7 +15,7 @@ func (f *researchFlow) dnsPacket(packet []byte, upstream bool) {
 	c := f.collector
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.active || c.stopped || f.closed {
+	if !c.active || c.stopped || f.closed || !f.recording || (c.eligible != nil && !c.eligible(f)) {
 		return
 	}
 	job := researchDNSJob{flow: f, generation: c.generation, packet: append([]byte(nil), packet...), upstream: upstream, at: time.Now().UTC()}
@@ -27,7 +27,7 @@ func (f *researchFlow) dnsPacket(packet []byte, upstream bool) {
 }
 func (c *researchCollector) recordDNS(job researchDNSJob) {
 	c.mu.Lock()
-	valid := c.active && !c.stopped && c.generation == job.generation
+	valid := c.active && !c.stopped && c.generation == job.generation && job.flow.recording && (c.eligible == nil || c.eligible(job.flow))
 	c.mu.Unlock()
 	if !valid {
 		return
@@ -42,9 +42,12 @@ func (c *researchCollector) recordDNS(job researchDNSJob) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.active || c.stopped || c.generation != job.generation {
+	if !c.active || c.stopped || c.generation != job.generation || !job.flow.recording || (c.eligible != nil && !c.eligible(job.flow)) {
 		return
 	}
+	data["route"] = job.flow.exit.Route
+	data["exit_id"] = job.flow.exit.ID
+	data["exit_type"] = job.flow.exit.Type
 	data["app"] = job.flow.app
 	data["protocol"] = "udp"
 	data["source"] = net.JoinHostPort(job.flow.local, strconv.FormatInt(job.flow.localPort, 10))

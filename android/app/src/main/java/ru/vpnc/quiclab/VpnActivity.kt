@@ -123,6 +123,7 @@ class VpnActivity:Activity() {
    }
   }
   card.addView(research);card.addView(ui.text(ResearchSettings.explanation))
+  ui.add(card,ui.button("Охват исследования"){startActivity(Intent(this,ResearchScopeActivity::class.java))})
   if(managed)card.addView(ui.text("Согласие задаётся в правах MDM. Сервер управляет сбором отдельно от этого разрешения."))
   ui.add(card,ui.button("Импорт и экспорт настроек"){startActivity(Intent(this,ConfigurationTransferActivity::class.java))})
   ui.add(card,ui.button("Временный WEB-редактор"){startActivity(Intent(this,TemporaryEditorActivity::class.java))})

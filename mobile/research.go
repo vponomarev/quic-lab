@@ -18,6 +18,7 @@ import (
 // ResearchObserver is explicit device consent plus optional Android flow ownership.
 // Owner runs on a bounded worker, never on the forwarding goroutine.
 type ResearchObserver interface {
+	OwnerForUID(uid int64) string
 	Allowed() bool
 	Owner(protocol int64, local string, localPort int64, remote string, remotePort int64) string
 }
@@ -48,6 +49,9 @@ type researchDNSJob struct {
 	at         time.Time
 }
 type researchCollector struct {
+	exit                                    research.ExitRef
+	eligible                                func(*researchFlow) bool
+	lookupUID                               FlowOwner
 	mu                                      sync.Mutex
 	observer                                ResearchObserver
 	send                                    researchExchange
@@ -72,6 +76,9 @@ type researchCollector struct {
 	wake                 chan struct{}
 }
 type researchFlow struct {
+	exit                             research.ExitRef
+	uid                              int64
+	recording                        bool
 	collector                        *researchCollector
 	id                               uint64
 	protocol                         int64
@@ -108,6 +115,9 @@ func (g *Gateway) SetResearch(observer ResearchObserver) {
 	g.research = nil
 	if observer != nil && g.direct == nil && (g.cfg.Transport == "quic" || g.cfg.Transport == "https" || g.runtimeBond != nil) {
 		g.research = newResearchCollector(observer, g.exchangeResearch)
+		if g.research != nil {
+			g.research.exit = g.researchExit
+		}
 	}
 	current := g.research
 	g.mu.Unlock()
@@ -189,8 +199,8 @@ func (c *researchCollector) changed() {
 	changed := !c.stopped && allowed != c.consent
 	if changed {
 		c.consent = allowed
-		c.generation++
 		c.disableLocked()
+		c.generation++
 		if c.requestCancel != nil {
 			c.requestCancel()
 		}
@@ -207,8 +217,8 @@ func (c *researchCollector) reset() {
 		return
 	}
 	c.mu.Lock()
-	c.generation++
 	c.disableLocked()
+	c.generation++
 	if c.requestCancel != nil {
 		c.requestCancel()
 	}
@@ -240,11 +250,30 @@ func (c *researchCollector) collecting() bool {
 	return c.active && !c.stopped
 }
 func (c *researchCollector) disableLocked() {
+	// Direct history was collected lawfully. Freeze counters before ending the
+	// observation interval; leave the bounded queue available for historical delivery.
+	if c.exit.Route == "direct" && c.active && !c.stopped {
+		eligible := c.eligible
+		c.eligible = nil
+		now := time.Now().UTC()
+		for _, f := range c.flows {
+			if f.recording {
+				c.flowRecordLocked(f, "flow_delta", now)
+			}
+		}
+		for _, f := range c.closedFlows {
+			c.flowRecordLocked(f, "flow_close", f.closedAt)
+		}
+		c.eligible = eligible
+	}
 	c.active = false
-	c.queue = nil
-	c.queueBytes = 0
+	if c.exit.Route != "direct" || c.stopped {
+		c.queue = nil
+		c.queueBytes = 0
+	}
 	clear(c.closedFlows)
 	for _, f := range c.flows {
+		f.recording = false
 		f.up = 0
 		f.down = 0
 		f.packetsUp = 0
@@ -286,16 +315,16 @@ func (c *researchCollector) sync(now time.Time) {
 	default:
 	}
 	c.mu.Lock()
-	if c.stopped || (!c.consent && !c.announced) {
+	if c.stopped || (!c.consent && !c.announced && len(c.queue) == 0) {
 		c.mu.Unlock()
 		return
 	}
 	generation := c.generation
-	batch := gateway.ResearchBatch{Session: c.session, Generation: generation, Enabled: c.consent}
+	batch := gateway.ResearchBatch{DirectEnabled: c.consent && c.exit.Route == "direct", Session: c.session, Generation: generation, Enabled: c.consent}
 	if batch.Enabled {
 		c.announced = true
 	}
-	if c.active {
+	if c.active || (c.exit.Route == "direct" && len(c.queue) > 0) {
 		if c.dropped > 0 {
 			n := c.dropped
 			c.dropped = 0
@@ -312,6 +341,9 @@ func (c *researchCollector) sync(now time.Time) {
 				break
 			}
 			batch.Records = append(batch.Records, next.record)
+			if next.record.Generation != generation || !batch.Enabled {
+				batch.Historical = true
+			}
 			size += next.size
 			c.queueBytes -= next.size
 			c.queue[0] = researchQueued{}
@@ -333,8 +365,12 @@ func (c *researchCollector) sync(now time.Time) {
 	if !batch.Enabled && err == nil {
 		c.announced = false
 	}
-	if err != nil || !reply.Allowed || !c.consent {
-		c.dropped += uint64(len(batch.Records) + len(c.queue))
+	if err != nil || !reply.Allowed || !c.consent || (c.exit.Route == "direct" && reply.DirectObservationVersion != 1) {
+		lost := len(batch.Records) - max(0, reply.Accepted)
+		if c.exit.Route != "direct" {
+			lost += len(c.queue)
+		}
+		c.dropped += uint64(max(0, lost))
 		c.disableLocked()
 		return
 	}
@@ -349,6 +385,10 @@ func (c *researchCollector) sync(now time.Time) {
 	}
 }
 func (c *researchCollector) openFlow(protocol int64, local string, localPort int64, remote string, remotePort int64) *researchFlow {
+	uid := int64(-1)
+	if c.lookupUID != nil {
+		uid = c.lookupUID.Owner(protocol, local, localPort, remote, remotePort)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stopped || len(c.flows) >= gateway.MaxFlows {
@@ -356,7 +396,7 @@ func (c *researchCollector) openFlow(protocol int64, local string, localPort int
 		return nil
 	}
 	c.nextFlow++
-	f := &researchFlow{collector: c, id: c.nextFlow, protocol: protocol, local: local, localPort: localPort, remote: remote, remotePort: remotePort, app: unknownResearchApp()}
+	f := &researchFlow{exit: c.exit, uid: uid, collector: c, id: c.nextFlow, protocol: protocol, local: local, localPort: localPort, remote: remote, remotePort: remotePort, app: unknownResearchApp()}
 	c.flows[f.id] = f
 	if c.active {
 		c.beginLocked(f, time.Now().UTC(), false)
@@ -364,6 +404,11 @@ func (c *researchCollector) openFlow(protocol int64, local string, localPort int
 	return f
 }
 func (c *researchCollector) beginLocked(f *researchFlow, now time.Time, incomplete bool) {
+	if c.eligible != nil && !c.eligible(f) {
+		f.recording = false
+		return
+	}
+	f.recording = true
 	f.from = now
 	f.incomplete = incomplete
 	f.up = 0
@@ -393,7 +438,7 @@ func (f *researchFlow) add(up, down, packetsUp, packetsDown uint64) {
 	c := f.collector
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.active || c.stopped || f.closed {
+	if !c.active || c.stopped || f.closed || !f.recording || (c.eligible != nil && !c.eligible(f)) {
 		return
 	}
 	f.up += up
@@ -412,7 +457,7 @@ func (f *researchFlow) close() {
 		return
 	}
 	f.closed = true
-	if c.active && !c.stopped {
+	if c.active && !c.stopped && f.recording && (c.eligible == nil || c.eligible(f)) {
 		f.closedAt = time.Now().UTC()
 		if f.ownerPending && len(c.closedFlows) < gateway.MaxFlows {
 			c.closedFlows[f.id] = f
@@ -441,11 +486,14 @@ func (c *researchCollector) flush(now time.Time) {
 	}
 }
 func (c *researchCollector) flowRecordLocked(f *researchFlow, kind string, now time.Time) {
+	if !f.recording || (c.eligible != nil && !c.eligible(f)) {
+		return
+	}
 	protocol := "tcp"
 	if f.protocol == 17 {
 		protocol = "udp"
 	}
-	d := research.FlowData{App: f.app, Protocol: protocol, Source: net.JoinHostPort(f.local, strconv.FormatInt(f.localPort, 10)),
+	d := research.FlowData{ExitRef: f.exit, App: f.app, Protocol: protocol, Source: net.JoinHostPort(f.local, strconv.FormatInt(f.localPort, 10)),
 		Destination: net.JoinHostPort(f.remote, strconv.FormatInt(f.remotePort, 10)), ObservedFrom: f.from, ObservedTo: now, StartedAt: f.started,
 		BytesUp: f.up, BytesDown: f.down, PacketsUp: f.packetsUp, PacketsDown: f.packetsDown, CounterKind: "delta", MeasurementLevel: "logical_payload", Incomplete: f.incomplete}
 	if kind == "flow_close" || f.closed {
@@ -510,19 +558,28 @@ func (c *researchCollector) ownerLoop() {
 			return
 		case job := <-c.owners:
 			c.mu.Lock()
-			valid := c.active && !c.stopped && c.generation == job.generation
+			valid := c.active && !c.stopped && c.generation == job.generation && job.flow.recording && (c.eligible == nil || c.eligible(job.flow))
 			c.mu.Unlock()
 			if !valid {
 				continue
 			}
 			f := job.flow
-			app := parseResearchApp(c.observer.Owner(f.protocol, f.local, f.localPort, f.remote, f.remotePort))
+			var raw string
+			if f.uid >= 0 {
+				raw = c.observer.OwnerForUID(f.uid)
+			} else {
+				raw = c.observer.Owner(f.protocol, f.local, f.localPort, f.remote, f.remotePort)
+			}
+			app := parseResearchApp(raw)
 			c.mu.Lock()
-			if c.active && !c.stopped && c.generation == job.generation {
+			if c.active && !c.stopped && c.generation == job.generation && job.flow.recording && (c.eligible == nil || c.eligible(job.flow)) {
 				f.app = app
 				f.ownerPending = false
 				now := time.Now().UTC()
-				c.enqueueLocked("app", f.id, app, now)
+				c.enqueueLocked("app", f.id, struct {
+					research.App
+					research.ExitRef
+				}{app, f.exit}, now)
 				if c.closedFlows[f.id] == f {
 					c.flowRecordLocked(f, "flow_close", f.closedAt)
 					delete(c.closedFlows, f.id)

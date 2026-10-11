@@ -83,3 +83,72 @@ func TestResearchPolicyAndLimits(t *testing.T) {
 		t.Fatal("invalid append")
 	}
 }
+
+func TestResearchDirectRequiresSeparateGrant(t *testing.T) {
+	receiver := NewResearchReceiver(func(tls.ConnectionState) (string, string, bool) { return "u", "d", true }, func(research.Record) bool { return true })
+	b := ResearchBatch{Session: "0123456789abcdef0123456789abcdef", Generation: 1, Enabled: true, Records: []research.Record{{SchemaVersion: 1, Type: "dns", ID: "d", Generation: 1, At: time.Now(), Data: []byte(`{"route":"direct","exit_id":"direct","exit_type":"direct"}`)}}}
+	if r := receiver.Receive(context.Background(), tls.ConnectionState{}, b); r.Accepted != 0 {
+		t.Fatal("direct accepted without grant")
+	}
+	b.DirectEnabled = true
+	if r := receiver.Receive(context.Background(), tls.ConnectionState{}, b); r.Allowed {
+		t.Fatal("same generation expanded grant")
+	}
+	b.Generation = 2
+	b.Records[0].Generation = 2
+	if r := receiver.Receive(context.Background(), tls.ConnectionState{}, b); r.Accepted != 1 || r.DirectObservationVersion != 1 {
+		t.Fatal(r)
+	}
+}
+
+func TestDirectServerPolicyAndHistoricalDelivery(t *testing.T) {
+	grant := true
+	r := NewResearchReceiver(func(tls.ConnectionState) (string, string, bool) { return "u", "d", true }, func(research.Record) bool { return true })
+	r.DirectAllowed = func(string, string) bool { return grant }
+	b := ResearchBatch{Session: "0123456789abcdef0123456789abcdef", Generation: 1, Enabled: true, DirectEnabled: true}
+	if !r.Receive(context.Background(), tls.ConnectionState{}, b).Allowed {
+		t.Fatal("initial grant failed")
+	}
+	old := research.Record{SchemaVersion: 1, Type: "dns", ID: "old", Generation: 1, At: time.Now().Add(-time.Second), Data: []byte(`{"route":"direct","exit_id":"direct","exit_type":"direct"}`)}
+	grant = false
+	b.Generation = 2
+	b.Enabled = false
+	b.DirectEnabled = false
+	b.Historical = true
+	b.Records = []research.Record{old}
+	if reply := r.Receive(context.Background(), tls.ConnectionState{}, b); reply.Accepted != 1 || reply.Allowed {
+		t.Fatalf("historical delivery after revoke: %+v", reply)
+	}
+	b.Generation = 3
+	b.Enabled = true
+	b.DirectEnabled = true
+	b.Historical = false
+	b.Records[0].Generation = 3
+	if reply := r.Receive(context.Background(), tls.ConnectionState{}, b); reply.Accepted != 0 || reply.DirectObservationVersion != 0 {
+		t.Fatalf("current direct data admitted without MDM right: %+v", reply)
+	}
+	b.Generation = 4
+	b.Enabled = false
+	b.DirectEnabled = false
+	b.Historical = true
+	b.Records[0].Generation = 3
+	b.Records[0].At = time.Now().Add(time.Hour)
+	if reply := r.Receive(context.Background(), tls.ConnectionState{}, b); reply.Accepted != 0 {
+		t.Fatal("future data admitted as history")
+	}
+}
+
+func TestDeniedDirectGrantCannotAuthorizeHistory(t *testing.T) {
+	r := NewResearchReceiver(func(tls.ConnectionState) (string, string, bool) { return "u", "d", true }, func(research.Record) bool { return true })
+	r.DirectAllowed = func(string, string) bool { return false }
+	b := ResearchBatch{Session: "0123456789abcdef0123456789abcdef", Generation: 1, Enabled: true, DirectEnabled: true}
+	r.Receive(context.Background(), tls.ConnectionState{}, b)
+	b.Generation = 2
+	b.Enabled = false
+	b.DirectEnabled = false
+	b.Historical = true
+	b.Records = []research.Record{{SchemaVersion: 1, Type: "dns", ID: "forged", Generation: 1, At: time.Now().Add(-time.Second), Data: []byte(`{"route":"direct","exit_id":"direct","exit_type":"direct"}`)}}
+	if r.Receive(context.Background(), tls.ConnectionState{}, b).Accepted != 0 {
+		t.Fatal("denied direct grant authorized historical bypass")
+	}
+}

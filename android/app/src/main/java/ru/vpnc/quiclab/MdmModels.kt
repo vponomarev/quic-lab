@@ -9,7 +9,7 @@ internal data class MdmRights(val config:Boolean=false,val vpn:Boolean=false,val
  val geo:Boolean=false,val coordinates:Boolean=false,val lanMode:String="deny",val research:Boolean=false,val researchDirect:Boolean=false) {
  init{require(lanMode in listOf("deny","confirm","allow"))}
  fun json()=JSONObject().put("config",config).put("vpn",vpn).put("telemetry",telemetry)
-  .put("geo",geo).put("coordinates",coordinates).put("lanMode",lanMode).put("research",research).put("researchDirect",researchDirect)
+  .put("geo",geo).put("coordinates",coordinates).put("lanMode",lanMode).put("research",research).also{if(researchDirect)it.put("researchDirect",true)}
  companion object {
   fun parse(j:JSONObject)=MdmRights(j.optBoolean("config"),j.optBoolean("vpn"),j.optBoolean("telemetry"),
    j.optBoolean("geo"),j.optBoolean("coordinates"),j.optString("lanMode","deny").ifEmpty{"deny"},j.optBoolean("research",false),j.optBoolean("researchDirect",false))
@@ -37,7 +37,7 @@ internal data class MdmConfigRevision(val revision:Long,val mode:String,val docu
 internal data class MdmCommand(val id:String,val bindingId:String,val epoch:Long,val issuedAt:Instant,
  val expiresAt:Instant,val kind:String)
 internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRevision?,val commands:List<MdmCommand>,
- val serverTime:Instant,val telemetryEnabled:Boolean=false) {
+ val serverTime:Instant,val telemetryEnabled:Boolean=false,val researchScopeSupported:Boolean=false) {
  companion object {
   fun parse(raw:String):MdmSyncResponse {
    val j=JSONObject(raw);require(j.getInt("version")==1)
@@ -50,7 +50,7 @@ internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRe
     val c=commands.getJSONObject(i);val kind=c.getString("kind");require(kind=="vpn_start"||kind=="vpn_stop")
     MdmCommand(c.getString("id"),c.getString("bindingId"),c.getLong("epoch"),
      Instant.parse(c.getString("issuedAt")),Instant.parse(c.getString("expiresAt")),kind)
-   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true)
+   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="research_scope_v1"}}==true)
   }
  }
 }

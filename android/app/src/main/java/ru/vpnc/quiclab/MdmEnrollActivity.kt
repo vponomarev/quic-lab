@@ -123,6 +123,7 @@ class MdmEnrollActivity:Activity(){
   check(MdmRight.VPN,"Включать и выключать VPN",value.vpn)
   check(MdmRight.TELEMETRY,"Собирать телеметрию",value.telemetry)
   check(MdmRight.RESEARCH,"Разрешить исследование трафика",value.research)
+  check(MdmRight.RESEARCH_DIRECT,"Анализ трафика вне VPN",value.researchDirect)
   panel.addView(ui.text(ResearchSettings.explanation))
   panel.addView(ui.text("Это право позволяет серверу включать и выключать сбор без дополнительных подтверждений. Отзыв права или пауза MDM останавливают сбор; ранее переданные данные остаются на сервере."))
   check(MdmRight.GEO,"Передавать данные Wi-Fi и сот, связанные с местоположением",value.geo)
@@ -138,7 +139,7 @@ class MdmEnrollActivity:Activity(){
  private fun selectedRights()=MdmRights(
   checks[MdmRight.CONFIG]!!.isChecked,checks[MdmRight.VPN]!!.isChecked,
   checks[MdmRight.TELEMETRY]!!.isChecked,checks[MdmRight.GEO]!!.isChecked,
-  checks[MdmRight.COORDINATES]!!.isChecked,listOf("deny","confirm","allow")[lan.selectedItemPosition],checks[MdmRight.RESEARCH]!!.isChecked)
+  checks[MdmRight.COORDINATES]!!.isChecked,listOf("deny","confirm","allow")[lan.selectedItemPosition],checks[MdmRight.RESEARCH]!!.isChecked,checks[MdmRight.RESEARCH_DIRECT]!!.isChecked)
  private fun work(action:()->Unit){
   if(busy)return
   busy=true;status.text="Выполняется…"

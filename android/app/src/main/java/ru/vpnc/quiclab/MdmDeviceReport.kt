@@ -18,14 +18,21 @@ internal object MdmDeviceReport {
   check(state.active && !state.cleanupPending)
   val store=MdmStore(context)
   val result=JSONObject().put("version",1).put("name",("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").take(100))
-   .put("appVersion",BuildConfig.VERSION_NAME).put("capabilities",JSONArray(listOf("web-control-v1")))
+   .put("appVersion",BuildConfig.VERSION_NAME).put("capabilities",JSONArray(listOf("web-control-v1","research_scope_v1")))
    .put("appliedRevision",state.appliedRevision)
+  if(store.document().optBoolean("server_research_scope_v1")){
+  val research=ResearchSettings.effectiveScope(context)
+  val reason=when{!ResearchSettings.allowed(state)->"research_consent_missing";!ResearchSettings.directAllowed(state)->"direct_consent_missing";!ResearchSettings.supported(context)->"unsupported_transport";!LabVpnService.active->"vpn_stopped";else->""}
+  result.put("researchScopeStatus",JSONObject().put("desired",state.researchScope.mode).put("effective",research.mode).put("reason",reason))
+  if(state.rights.config || state.rights.research)result.put("researchDeviceIds",JSONArray(VpnProfiles.list(context).mapNotNull{p->runCatching{VpnIdentity.load(context,p.id).optString("device_id").takeIf{it.isNotEmpty()}}.getOrNull()}.distinct().take(256)))
+  }
   if(state.rights.vpn)result.put("vpnState",if(LabVpnService.active)"running" else "stopped")
   var generation=store.document().optLong("report_config_generation")
   if(state.rights.config){
    val document=MdmConfiguration.snapshotLocal(context)
    val fingerprint=hash(document.toString())
    store.edit{j->if(j.optString("report_config_hash")!=fingerprint){j.put("report_config_hash",fingerprint).put("report_config_generation",Math.addExact(j.optLong("report_config_generation"),1))};generation=j.optLong("report_config_generation")}
+   if(!store.document().optBoolean("server_research_scope_v1"))document.remove("researchScope")
    result.put("configuration",document)
 
   }

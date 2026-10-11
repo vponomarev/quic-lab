@@ -15,24 +15,32 @@ const MaxResearchBatchBytes = 65535
 
 // ResearchBatch is carried only inside an authenticated own-tunnel stream.
 type ResearchBatch struct {
-	Session    string            `json:"session"`
-	Generation uint64            `json:"generation,string"`
-	Enabled    bool              `json:"enabled"`
-	Records    []research.Record `json:"records,omitempty"`
+	Historical    bool              `json:"historical,omitempty"`
+	DirectEnabled bool              `json:"direct_enabled,omitempty"`
+	Session       string            `json:"session"`
+	Generation    uint64            `json:"generation,string"`
+	Enabled       bool              `json:"enabled"`
+	Records       []research.Record `json:"records,omitempty"`
 }
 type ResearchReply struct {
-	FlowObservationVersion int  `json:"flow_observation_version,omitempty"`
-	Allowed                bool `json:"allowed"`
-	Accepted               int  `json:"accepted"`
+	DirectObservationVersion int  `json:"direct_observation_version,omitempty"`
+	FlowObservationVersion   int  `json:"flow_observation_version,omitempty"`
+	Allowed                  bool `json:"allowed"`
+	Accepted                 int  `json:"accepted"`
 }
 type researchSession struct {
-	allowed    bool
-	until      time.Time
-	generation uint64
-	enabled    bool
+	historyUntil     time.Time
+	historyDirect    bool
+	directAuthorized bool
+	directEnabled    bool
+	allowed          bool
+	until            time.Time
+	generation       uint64
+	enabled          bool
 }
 type ResearchReceiver struct {
-	observationStates                    sync.Map // immutable researchSession snapshots; readers never wait for disk I/O
+	DirectAllowed                        func(user, device string) bool // Set before accepting connections.
+	observationStates                    sync.Map                       // immutable researchSession snapshots; readers never wait for disk I/O
 	identities                           map[[32]byte]observedIdentity
 	apps                                 map[string]observedApp
 	epoch                                string
@@ -85,20 +93,30 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 			return ResearchReply{}
 		}
 		r.devices[device]++
-	} else if b.Generation < state.generation || (b.Generation == state.generation && b.Enabled != state.enabled) {
+	} else if b.Generation < state.generation || (b.Generation == state.generation && (b.Enabled != state.enabled || b.DirectEnabled != state.directEnabled)) {
 		return ResearchReply{}
 	}
-	r.sessions[key] = researchSession{generation: b.Generation, enabled: b.Enabled, allowed: allowed, until: time.Now().Add(15 * time.Second)}
+	directAllowed := r.DirectAllowed == nil || r.DirectAllowed(user, device)
+	historyUntil, historyDirect := state.historyUntil, state.historyDirect
+	if exists && b.Generation > state.generation && state.enabled && state.allowed {
+		historyUntil = time.Now().UTC()
+		historyDirect = historyDirect || state.directAuthorized
+	}
+	r.sessions[key] = researchSession{directAuthorized: directAllowed && allowed && b.Enabled && b.DirectEnabled, historyUntil: historyUntil, historyDirect: historyDirect, directEnabled: b.DirectEnabled, generation: b.Generation, enabled: b.Enabled, allowed: allowed, until: time.Now().Add(15 * time.Second)}
 	r.observationStates.Store(key, r.sessions[key])
 	reply := ResearchReply{Allowed: allowed && b.Enabled, FlowObservationVersion: 1}
-	if !reply.Allowed {
+	if directAllowed {
+		reply.DirectObservationVersion = 1
+	}
+	if !reply.Allowed && !(allowed && b.Historical && !historyUntil.IsZero()) {
 		return reply
 	}
 	for _, record := range b.Records {
 		if ctx.Err() != nil {
 			break
 		}
-		if record.Generation != b.Generation {
+		historical := b.Historical && record.Generation < b.Generation && !historyUntil.IsZero() && !record.At.After(historyUntil)
+		if !historical && (record.Generation != b.Generation || !reply.Allowed) {
 			continue
 		}
 		switch record.Type {
@@ -113,6 +131,10 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 		// Identity is authoritative for every record type, including gaps and DNS.
 		var data map[string]json.RawMessage
 		if json.Unmarshal(record.Data, &data) != nil || data == nil {
+			continue
+		}
+		var exit research.ExitRef
+		if json.Unmarshal(record.Data, &exit) != nil || (exit.Route == "direct" && (!b.DirectEnabled || !directAllowed) && !(historical && historyDirect)) {
 			continue
 		}
 		delete(data, "app_source")

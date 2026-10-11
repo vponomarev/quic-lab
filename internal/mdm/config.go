@@ -21,16 +21,21 @@ import (
 // ConfigurationDocument is a complete desired application configuration, not a
 // map of SharedPreferences or Android permissions. Credentials are never logged.
 type ConfigurationDocument struct {
-	Reserve           map[string]bool          `json:"reserve,omitempty"`
-	Schema            int                      `json:"schema"`
-	Profiles          []ConfigurationProfile   `json:"profiles"`
-	CurrentProfileID  string                   `json:"currentProfileId"`
-	EnabledProfileIDs []string                 `json:"enabledProfileIds"`
-	Multiple          bool                     `json:"multiple"`
-	GlobalApps        []string                 `json:"globalApps"`
-	DNS               ConfigurationDNS         `json:"dns"`
-	Budget            ConfigurationBudget      `json:"budget"`
-	Diagnostics       ConfigurationDiagnostics `json:"diagnostics"`
+	ResearchScope     *ConfigurationResearchScope `json:"researchScope,omitempty"`
+	Reserve           map[string]bool             `json:"reserve,omitempty"`
+	Schema            int                         `json:"schema"`
+	Profiles          []ConfigurationProfile      `json:"profiles"`
+	CurrentProfileID  string                      `json:"currentProfileId"`
+	EnabledProfileIDs []string                    `json:"enabledProfileIds"`
+	Multiple          bool                        `json:"multiple"`
+	GlobalApps        []string                    `json:"globalApps"`
+	DNS               ConfigurationDNS            `json:"dns"`
+	Budget            ConfigurationBudget         `json:"budget"`
+	Diagnostics       ConfigurationDiagnostics    `json:"diagnostics"`
+}
+type ConfigurationResearchScope struct {
+	Mode     string   `json:"mode"`
+	Packages []string `json:"packages"`
 }
 type ConfigurationProfile struct {
 	ID       string                     `json:"id"`
@@ -81,6 +86,36 @@ func ValidateDocument(raw json.RawMessage) error {
 	var d ConfigurationDocument
 	if dec.Decode(&d) != nil || d.Schema != 1 || len(d.Profiles) == 0 || len(d.Profiles) > 32 {
 		return ErrInvalid
+	}
+	if d.ResearchScope != nil {
+		scope := d.ResearchScope
+		if !oneOf(scope.Mode, "vpn_only", "vpn_plus_apps", "all_apps") || len(scope.Packages) > 2048 {
+			return ErrInvalid
+		}
+		seen := map[string]bool{}
+		for _, pkg := range scope.Packages {
+			if !appName.MatchString(pkg) || len(pkg) > 255 || seen[pkg] {
+				return ErrInvalid
+			}
+			seen[pkg] = true
+		}
+		if scope.Mode != "vpn_only" {
+			for _, p := range d.Profiles {
+				enabled := !d.Multiple && p.ID == d.CurrentProfileID
+				if d.Multiple {
+					for _, id := range d.EnabledProfileIDs {
+						enabled = enabled || id == p.ID
+					}
+				}
+				transport := "quic"
+				if raw, ok := p.Settings["transport"]; ok {
+					_ = json.Unmarshal(raw, &transport)
+				}
+				if enabled && transport != "quic" && transport != "https" {
+					return ErrInvalid
+				}
+			}
+		}
 	}
 	// Require a full document, so a missing false/zero does not silently reset a
 	// setting. Individual profile settings may be omitted for application defaults.

@@ -67,4 +67,22 @@ class MdmApplyCoordinatorTest {
   }finally{c.close()}
  }
 
+ @Test fun committedResearchScopeRecoveredBeforeAcknowledgement(){
+  val c=Isolated(InstrumentationRegistry.getInstrumentation().targetContext)
+  try {
+   VpnProfiles.list(c)
+   val rights=MdmRights(config=true,research=true,researchDirect=true)
+   val store=MdmStore(c)
+   store.edit{it.put("binding",MdmStore.bindingJson(MdmBinding("binding","https://mdm.example",1,rights,true))).put("active",true).put("rights",rights.json())}
+   store.setResearchScope(ResearchScope("all_apps"))
+   val old=MdmConfiguration.snapshotLocal(c);val doc=JSONObject(old.toString()).put("researchScope",ResearchScope().json())
+   val target=MdmConfigurationStore(c);target.initialize(old,MdmConfiguration.snapshotRuntime(c))
+   target.apply("binding",MdmConfigRevision(1,"current",doc),MdmConfiguration::compile)
+   store.edit{it.put("apply_operation",JSONObject().put("binding","binding").put("revision",1).put("phase","prepared"))}
+   MdmApplyCoordinator(c,Port()).recover()
+   assertEquals("vpn_only",store.read().researchScope.mode)
+   assertEquals(1L,store.read().appliedRevision)
+  }finally{c.close()}
+ }
+
 }

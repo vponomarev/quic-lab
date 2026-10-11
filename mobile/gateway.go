@@ -50,6 +50,7 @@ type gatewayConfig struct {
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.
 type Gateway struct {
+	researchExit        researchExitRef
 	research            *researchCollector
 	vless               vless.Client
 	exitEchoDialGate    diagnosticDialGate

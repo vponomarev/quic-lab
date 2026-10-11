@@ -24,7 +24,7 @@ class MdmDeviceReportTest {
    VpnProfiles.list(c)
    VpnIdentity.writeBundle(c,"default",JSONObject().put("key","DO-NOT-EXPORT").put("update_token","SECRET-TOKEN"))
    val store=MdmStore(c);store.edit{it.put("binding",MdmStore.bindingJson(MdmBinding("binding","https://mdm.example",1,MdmRights(),true))).put("active",true)}
-   val denied=MdmDeviceReport.snapshot(c,store.read());assertFalse(denied.has("configuration"));assertFalse(denied.has("inventory"));assertFalse(denied.has("vpnState"))
+   val denied=MdmDeviceReport.snapshot(c,store.read());assertFalse(denied.has("researchScopeStatus"));assertFalse(denied.has("researchDeviceIds"));assertFalse(denied.has("configuration"));assertFalse(denied.has("inventory"));assertFalse(denied.has("vpnState"))
    store.edit{it.put("rights",MdmRights(config=true).json())}
    val allowed=MdmDeviceReport.snapshot(c,store.read())
    assertTrue(allowed.has("configuration"));assertTrue(allowed.has("inventory"))

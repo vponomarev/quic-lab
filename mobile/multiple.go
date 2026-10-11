@@ -12,6 +12,7 @@ import (
 	"quiclab/internal/routing"
 	"quiclab/internal/trafficbudget"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -29,16 +30,19 @@ type multiProfile struct {
 // MultiRouter owns one TUN, never the independent transport lifecycles.
 // Rules are immutable while running; unavailable profiles retain their rules.
 type MultiRouter struct {
-	mu           sync.Mutex
-	root         *Gateway
-	policy       *routing.Policy
-	owner        FlowOwner
-	profiles     map[string]*multiProfile
-	dns          routing.DNSPolicy
-	budget       *TrafficBudget
-	directBinder SocketBinder
-	disabled     map[string]bool
-	closed       bool
+	researchScope     atomic.Pointer[clientResearchScope]
+	directResearchDNS atomic.Bool
+	researchObserver  ResearchObserver
+	mu                sync.Mutex
+	root              *Gateway
+	policy            *routing.Policy
+	owner             FlowOwner
+	profiles          map[string]*multiProfile
+	dns               routing.DNSPolicy
+	budget            *TrafficBudget
+	directBinder      SocketBinder
+	disabled          map[string]bool
+	closed            bool
 }
 
 func NewMultiRouter(raw string, dnsProfile string, owner FlowOwner, directBinder SocketBinder, sink EventSink) (*MultiRouter, error) {
@@ -157,6 +161,12 @@ func (m *MultiRouter) SetGateway(id string, g *Gateway) error {
 		m.mu.Unlock()
 		return nil
 	}
+	g.mu.Lock()
+	kind := g.cfg.Transport
+	g.mu.Unlock()
+	if kind == "quic" || kind == "https" {
+		_ = g.SetResearchExit(id, kind)
+	}
 	m.profiles[id] = newMultiProfile(g)
 	m.mu.Unlock()
 	if old != nil {
@@ -244,7 +254,7 @@ func (m *MultiRouter) selectFlow(protocol int64, src string, sp int64, dst strin
 	d := m.policy.Choose(ip, uid)
 	m.mu.Lock()
 	// One explicit resolver path. Never infer app identity from system DNS traffic.
-	if dp == 53 {
+	if dp == 53 && !(d.Profile == "direct" && uid >= 0 && m.directResearchDNS.Load()) {
 		d = routing.Decision{Profile: m.dns.ExitID, Reason: "dns_tunnel"}
 		if m.dns.Mode == "system" {
 			d = routing.Decision{Profile: "system_dns", Reason: "dns_system"}
@@ -290,7 +300,10 @@ func (m *MultiRouter) Close() {
 	ps := m.profiles
 	m.profiles = map[string]*multiProfile{}
 	m.mu.Unlock()
-	for _, p := range ps {
+	for id, p := range ps {
+		if id == "direct" {
+			p.h.g.SetResearch(nil)
+		}
 		p.stop()
 	}
 	m.root.Stop()

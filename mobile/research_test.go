@@ -424,3 +424,6 @@ func TestResearchStaleConsentSampleCannotUndoSynchronousRevocation(t *testing.T)
 		t.Fatal("stale true sample restored consent after a newer revoke")
 	}
 }
+
+func (o *researchTestObserver) OwnerForUID(uid int64) string     { return o.Owner(0, "", 0, "", 0) }
+func (o *researchSamplingObserver) OwnerForUID(uid int64) string { return "" }
