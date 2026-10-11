@@ -21,23 +21,32 @@ type ResearchBatch struct {
 	Records    []research.Record `json:"records,omitempty"`
 }
 type ResearchReply struct {
-	Allowed  bool `json:"allowed"`
-	Accepted int  `json:"accepted"`
+	FlowObservationVersion int  `json:"flow_observation_version,omitempty"`
+	Allowed                bool `json:"allowed"`
+	Accepted               int  `json:"accepted"`
 }
 type researchSession struct {
+	allowed    bool
+	until      time.Time
 	generation uint64
 	enabled    bool
 }
 type ResearchReceiver struct {
-	mu           sync.Mutex
-	identity     func(tls.ConnectionState) (string, string, bool)
-	appendRecord func(research.Record) bool
-	sessions     map[string]researchSession
-	devices      map[string]int
+	observationStates                    sync.Map // immutable researchSession snapshots; readers never wait for disk I/O
+	identities                           map[[32]byte]observedIdentity
+	apps                                 map[string]observedApp
+	epoch                                string
+	nextObservedFlow, nextObservedRecord uint64
+	observers                            int
+	mu                                   sync.Mutex
+	identity                             func(tls.ConnectionState) (string, string, bool)
+	appendRecord                         func(research.Record) bool
+	sessions                             map[string]researchSession
+	devices                              map[string]int
 }
 
 func NewResearchReceiver(identity func(tls.ConnectionState) (string, string, bool), appendRecord func(research.Record) bool) *ResearchReceiver {
-	return &ResearchReceiver{identity: identity, appendRecord: appendRecord, sessions: map[string]researchSession{}, devices: map[string]int{}}
+	return &ResearchReceiver{epoch: identityNonce(), apps: make(map[string]observedApp), identities: make(map[[32]byte]observedIdentity), identity: identity, appendRecord: appendRecord, sessions: map[string]researchSession{}, devices: map[string]int{}}
 }
 func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, b ResearchBatch) ResearchReply {
 	if r == nil || r.identity == nil || r.appendRecord == nil || ctx.Err() != nil || b.Generation == 0 || len(b.Session) != 32 || len(b.Records) > 128 {
@@ -63,6 +72,10 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 		return ResearchReply{}
 	}
 	allowed = currentAllowed
+	identityKey := observationIdentityKey(cs)
+	if _, exists := r.identities[identityKey]; exists || len(r.identities) < 4096 {
+		r.identities[identityKey] = observedIdentity{user, device}
+	}
 	key := device + "/" + b.Session
 	state, exists := r.sessions[key]
 	if !exists {
@@ -75,8 +88,9 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 	} else if b.Generation < state.generation || (b.Generation == state.generation && b.Enabled != state.enabled) {
 		return ResearchReply{}
 	}
-	r.sessions[key] = researchSession{b.Generation, b.Enabled}
-	reply := ResearchReply{Allowed: allowed && b.Enabled}
+	r.sessions[key] = researchSession{generation: b.Generation, enabled: b.Enabled, allowed: allowed, until: time.Now().Add(15 * time.Second)}
+	r.observationStates.Store(key, r.sessions[key])
+	reply := ResearchReply{Allowed: allowed && b.Enabled, FlowObservationVersion: 1}
 	if !reply.Allowed {
 		return reply
 	}
@@ -101,6 +115,8 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 		if json.Unmarshal(record.Data, &data) != nil || data == nil {
 			continue
 		}
+		delete(data, "app_source")
+		delete(data, "client_flow")
 		data["user_id"], _ = json.Marshal(user)
 		record.Data, err = json.Marshal(data)
 		if err != nil {
@@ -109,6 +125,7 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 		if err = research.EncodeRecord(new(bytes.Buffer), record); err != nil {
 			continue
 		}
+		r.rememberAppLocked(record)
 		if r.appendRecord(record) {
 			reply.Accepted++
 		}

@@ -46,3 +46,20 @@ func TestProvenanceValidationAndIdentity(t *testing.T) {
 		t.Fatal("invalid receipt")
 	}
 }
+
+func TestOriginFilterPreservesSourceBoundary(t *testing.T) {
+	r := Record{Origin: "server_gateway", Type: "gap", At: time.Now(), Data: []byte("{}")}
+	if matches(r, Query{Origin: "client"}) {
+		t.Fatal("server gap crossed source filter")
+	}
+	if !matches(r, Query{Origin: "server_gateway"}) || !matches(r, Query{}) {
+		t.Fatal("server source hidden")
+	}
+	r.Origin = ""
+	if matches(r, Query{Origin: "client"}) {
+		t.Fatal("legacy provenance invented")
+	}
+	if !matches(r, Query{Origin: "legacy_unknown"}) {
+		t.Fatal("legacy missing")
+	}
+}

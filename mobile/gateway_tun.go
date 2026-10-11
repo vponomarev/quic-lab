@@ -135,8 +135,10 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 		defer c.Close()
 		id := c.ID()
 		dst := net.JoinHostPort(id.LocalAddress.String(), strconv.Itoa(int(id.LocalPort)))
+		flow := h.g.researchFlow(6, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+		defer flow.close()
 		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
-		s, e := h.g.dialStream(ctx, "tcp", dst)
+		s, e := h.g.dialStream(flow.dialContext(ctx), "tcp", dst)
 		cancel()
 		if e != nil {
 			h.g.emit("flow_failed", map[string]any{"destination": dst, "error": e.Error()})
@@ -144,8 +146,6 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 		}
 		h.tcpFlows.Add(1)
 		h.g.emit("flow_open", map[string]any{"network": "tcp", "destination": dst})
-		flow := h.g.researchFlow(6, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
-		defer flow.close()
 		up, down := gateway.Relay(h.ctx, researchStream{Stream: trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}, flow: flow}, c)
 		h.g.emit("flow_closed", map[string]any{"network": "tcp", "destination": dst, "up": up, "down": down})
 	}()
@@ -195,15 +195,15 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 			h.relayUDP(c, backend)
 			return
 		}
+		flow := h.g.researchFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+		defer flow.close()
 		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
-		s, e := gateway.Open(ctx, h.g.open, "dns", net.JoinHostPort(id.LocalAddress.String(), "53"))
+		s, e := gateway.Open(flow.dialContext(ctx), h.g.open, "dns", net.JoinHostPort(id.LocalAddress.String(), "53"))
 		cancel()
 		if e != nil {
 			return
 		}
 		h.udpFlows.Add(1)
-		flow := h.g.researchFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
-		defer flow.close()
 		s = trafficStream{Stream: s, tx: &h.tx, rx: &h.rx}
 		defer s.Close()
 		stop := context.AfterFunc(h.ctx, func() { c.Close(); s.Close() })
@@ -240,16 +240,16 @@ func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 func (h *tunHandler) relayUDP(c adapter.UDPConn, d flowDialer) {
 	id := c.ID()
 	dst := net.JoinHostPort(id.LocalAddress.String(), strconv.Itoa(int(id.LocalPort)))
+	flow := h.g.researchFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+	defer flow.close()
 	ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
-	out, e := d.DialContext(ctx, "udp4", dst)
+	out, e := d.DialContext(flow.dialContext(ctx), "udp4", dst)
 	cancel()
 	if e != nil {
 		h.g.emit("flow_failed", map[string]any{"network": "udp", "destination": dst, "error": e.Error()})
 		return
 	}
 	h.udpFlows.Add(1)
-	flow := h.g.researchFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
-	defer flow.close()
 	h.g.emit("flow_open", map[string]any{"network": "udp", "destination": dst})
 	defer h.g.emit("flow_closed", map[string]any{"network": "udp", "destination": dst})
 	defer out.Close()

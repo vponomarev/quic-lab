@@ -18,7 +18,7 @@
 <path class="arrow" d="M315 463V502" />
 <rect x="800" y="120" width="570" height="545" rx="15" fill="#eef0fb" stroke="#cdd9e7"/>
 <text class="head" x="820" y="154">СЕРВЕР</text>
-<text class="body" x="820" y="186">Адаптеры — последующие этапы</text>
+<text class="body" x="820" y="186">QUIC/HTTPS — готово; AWG/VLESS — далее</text>
 <rect x="830" y="213" width="510" height="106" rx="15" fill="#fff" stroke="#cdd9e7"/>
 <text class="head" x="850" y="247">QUIC / HTTPS · AWG · VLESS</text>
 <text class="body" x="850" y="279">Расшифрованный трафик до внешнего выхода</text>
@@ -41,4 +41,4 @@
 <text class="body" x="320" y="788">Точное соответствие ID; сохраняем происхождение каждого поля</text>
 <text class="body" x="320" y="815">Основной источник байтов выбирается явно; raw-наблюдения доступны</text>
 <path class="arrow" d="M1085 632V686H900V718" />
-<text class="small" x="44" y="887">Первая итерация: DNS-ядро и происхождение записей. Адаптеры, объединение и DNS routing — план развития.</text></svg>
+<text class="small" x="44" y="887">Этап B: наблюдатель QUIC/HTTPS. AWG/VLESS, объединение истории и DNS routing — в плане.</text></svg>

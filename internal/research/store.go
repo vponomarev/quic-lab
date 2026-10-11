@@ -25,6 +25,7 @@ type StoreOptions struct {
 	QueueSize int
 }
 type Query struct {
+	Origin      string    `json:"origin,omitempty"`
 	UserID      string    `json:"user_id,omitempty"`
 	DeviceID    string    `json:"device_id,omitempty"`
 	SessionID   string    `json:"session_id,omitempty"`
@@ -312,6 +313,13 @@ func (s *Store) coverage() Coverage {
 	return c
 }
 func matches(r Record, q Query) bool {
+	origin := r.Origin
+	if origin == "" {
+		origin = "legacy_unknown"
+	}
+	if q.Origin != "" && q.Origin != origin {
+		return false
+	}
 	if q.DeviceID != "" && q.DeviceID != r.Flow.DeviceID || q.SessionID != "" && q.SessionID != r.Flow.SessionID {
 		return false
 	}
@@ -483,7 +491,7 @@ func (s *Store) Export(ctx context.Context, q Query, w io.Writer) error {
 		Scope             string    `json:"scope"`
 		CounterSemantics  string    `json:"counter_semantics"`
 		BoundaryPrecision string    `json:"boundary_precision"`
-	}{1, "manifest", time.Now().UTC(), q, s.coverage(), "observed own tunnel logical traffic only; client application names are claims", "delta records are increments; total records must not be added to deltas", "overlapping intervals included in full; no exact allocation inside intervals"}
+	}{1, "manifest", time.Now().UTC(), q, s.coverage(), "observed own tunnel logical traffic only; client application names are claims", "delta records are increments within one origin and measurement_level only; never sum client and server observations; total records must not be added to deltas", "overlapping intervals included in full; no exact allocation inside intervals"}
 	if e := json.NewEncoder(w).Encode(manifest); e != nil {
 		return e
 	}

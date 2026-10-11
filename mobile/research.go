@@ -534,3 +534,18 @@ func (c *researchCollector) ownerLoop() {
 		}
 	}
 }
+
+// Correlation uses opaque IDs only; the research control stream is the sole grant.
+// Keeping the ID on dormant flows allows opt-in without breaking a VPN connection.
+func (f *researchFlow) dialContext(ctx context.Context) context.Context {
+	if f == nil {
+		return ctx
+	}
+	c := f.collector
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped || f.closed {
+		return ctx
+	}
+	return gateway.WithResearchFlow(ctx, gateway.ResearchFlowRef{Version: 1, Session: c.session, FlowID: f.id})
+}

@@ -184,7 +184,7 @@ func TestResearchClientGapsVisibleWithFlowFilters(t *testing.T) {
 					t.Fatalf("%s leaked %s", path, secret)
 				}
 			}
-			if path == "/lab/research" && (!strings.Contains(r.Body.String(), "Пропуски данных клиента") || !strings.Contains(r.Body.String(), "<strong>17</strong>")) {
+			if path == "/lab/research" && (!strings.Contains(r.Body.String(), "Пропуски наблюдений") || !strings.Contains(r.Body.String(), "<strong>17</strong>")) {
 				t.Fatal("gap not visibly explained")
 			}
 		}

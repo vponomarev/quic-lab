@@ -38,6 +38,8 @@ type Record struct {
 	Data          json.RawMessage `json:"data"`
 }
 type FlowData struct {
+	AppSource        string     `json:"app_source,omitempty"`
+	ClientFlow       *FlowKey   `json:"client_flow,omitempty"`
 	UserID           string     `json:"user_id"`
 	App              App        `json:"app"`
 	Protocol         string     `json:"protocol"`

@@ -59,7 +59,12 @@ func (w *Web) researchRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /lab/research/settings", w.researchSettingsPost)
 }
 func researchQuery(v url.Values) (research.Query, error) {
-	q := research.Query{UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	q := research.Query{Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	switch q.Origin {
+	case "", "legacy_unknown", "client", "server_gateway", "server_awg", "server_vless":
+	default:
+		return q, fmt.Errorf("unknown origin")
+	}
 	var err error
 	if s := v.Get("from"); s != "" {
 		q.From, err = time.Parse(time.RFC3339, s)

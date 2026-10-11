@@ -108,8 +108,9 @@ func MuxConfig() *smux.Config {
 }
 
 type Request struct {
-	Network string `json:"network"`
-	Address string `json:"address,omitempty"`
+	Research *ResearchFlowRef `json:"research,omitempty"`
+	Network  string           `json:"network"`
+	Address  string           `json:"address,omitempty"`
 }
 type Reply struct {
 	UDPStream bool   `json:"udp_stream,omitempty"`
@@ -184,7 +185,7 @@ func OpenWithReply(ctx context.Context, open func(context.Context) (Stream, erro
 		s.SetDeadline(time.Now())
 		close(interrupted)
 	})
-	if e = WriteJSON(s, Request{network, address}); e == nil {
+	if e = WriteJSON(s, Request{Network: network, Address: address, Research: researchFlowFromContext(ctx)}); e == nil {
 		e = ReadJSON(s, &reply)
 		if e == nil && reply.Error != "" {
 			e = errors.New(reply.Error)

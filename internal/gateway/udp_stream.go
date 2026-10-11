@@ -74,6 +74,7 @@ func (s *Server) serveUDPStream(ctx context.Context, st Stream, req Request, id 
 		return
 	}
 	out = captureConnection(ctx, "udp4", req.Address, out)
+	out = s.observeConnection(ctx, req, "udp4", out)
 	defer out.Close()
 	if WriteJSON(st, Reply{Session: id}) != nil {
 		return

@@ -373,6 +373,7 @@ func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id s
 		return
 	}
 	dst = captureConnection(ctx, network, req.Address, dst)
+	dst = s.observeConnection(ctx, req, network, dst)
 	defer dst.Close()
 	if WriteJSON(st, Reply{Session: id}) != nil {
 		return

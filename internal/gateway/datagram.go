@@ -321,7 +321,7 @@ func (m *DatagramMux) DialUDP(ctx context.Context, c *quic.Conn, address string)
 	stop := context.AfterFunc(ctx, func() { control.Close() })
 	defer stop()
 	st.SetDeadline(time.Now().Add(10 * time.Second))
-	if e = WriteJSON(st, Request{Network: "udp-datagram-v1", Address: address}); e == nil {
+	if e = WriteJSON(st, Request{Network: "udp-datagram-v1", Address: address, Research: researchFlowFromContext(ctx)}); e == nil {
 		var reply Reply
 		e = ReadJSON(st, &reply)
 		if e == nil && reply.Error != "" {
@@ -359,6 +359,7 @@ func (s *Server) serveUDP(ctx context.Context, st Stream, req Request, id string
 		return
 	}
 	out = captureConnection(ctx, "udp4", req.Address, out)
+	out = s.observeConnection(ctx, req, "udp4", out)
 	defer out.Close()
 	f, e := m.Register(idValue)
 	if e != nil {
@@ -448,7 +449,7 @@ func (m *DatagramMux) DialPacketUDP(ctx context.Context, st Stream, address stri
 	stop := context.AfterFunc(ctx, func() { st.Close() })
 	defer stop()
 	st.SetDeadline(time.Now().Add(10 * time.Second))
-	if e = WriteJSON(st, Request{Network: "udp-datagram-v1", Address: address}); e == nil {
+	if e = WriteJSON(st, Request{Network: "udp-datagram-v1", Address: address, Research: researchFlowFromContext(ctx)}); e == nil {
 		var reply Reply
 		e = ReadJSON(st, &reply)
 		if e == nil && reply.Error != "" {
