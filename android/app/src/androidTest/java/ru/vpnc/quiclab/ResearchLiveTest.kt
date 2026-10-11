@@ -7,7 +7,7 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
-/** Explicit opt-in test on the authorized Note9 only; restores profiles and consent. */
+/** Explicit opt-in test on an authorized device only; restores profiles and consent. */
 class ResearchLiveTest {
  @Test fun ownTunnelFlowAttributionAndLiveConsent(){
   assumeTrue(InstrumentationRegistry.getArguments().getString("research_live")=="true")
@@ -29,13 +29,18 @@ class ResearchLiveTest {
    assertNull("VPN consent",android.net.VpnService.prepare(c));assertTrue("Active MDM binding required",state.binding==null||state.active)
    stop();consent(false);original=InstrumentationRegistry.getArguments().getString("original_profile")?:VpnProfiles.current(c).id;multiple=VpnProfiles.multiple(c);VpnProfiles.setMultiple(c,false);VpnProfiles.list(c).filter{it.name.startsWith("Research fixture")}.forEach{VpnProfiles.delete(c,it.id)}
    val profile=JSONObject(File(c.filesDir,"research-fixture.private.json").readText());ProfileImport.save(c,profile);added=VpnProfiles.current(c).id
-   val p=VpnProfiles.preferences(c,added);p.edit().putBoolean("global_apps",false).putInt("mode",1).putStringSet("apps",setOf(probe)).putBoolean("demux_enabled",false).commit()
+   val bond=InstrumentationRegistry.getArguments().getString("research_bond")=="true"
+   val p=VpnProfiles.preferences(c,added);p.edit().putBoolean("global_apps",false).putInt("mode",1).putStringSet("apps",setOf(probe)).putBoolean("demux_enabled",bond).putBoolean("max_availability",bond).putInt("quic_pool_size",3).putInt("https_pool_size",3).commit()
    val requestedTransport=InstrumentationRegistry.getArguments().getString("research_transport")
    val transports=if(requestedTransport==null)listOf("quic","https")else listOf(requestedTransport.also{require(it in listOf("quic","https"))})
    for(transport in transports){
     stop();consent(false);VpnProfiles.preferences(c,added).edit().putString("transport",transport).putString("endpoint",profile.getString(transport)).commit()
     shell("am start -W -n ru.vpnc.quiclab/.MainActivity");c.startForegroundService(Intent(c,LabVpnService::class.java))
     waitFor("connected $transport",60000){LabVpnService.active&&LabVpnService.healthFresh(SystemClock.elapsedRealtime())}
+    if(bond)waitFor("two ready Wi-Fi bond paths",45000){
+     val paths=LabVpnService.bondSnapshot?.optJSONArray("paths")
+     paths!=null&&(0 until paths.length()).count{val path=paths.getJSONObject(it);path.optString("network",path.optString("name"))=="wifi"&&path.optBoolean("ready")}>=2
+    }
     runProbe("tcp","research_${transport}_off");val connection=LabVpnService.connection
     consent(true);Thread.sleep(7000)
     runProbe("tcp-long","research_${transport}_long");runProbe("udp","research_${transport}_udp");runProbe("dns","research_${transport}_dns","1.1.1.1",53)
