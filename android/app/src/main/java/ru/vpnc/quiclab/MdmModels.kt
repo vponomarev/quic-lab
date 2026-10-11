@@ -6,13 +6,13 @@ import java.net.URI
 import java.time.Instant
 
 internal data class MdmRights(val config:Boolean=false,val vpn:Boolean=false,val telemetry:Boolean=false,
- val geo:Boolean=false,val coordinates:Boolean=false,val lanMode:String="deny",val research:Boolean=false) {
+ val geo:Boolean=false,val coordinates:Boolean=false,val lanMode:String="deny",val research:Boolean=false,val researchDirect:Boolean=false) {
  init{require(lanMode in listOf("deny","confirm","allow"))}
  fun json()=JSONObject().put("config",config).put("vpn",vpn).put("telemetry",telemetry)
-  .put("geo",geo).put("coordinates",coordinates).put("lanMode",lanMode).put("research",research)
+  .put("geo",geo).put("coordinates",coordinates).put("lanMode",lanMode).put("research",research).put("researchDirect",researchDirect)
  companion object {
   fun parse(j:JSONObject)=MdmRights(j.optBoolean("config"),j.optBoolean("vpn"),j.optBoolean("telemetry"),
-   j.optBoolean("geo"),j.optBoolean("coordinates"),j.optString("lanMode","deny").ifEmpty{"deny"},j.optBoolean("research",false))
+   j.optBoolean("geo"),j.optBoolean("coordinates"),j.optString("lanMode","deny").ifEmpty{"deny"},j.optBoolean("research",false),j.optBoolean("researchDirect",false))
  }
 }
 /** No credentials in this display/wire identity. Secret storage belongs to MdmStore. */

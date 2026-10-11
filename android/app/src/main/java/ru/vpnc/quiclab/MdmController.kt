@@ -67,7 +67,7 @@ internal class MdmController(
     j.put("secret",newSecret()).put("pending",JSONObject().put("endpoint",invitation.endpoint)
      .put("token",invitation.token).put("registrationId",UUID.randomUUID().toString()))
    }
-   j.put("rights",rights.json()).put("radio_manual",false).put("research_standalone",false).put("active",false)
+   j.put("rights",rights.json()).put("radio_manual",false).put("research_standalone",false).put("research_direct_standalone",false).put("active",false)
     .put("generation",Math.addExact(j.getLong("generation"),1))
   }
   val saved=store.document();val pending=saved.getJSONObject("pending")

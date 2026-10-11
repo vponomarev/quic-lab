@@ -13,6 +13,11 @@ internal object ResearchSettings {
   if(state.binding!=null)return state.active && state.rights.research
   return state.standaloneResearch
  }
+ internal fun directAllowed(state:MdmState):Boolean = allowed(state) &&
+  (if(state.binding!=null)state.rights.researchDirect else state.standaloneResearchDirect)
+ internal fun effectiveScope(state:MdmState):ResearchScope =
+  if(directAllowed(state))state.researchScope else state.researchScope.vpnOnly()
+ fun effectiveScope(context:Context):ResearchScope=runCatching{effectiveScope(MdmStore(context).read())}.getOrDefault(ResearchScope())
  fun setStandalone(context:Context,enabled:Boolean){
   MdmStore(context).setStandaloneResearch(enabled)
   changed()
