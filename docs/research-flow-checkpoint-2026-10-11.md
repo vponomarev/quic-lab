@@ -42,3 +42,12 @@ Test harness lessons: reacquire versioned configuration preferences after consen
 Review found and fixed a real consent-sampling race: an older blocked true read could overwrite a newer false notification. Ordered sample tickets reject stale results without holding the forwarding mutex across Android callbacks. The deterministic regression failed before the fix and the full mobile race suite passed after it.
 
 The broad Go suite exposed an existing ordering assumption in TestSharedQUICBoundedDispatch. The test now waits for the server queue to fill before dialing the excess connection, rather than assuming client handshake completion orders server dispatch. Ten race-enabled repetitions and the complete suite passed.
+## Note12Pro follow-up — 2026-10-11
+
+User separately authorized the same synthetic research test on Xiaomi 22101316UG / Android 12. Installed 0.9.4-pre.2 (58); six consent/owner tests and the combined physical QUIC/HTTPS test passed (265.344 seconds). No production deployment.
+
+The first connection attempt timed out because Wi-Fi was disabled and the fixture lives on a private LAN. After temporarily enabling Wi-Fi, reachability and both tunnel modes passed. The isolated fixture identity was reused; fresh logical session IDs distinguish these runs from Note9. Only the selected synthetic probe entered the tunnel; the direct probe remained outside it.
+
+Canonical server JSONL matched Note12 results exactly: QUIC TCP 19,928/19,928 bytes and UDP 46/46; HTTPS TCP 20,304/20,304 and UDP 47/47. Each transport had a DNS query/response (29/61 bytes). TCP application identity and UID matched the probe. No direct/off/revoked flows appeared, all six consented flows closed, and export_summary.complete was true. Private evidence is under artifacts/research-note12/.
+
+The harness restored the original profile and research/MDM rights. Temporary fixture credentials were removed; Wi-Fi and USB screen timeout returned to their original state. Final screen confirmed AmneziaWG over LTE, RTT 75.6 ms and resolved exit IPv4; VPN, MDM and telemetry services were running. No product-code changes were needed for this device.
