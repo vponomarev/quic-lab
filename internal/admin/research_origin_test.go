@@ -10,7 +10,7 @@ import (
 func TestResearchOriginRendering(t *testing.T) {
 	for origin, label := range map[string]string{"client": "Источник: клиент", "server_awg": "Источник: сервер AWG", "": "Источник неизвестен (старый формат)"} {
 		var out bytes.Buffer
-		v := researchView{Rows: []researchRow{{Record: research.Record{Origin: origin}, Application: "<script>"}}}
+		v := researchView{Query: research.Query{UserID: "u"}, Rows: []researchRow{{Record: research.Record{Origin: origin}, Application: "<script>"}}}
 		if e := researchTemplate.Execute(&out, v); e != nil {
 			t.Fatal(e)
 		}

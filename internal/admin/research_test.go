@@ -81,7 +81,7 @@ func TestResearchFilters(t *testing.T) {
 }
 func TestResearchHTMLData(t *testing.T) {
 	attack := "<script>alert(1)</script>"
-	view := researchView{Policy: ResearchPolicy{Users: map[string]string{}}, Rows: []researchRow{{Flow: research.FlowData{Destination: attack}, Application: attack, Raw: attack}}, Tab: "dns"}
+	view := researchView{Query: research.Query{UserID: "u"}, Policy: ResearchPolicy{Users: map[string]string{}}, Rows: []researchRow{{Flow: research.FlowData{Destination: attack}, Application: attack, Raw: attack}}, Tab: "dns"}
 	var b bytes.Buffer
 	if err := researchTemplate.Execute(&b, view); err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestResearchGapHTMLData(t *testing.T) {
 	attack := "<script>gap</script>"
 	raw, _ := json.Marshal(map[string]string{"reason": attack, "dropped": "9", "user_id": attack})
 	rec := research.Record{At: time.Now(), Data: raw, Flow: research.FlowKey{DeviceID: attack, SessionID: attack}}
-	v := researchView{Gaps: []researchGap{researchGapRow(rec)}, Policy: ResearchPolicy{Users: map[string]string{}}}
+	v := researchView{Query: research.Query{UserID: "u"}, Gaps: []researchGap{researchGapRow(rec)}, Policy: ResearchPolicy{Users: map[string]string{}}}
 	var b bytes.Buffer
 	if err := researchTemplate.Execute(&b, v); err != nil {
 		t.Fatal(err)
@@ -219,8 +219,12 @@ func TestResearchMountedUnderLab(t *testing.T) {
 	if r.Code != 200 {
 		t.Fatalf("canonical research route: %d", r.Code)
 	}
-	if strings.Contains(r.Body.String(), "/lab/lab/research") || !strings.Contains(r.Body.String(), "/lab/research/export") {
+	if strings.Contains(r.Body.String(), "/lab/lab/research") || !strings.Contains(r.Body.String(), "Выберите аккаунт") {
 		t.Fatal("invalid mounted research links")
+	}
+	scoped := call(h, "GET", "/research?user=retained-account", "", cookie)
+	if scoped.Code != 200 || !strings.Contains(scoped.Body.String(), `type="hidden" name="user" value="retained-account"`) || !strings.Contains(scoped.Body.String(), "/lab/research/export?user=retained-account") || strings.Contains(scoped.Body.String(), "Дисковая квота") {
+		t.Fatal("account page loses scope or includes global controls")
 	}
 	if r := call(h, "GET", "/lab/research", "", cookie); r.Code != 200 {
 		t.Fatal("legacy route removed")

@@ -205,7 +205,11 @@ func (w *Web) researchSettingsPost(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Cannot save research settings", 500)
 		return
 	}
-	http.Redirect(rw, r, w.base+"research", 303)
+	target := w.base + "research"
+	if id := r.Form.Get("user"); id != "" {
+		target += "?user=" + url.QueryEscape(id)
+	}
+	http.Redirect(rw, r, target, 303)
 }
 
 type researchRow struct {
@@ -241,6 +245,7 @@ func researchGapRow(rec research.Record) researchGap {
 }
 
 type researchView struct {
+	UserName                               string
 	Gaps                                   []researchGap
 	Base, CSRF, Export, Next, Tab, Message string
 	Query                                  research.Query
@@ -261,14 +266,30 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := researchView{Base: w.base, CSRF: s.CSRF, Query: q, Policy: w.ResearchSettings(), Users: w.Store.List(), Tab: r.URL.Query().Get("tab")}
+	if q.UserID != "" {
+		v.UserName = q.UserID // Keep retained history accessible after account deletion.
+		v.Users = nil
+		for _, user := range w.Store.List() {
+			if user.ID == q.UserID {
+				v.UserName = user.Name
+				v.Users = []User{user}
+				break
+			}
+		}
+	}
 	if v.Tab != "dns" {
 		v.Tab = "flows"
 	}
 	params := r.URL.Query()
 	params.Del("cursor")
 	v.Export = w.base + "research/export?" + params.Encode()
-	store, openErr := w.researchStore()
-	if openErr != nil || store == nil {
+	store, openErr := (*research.Store)(nil), error(nil)
+	if q.UserID != "" {
+		store, openErr = w.researchStore()
+	}
+	if q.UserID == "" {
+		// The account overview does not query or render mixed traffic.
+	} else if openErr != nil || store == nil {
 		v.Message = "Хранилище недоступно или не настроено. Задайте квоту хранения; при ошибке проверьте состояние сервера."
 	} else {
 		p, e := store.Query(r.Context(), q)
