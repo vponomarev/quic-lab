@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -244,7 +245,32 @@ func researchGapRow(rec research.Record) researchGap {
 	return row
 }
 
+type researchAppStats struct {
+	research.ApplicationStats
+	Name, Source, URL, Up, Down string
+	Selected                    bool
+}
+
+func researchBytes(n uint64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	v := float64(n)
+	for _, unit := range units {
+		v /= 1024
+		if v < 1024 || unit == "TiB" {
+			return fmt.Sprintf("%.1f %s", v, unit)
+		}
+	}
+	return ""
+}
+
 type researchView struct {
+	Applications     []researchAppStats
+	SummaryPartial   bool
+	ClearApplication string
+
 	UserName                               string
 	Gaps                                   []researchGap
 	Base, CSRF, Export, Next, Tab, Message string
@@ -296,6 +322,44 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			http.Error(rw, "Research query failed", 400)
 			return
+		}
+		summaryQuery := q
+		summaryQuery.Application = ""
+		summaryContext, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		summary, summaryErr := store.ApplicationSummary(summaryContext, summaryQuery)
+		cancel()
+		v.SummaryPartial = summary.Partial || summaryErr != nil
+		links := r.URL.Query()
+		links.Del("application")
+		links.Del("cursor")
+		v.ClearApplication = w.base + "research?" + links.Encode()
+		for _, a := range summary.Applications {
+			key := a.App.Attribution
+			name := strings.Join(a.App.Labels, ", ")
+			if len(a.App.Packages) > 0 {
+				key = a.App.Packages[0]
+				if name == "" {
+					name = strings.Join(a.App.Packages, ", ")
+				}
+			}
+			if key == "" {
+				key = "unknown"
+			}
+			if name == "" {
+				name = "Неизвестное приложение"
+			}
+			source := map[string]string{"client": "Клиент", "server_gateway": "Сервер QUIC/HTTPS", "server_awg": "Сервер AWG", "server_vless": "Сервер VLESS"}[a.Origin]
+			if source == "" {
+				source = "Старый формат"
+			}
+			links.Set("application", key)
+			if a.Origin == "" {
+				links.Set("origin", "legacy_unknown")
+			} else {
+				links.Set("origin", a.Origin)
+			}
+			selected := q.Application == key && (q.Origin == "" || q.Origin == a.Origin)
+			v.Applications = append(v.Applications, researchAppStats{ApplicationStats: a, Name: name, Source: source, URL: w.base + "research?" + links.Encode(), Up: researchBytes(a.BytesUp), Down: researchBytes(a.BytesDown), Selected: selected})
 		}
 		v.Coverage = p.Coverage
 		for _, rec := range p.Records {
