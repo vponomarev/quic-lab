@@ -53,6 +53,12 @@ func (w *Web) ResearchAllowed(userID string) bool {
 	return p.Enabled
 }
 func (w *Web) researchRoutes(m *http.ServeMux) {
+	m.HandleFunc("GET /research", w.researchPage)
+	m.HandleFunc("GET /research/records", w.researchRecords)
+	m.HandleFunc("GET /research/export", w.researchExport)
+	m.HandleFunc("POST /research/settings", w.researchSettingsPost)
+	// Preserve old standalone fixture URLs.
+
 	m.HandleFunc("GET /lab/research", w.researchPage)
 	m.HandleFunc("GET /lab/research/records", w.researchRecords)
 	m.HandleFunc("GET /lab/research/export", w.researchExport)
@@ -199,7 +205,7 @@ func (w *Web) researchSettingsPost(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Cannot save research settings", 500)
 		return
 	}
-	http.Redirect(rw, r, w.base+"lab/research", 303)
+	http.Redirect(rw, r, w.base+"research", 303)
 }
 
 type researchRow struct {
@@ -260,7 +266,7 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 	}
 	params := r.URL.Query()
 	params.Del("cursor")
-	v.Export = w.base + "lab/research/export?" + params.Encode()
+	v.Export = w.base + "research/export?" + params.Encode()
 	store, openErr := w.researchStore()
 	if openErr != nil || store == nil {
 		v.Message = "Хранилище недоступно или не настроено. Задайте квоту хранения; при ошибке проверьте состояние сервера."
@@ -300,7 +306,7 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 		}
 		if p.NextCursor != "" {
 			params.Set("cursor", p.NextCursor)
-			v.Next = w.base + "lab/research?" + params.Encode()
+			v.Next = w.base + "research?" + params.Encode()
 		}
 	}
 	var b bytes.Buffer

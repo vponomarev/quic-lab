@@ -203,3 +203,26 @@ func TestResearchGapHTMLData(t *testing.T) {
 		t.Fatal("gap HTML not escaped")
 	}
 }
+
+func TestResearchMountedUnderLab(t *testing.T) {
+	cfg := config(t)
+	cfg.PublicURL = "https://lab.example/lab/"
+	s, err := OpenStore(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(cfg, s)
+	h := w.Handler()
+	login := call(h, "POST", "/login", url.Values{"username": {cfg.Username}, "password": {cfg.Password}}.Encode(), nil)
+	cookie := login.Result().Cookies()[0]
+	r := call(h, "GET", "/research", "", cookie)
+	if r.Code != 200 {
+		t.Fatalf("canonical research route: %d", r.Code)
+	}
+	if strings.Contains(r.Body.String(), "/lab/lab/research") || !strings.Contains(r.Body.String(), "/lab/research/export") {
+		t.Fatal("invalid mounted research links")
+	}
+	if r := call(h, "GET", "/lab/research", "", cookie); r.Code != 200 {
+		t.Fatal("legacy route removed")
+	}
+}
