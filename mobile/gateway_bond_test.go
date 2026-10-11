@@ -20,7 +20,9 @@ import (
 	"path/filepath"
 	"quiclab/internal/bond"
 	"quiclab/internal/gateway"
+	"quiclab/internal/research"
 	"quiclab/internal/trafficbudget"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -235,7 +237,14 @@ func TestBondCreateNeverReusesCallerToken(t *testing.T) {
 
 func TestQUICHTTPSShareOneExitSocket(t *testing.T) { testBondTransportContinuity(t, false) }
 func TestHTTPSQUICShareOneExitSocket(t *testing.T) { testBondTransportContinuity(t, true) }
+func TestResearchBondMixedPaths(t *testing.T) {
+	t.Run("quic-to-https", func(t *testing.T) { testBondTransportContinuityResearch(t, false, true) })
+	t.Run("https-to-quic", func(t *testing.T) { testBondTransportContinuityResearch(t, true, true) })
+}
 func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
+	testBondTransportContinuityResearch(t, startHTTPS, false)
+}
+func testBondTransportContinuityResearch(t *testing.T, startHTTPS, observe bool) {
 	budget, _ := NewTrafficBudget("mixed-run", 1<<20)
 	pair, cp, kp := testIdentity(t)
 	ca := filepath.Join(t.TempDir(), "ca.pem")
@@ -245,6 +254,17 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv.BondContext = ctx
+	var observationsMu sync.Mutex
+	var observations []research.Record
+	if observe {
+		srv.Research = gateway.NewResearchReceiver(func(tls.ConnectionState) (string, string, bool) { return "u", "d", true }, func(r research.Record) bool {
+			observationsMu.Lock()
+			defer observationsMu.Unlock()
+			observations = append(observations, r)
+			return true
+		})
+	}
+	ref := gateway.ResearchFlowRef{Version: 1, Session: "0123456789abcdef0123456789abcdef", FlowID: 1}
 	q, e := quic.ListenAddr("127.0.0.1:0", tc, &quic.Config{EnableDatagrams: true})
 	if e != nil {
 		t.Fatal(e)
@@ -294,6 +314,13 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 	if err := noCert.addBondHTTPS(ctx, ln.Addr().String(), bond.PathInfo{ID: "unauthorized", ProfileID: "fallback", Network: "wifi", Generation: 1}, nil, false); err == nil {
 		t.Fatal("client without certificate joined")
 	}
+	if observe {
+		reply, err := sendResearchBatch(ctx, g.open, gateway.ResearchBatch{Session: ref.Session, Generation: 1, Enabled: true})
+		if err != nil || !reply.Allowed || reply.FlowObservationVersion != 1 {
+			t.Fatalf("consent: %+v %v", reply, err)
+		}
+		ctx = gateway.WithResearchFlow(ctx, ref)
+	}
 	st, e := g.dialStream(ctx, "tcp", target.Addr().String())
 	if e != nil {
 		t.Fatal(e)
@@ -331,7 +358,13 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 			udp.WriteTo(buf[:n], from)
 		}
 	}()
-	mapping, e := (bondUDP{g}).DialContext(ctx, "udp4", udp.LocalAddr().String())
+	udpCtx := ctx
+	if observe {
+		udpRef := ref
+		udpRef.FlowID = 2
+		udpCtx = gateway.WithResearchFlow(ctx, udpRef)
+	}
+	mapping, e := (bondUDP{g}).DialContext(udpCtx, "udp4", udp.LocalAddr().String())
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -369,4 +402,107 @@ func testBondTransportContinuity(t *testing.T, startHTTPS bool) {
 	if count.Load() != 1 {
 		t.Fatal("exit socket recreated", count.Load())
 	}
+	if observe {
+		// Closing logical flows flushes asynchronously; physical path copies must not
+		// multiply these exit-socket payload counters.
+		mapping.Close()
+		st.Close()
+		deadline := time.Now().Add(3 * time.Second)
+		var rows []research.Record
+		for time.Now().Before(deadline) {
+			observationsMu.Lock()
+			rows = append([]research.Record(nil), observations...)
+			observationsMu.Unlock()
+			if len(rows) >= 2 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("expected two logical flows, got %d", len(rows))
+		}
+		seenRefs := map[uint64]bool{}
+		for _, row := range rows {
+			var d research.FlowData
+			if err := json.Unmarshal(row.Data, &d); err != nil {
+				t.Fatal(err)
+			}
+			if row.Origin != "server_gateway" || d.ClientFlow == nil || d.ClientFlow.SessionID != ref.Session || d.ClientFlow.DeviceID != "d" {
+				t.Fatalf("lost provenance: %+v %+v", row, d)
+			}
+			id := d.ClientFlow.FlowID
+			if seenRefs[id] {
+				t.Fatal("duplicate logical observation", id)
+			}
+			seenRefs[id] = true
+			want := uint64(len(payload))
+			if id == 2 {
+				want = 11
+				if d.PacketsUp != 2 || d.PacketsDown != 2 {
+					t.Fatal("duplicate datagrams", d)
+				}
+			} else if id != 1 {
+				t.Fatal("unexpected ref", id)
+			}
+			if d.BytesUp != want || d.BytesDown != want {
+				t.Fatalf("counter mismatch: %+v", d)
+			}
+		}
+		// Consent is shared across paths and generations, including after fallback.
+		reply, err := sendResearchBatch(ctx, g.open, gateway.ResearchBatch{Session: ref.Session, Generation: 2, Enabled: false})
+		if err != nil || reply.Allowed {
+			t.Fatalf("revoke: %+v %v", reply, err)
+		}
+		reply, err = sendResearchBatch(ctx, g.open, gateway.ResearchBatch{Session: ref.Session, Generation: 1, Enabled: true})
+		if err != nil || reply.Allowed {
+			t.Fatalf("stale consent accepted: %+v %v", reply, err)
+		}
+		resumedRef := ref
+		resumedRef.FlowID = 3
+		live, err := g.dialStream(gateway.WithResearchFlow(ctx, resumedRef), "tcp", target.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer live.Close()
+		live.SetDeadline(time.Now().Add(3 * time.Second))
+		echo := func(text string) {
+			t.Helper()
+			if _, err := live.Write([]byte(text)); err != nil {
+				t.Fatal(err)
+			}
+			data := make([]byte, len(text))
+			if _, err := io.ReadFull(live, data); err != nil || string(data) != text {
+				t.Fatalf("VPN interrupted by consent change: %q %v", data, err)
+			}
+		}
+		echo("revoked")
+		reply, err = sendResearchBatch(ctx, g.open, gateway.ResearchBatch{Session: ref.Session, Generation: 3, Enabled: true})
+		if err != nil || !reply.Allowed {
+			t.Fatalf("resume: %+v %v", reply, err)
+		}
+		echo("enabled")
+		live.Close()
+		deadline = time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			observationsMu.Lock()
+			rows = append([]research.Record(nil), observations...)
+			observationsMu.Unlock()
+			if len(rows) >= 3 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if len(rows) != 3 {
+			t.Fatalf("resume records: %d", len(rows))
+		}
+		var resumed research.FlowData
+		if err := json.Unmarshal(rows[2].Data, &resumed); err != nil {
+			t.Fatal(err)
+		}
+		if resumed.ClientFlow == nil || resumed.ClientFlow.FlowID != 3 || resumed.BytesUp != 7 || resumed.BytesDown != 7 {
+			t.Fatalf("revoked bytes collected or resume failed: %+v", resumed)
+		}
+
+	}
+
 }

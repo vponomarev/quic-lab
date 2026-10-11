@@ -354,3 +354,88 @@ func TestObserverPolicyRecheckedAndWriterLossVisible(t *testing.T) {
 		t.Fatal("server revoke ignored")
 	}
 }
+
+// A restart loses the control lease, not the meaning of the client flow ID.
+// New consent may resume observation under a fresh server epoch.
+func TestObserverRestartRequiresConsentAndSeparatesEpochs(t *testing.T) {
+	opts := research.StoreOptions{Dir: t.TempDir(), MaxBytes: 1 << 20}
+	store, err := research.OpenStore(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { store.Close() }()
+	var got []research.Record
+	identity := func(tls.ConnectionState) (string, string, bool) { return "u", "d", true }
+	writer := func(v research.Record) bool { got = append(got, v); return store.TryAppend(v) }
+	ref := ResearchFlowRef{Version: 1, Session: "0123456789abcdef0123456789abcdef", FlowID: 1}
+	var previousEpoch string
+	for restart := 0; restart < 2; restart++ {
+		if restart > 0 {
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = research.OpenStore(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewResearchReceiver(identity, writer)
+		f := &observedConnection{receiver: r, user: "u", device: "d", id: 1, ref: ref, network: "tcp4", destination: "1.2.3.4:443"}
+		f.ready.Store(true)
+		before := len(got)
+		f.payload([]byte("without new control"), true)
+		f.flush(false)
+		if len(got) != before {
+			t.Fatal("restart inherited consent")
+		}
+		r.Receive(context.Background(), tls.ConnectionState{}, ResearchBatch{Session: ref.Session, Generation: 10, Enabled: true})
+		f.payload([]byte("yes"), true)
+		f.flush(false)
+		if len(got) != before+1 {
+			t.Fatal("fresh consent not applied")
+		}
+		row := got[len(got)-1]
+		var d research.FlowData
+		if err := json.Unmarshal(row.Data, &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.BytesUp != 3 || d.ClientFlow == nil || d.ClientFlow.SessionID != ref.Session {
+			t.Fatal(d)
+		}
+		if row.Flow.SessionID == previousEpoch || row.Flow.SessionID == ref.Session {
+			t.Fatal("server epochs collided")
+		}
+		previousEpoch = row.Flow.SessionID
+		r.Receive(context.Background(), tls.ConnectionState{}, ResearchBatch{Session: ref.Session, Generation: 11, Enabled: false})
+		r.Receive(context.Background(), tls.ConnectionState{}, ResearchBatch{Session: ref.Session, Generation: 10, Enabled: true})
+		f.payload([]byte("stale path"), true)
+		f.flush(false)
+		if len(got) != before+1 {
+			t.Fatal("stale path restored revoked consent")
+		}
+	}
+	if got[0].ID == got[1].ID {
+		t.Fatal("records deduplicate across restart")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = research.OpenStore(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.Query(context.Background(), research.Query{Origin: "server_gateway", DeviceID: "d"})
+	if err != nil || len(page.Records) != 2 {
+		t.Fatalf("restart history: %d %v", len(page.Records), err)
+	}
+	for _, row := range page.Records {
+		var d research.FlowData
+		if err := json.Unmarshal(row.Data, &d); err != nil {
+			t.Fatal(err)
+		}
+		if row.Origin != "server_gateway" || row.ReceivedAt == "" || d.ClientFlow == nil || d.ClientFlow.SessionID != ref.Session || d.BytesUp != 3 {
+			t.Fatalf("provenance changed after reopening: %+v %+v", row, d)
+		}
+	}
+
+}
