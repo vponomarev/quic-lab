@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="920" viewBox="0 0 1400 920"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="none" stroke="#536a86"/></marker></defs><rect width="1400" height="920" fill="#f2f6fb"/><style>text{font-family:Segoe UI,Arial,sans-serif;fill:#18324e}.title{font-size:32px;font-weight:700}.head{font-size:22px;font-weight:650}.body{font-size:18px}.small{font-size:16px;fill:#536a86}.arrow{stroke:#536a86;stroke-width:2;fill:none;marker-end:url(#arrow)}</style><text class="title" x="44" y="57">Единое ядро сетевого анализа</text><text class="body" x="44" y="89">Одна библиотека · два места исполнения · независимые источники фактов</text>
+<rect x="30" y="120" width="570" height="545" rx="15" fill="#eaf4f7" stroke="#cdd9e7"/>
+<text class="head" x="50" y="154">ТЕЛЕФОН</text>
+<text class="body" x="50" y="186">Только трафик, попавший в наш туннель</text>
+<rect x="60" y="213" width="510" height="106" rx="15" fill="#fff" stroke="#cdd9e7"/>
+<text class="head" x="80" y="247">Идентичность приложения</text>
+<text class="body" x="80" y="279">UID / пакеты → устойчивый ID потока</text>
+<text class="body" x="80" y="306">Не PID: процессы перезапускаются</text>
+<rect x="60" y="351" width="510" height="112" rx="15" fill="#d5eee6" stroke="#cdd9e7"/>
+<text class="head" x="80" y="385">Общее ядро · локальная копия</text>
+<text class="body" x="80" y="417">DNS: A / AAAA / CNAME / TTL / класс</text>
+<text class="body" x="80" y="444">Без сети, записи на диск и экспорта</text>
+<rect x="60" y="506" width="510" height="126" rx="15" fill="#fff" stroke="#cdd9e7"/>
+<text class="head" x="80" y="540">Локальный DNS routing · в плане</text>
+<text class="body" x="80" y="572">DNS-кеш → выбор VPN / маршрута</text>
+<text class="body" x="80" y="599">Работает независимо от согласия</text>
+<text class="body" x="80" y="626">на исследовательский сбор</text>
+<path class="arrow" d="M315 463V502" />
+<rect x="800" y="120" width="570" height="545" rx="15" fill="#eef0fb" stroke="#cdd9e7"/>
+<text class="head" x="820" y="154">СЕРВЕР</text>
+<text class="body" x="820" y="186">Адаптеры — последующие этапы</text>
+<rect x="830" y="213" width="510" height="106" rx="15" fill="#fff" stroke="#cdd9e7"/>
+<text class="head" x="850" y="247">QUIC / HTTPS · AWG · VLESS</text>
+<text class="body" x="850" y="279">Расшифрованный трафик до внешнего выхода</text>
+<text class="body" x="850" y="306">Привязка к аутентифицированному клиенту</text>
+<rect x="830" y="351" width="510" height="112" rx="15" fill="#d5eee6" stroke="#cdd9e7"/>
+<text class="head" x="850" y="385">Общее ядро · серверная копия</text>
+<text class="body" x="850" y="417">DNS + учёт потоков и счётчиков</text>
+<text class="body" x="850" y="444">Приложение неизвестно без данных телефона</text>
+<rect x="830" y="506" width="510" height="126" rx="15" fill="#fff" stroke="#cdd9e7"/>
+<text class="head" x="850" y="540">Нормализованные наблюдения</text>
+<text class="body" x="850" y="572">Источник + время наблюдения / приёма</text>
+<text class="body" x="850" y="599">Качество каждого поля и явные пропуски</text>
+<text class="body" x="850" y="626">Разные источники не суммируются вслепую</text>
+<path class="arrow" d="M1085 319V347" />
+<path class="arrow" d="M1085 463V502" />
+<path class="arrow" d="M570 269H826" stroke-dasharray="7 6"/>
+<rect x="608" y="200" width="184" height="56" rx="9" fill="#fff0cc"/><text class="small" x="623" y="224">Метаданные / DNS</text><text class="small" x="623" y="246">только с согласием</text>
+<rect x="300" y="722" width="800" height="124" rx="15" fill="#fff" stroke="#cdd9e7"/>
+<text class="head" x="320" y="756">Объединение → таблица → JSONL</text>
+<text class="body" x="320" y="788">Точное соответствие ID; сохраняем происхождение каждого поля</text>
+<text class="body" x="320" y="815">Основной источник байтов выбирается явно; raw-наблюдения доступны</text>
+<path class="arrow" d="M1085 632V686H900V718" />
+<text class="small" x="44" y="887">Первая итерация: DNS-ядро и происхождение записей. Адаптеры, объединение и DNS routing — план развития.</text></svg>

@@ -154,7 +154,15 @@ func OpenStore(o StoreOptions) (*Store, error) {
 	go s.run()
 	return s, nil
 }
-func recordKey(r Record) string { return r.Flow.DeviceID + "\x00" + r.Flow.SessionID + "\x00" + r.ID }
+func recordKey(r Record) string {
+	// Legacy records came through the client receiver: retries after an upgrade
+	// share its namespace. This does not infer provenance for their display.
+	origin := r.Origin
+	if origin == "" {
+		origin = "client"
+	}
+	return origin + "\x00" + r.Flow.DeviceID + "\x00" + r.Flow.SessionID + "\x00" + r.ID
+}
 
 // TryAppend performs bounded validation/copying and a nonblocking queue send, never disk I/O.
 func (s *Store) TryAppend(r Record) bool {

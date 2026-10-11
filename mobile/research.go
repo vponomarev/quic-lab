@@ -470,7 +470,7 @@ func (c *researchCollector) enqueueLocked(kind string, flow uint64, data any, no
 		return
 	}
 	c.nextRecord++
-	record := research.Record{SchemaVersion: research.SchemaVersion, Type: kind, ID: c.session + "-" + strconv.FormatUint(c.nextRecord, 10),
+	record := research.Record{Origin: "client", SchemaVersion: research.SchemaVersion, Type: kind, ID: c.session + "-" + strconv.FormatUint(c.nextRecord, 10),
 		At: now.UTC(), Generation: c.generation, Flow: research.FlowKey{SessionID: c.session, FlowID: flow}, Data: raw}
 	encoded, err := json.Marshal(record)
 	if err != nil || len(encoded) > researchBatchBytes-256 || len(c.queue) >= researchQueueRecords || c.queueBytes+len(encoded) > researchQueueBytes {

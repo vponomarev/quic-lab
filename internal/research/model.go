@@ -27,6 +27,8 @@ type App struct {
 	Attribution string   `json:"attribution"`
 }
 type Record struct {
+	Origin        string          `json:"origin,omitempty"`
+	ReceivedAt    string          `json:"received_at,omitempty"`
 	SchemaVersion uint32          `json:"schema_version"`
 	Type          string          `json:"type"`
 	ID            string          `json:"id"`
@@ -57,6 +59,18 @@ type FlowData struct {
 }
 
 func validate(r Record) error {
+	switch r.Origin {
+	case "", "client", "server_gateway", "server_awg", "server_vless":
+	default:
+		return errors.New("invalid research origin")
+	}
+	if r.ReceivedAt != "" {
+		at, err := time.Parse(time.RFC3339Nano, r.ReceivedAt)
+		if len(r.ReceivedAt) > 64 || err != nil || at.IsZero() {
+			return errors.New("invalid research receipt time")
+		}
+	}
+
 	if len(r.Data) > MaxRecordBytes {
 		return errors.New("research payload exceeds 64 KiB")
 	}

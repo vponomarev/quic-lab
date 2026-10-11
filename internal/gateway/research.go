@@ -92,6 +92,8 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 		default:
 			continue
 		}
+		record.Origin = "client"
+		record.ReceivedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		record.Flow.DeviceID = device
 		record.Flow.SessionID = b.Session
 		// Identity is authoritative for every record type, including gaps and DNS.
