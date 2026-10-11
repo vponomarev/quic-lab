@@ -37,7 +37,49 @@ type Record struct {
 	Flow          FlowKey         `json:"flow"`
 	Data          json.RawMessage `json:"data"`
 }
+
+// ExitRef describes the client's selected egress, independently of observation origin.
+// It is metadata, never an authorization or proof of server identity.
+type ExitRef struct {
+	Route string `json:"route,omitempty"`
+	ID    string `json:"exit_id,omitempty"`
+	Type  string `json:"exit_type,omitempty"`
+}
+
+func (e ExitRef) Normalized() ExitRef {
+	if e.Route == "" {
+		e.Route = "unknown"
+	}
+	if e.Type == "" {
+		e.Type = "unknown"
+	}
+	return e
+}
+func (e ExitRef) validate() error {
+	if len(e.ID) > 256 || strings.ContainsRune(e.ID, 0) {
+		return errors.New("invalid research exit ID")
+	}
+	switch e.Route {
+	case "", "unknown", "vpn", "direct":
+	default:
+		return errors.New("invalid research route")
+	}
+	switch e.Type {
+	case "", "unknown", "quic", "https", "direct":
+	default:
+		return errors.New("invalid research exit type")
+	}
+	if e.Route == "direct" && (e.ID != "direct" || e.Type != "direct") {
+		return errors.New("invalid direct exit")
+	}
+	if e.Route != "direct" && (e.ID == "direct" || e.Type == "direct") {
+		return errors.New("direct exit requires direct route")
+	}
+	return nil
+}
+
 type FlowData struct {
+	ExitRef
 	AppSource        string     `json:"app_source,omitempty"`
 	ClientFlow       *FlowKey   `json:"client_flow,omitempty"`
 	UserID           string     `json:"user_id"`
@@ -86,6 +128,15 @@ func validate(r Record) error {
 	}
 	if r.ID == "" || strings.ContainsRune(r.ID, 0) || strings.ContainsRune(r.Flow.DeviceID, 0) || strings.ContainsRune(r.Flow.SessionID, 0) || len(r.ID) > 256 || r.At.IsZero() || len(r.Flow.DeviceID) > 256 || len(r.Flow.SessionID) > 256 || !json.Valid(r.Data) {
 		return errors.New("invalid research envelope")
+	}
+	if strings.HasPrefix(r.Type, "flow_") || r.Type == "dns" {
+		var exit ExitRef
+		if err := json.Unmarshal(r.Data, &exit); err != nil {
+			return err
+		}
+		if err := exit.validate(); err != nil {
+			return err
+		}
 	}
 	if strings.HasPrefix(r.Type, "flow_") {
 		var d FlowData

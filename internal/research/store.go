@@ -25,6 +25,8 @@ type StoreOptions struct {
 	QueueSize int
 }
 type Query struct {
+	Route       string    `json:"route,omitempty"`
+	ExitID      string    `json:"exit_id,omitempty"`
 	Origin      string    `json:"origin,omitempty"`
 	UserID      string    `json:"user_id,omitempty"`
 	DeviceID    string    `json:"device_id,omitempty"`
@@ -331,6 +333,9 @@ func matches(r Record, q Query) bool {
 	// A session-wide gap cannot be assigned to a particular application or
 	// destination. Retain it under flow filters, but never widen identity/time scope.
 	if r.Type != "gap" {
+		if q.Route != "" && q.Route != d.ExitRef.Normalized().Route || q.ExitID != "" && q.ExitID != d.ExitRef.ID {
+			return false
+		}
 		if q.Protocol != "" && q.Protocol != d.Protocol || q.Address != "" && !strings.Contains(d.Source, q.Address) && !strings.Contains(d.Destination, q.Address) || q.Domain != "" && q.Domain != d.Domain {
 			return false
 		}

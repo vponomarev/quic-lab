@@ -10,6 +10,7 @@ import (
 )
 
 type ApplicationStats struct {
+	ExitRef
 	Origin, MeasurementLevel              string
 	App                                   App
 	Flows, DNSQueries, BytesUp, BytesDown uint64
@@ -68,6 +69,13 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 			f.Origin = r.Origin
 			flows[key] = f
 		}
+		if r.Type != "app" && d.ExitRef != (ExitRef{}) {
+			if f.ExitRef != (ExitRef{}) && f.ExitRef != d.ExitRef {
+				result.Partial = true
+				return nil
+			}
+			f.ExitRef = d.ExitRef
+		}
 		if len(d.App.Packages) > 0 {
 			f.App = d.App
 		} else if len(f.App.Packages) == 0 && d.App.Attribution != "" {
@@ -114,11 +122,11 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 		}
 		pkgs := append([]string(nil), f.App.Packages...)
 		sort.Strings(pkgs)
-		keyBytes, _ := json.Marshal([]any{f.Origin, f.MeasurementLevel, pkgs, f.App.Attribution})
+		keyBytes, _ := json.Marshal([]any{f.Origin, f.MeasurementLevel, f.ExitRef.Normalized(), pkgs, f.App.Attribution})
 		key := string(keyBytes)
 		a := groups[key]
 		if a == nil {
-			a = &ApplicationStats{Origin: f.Origin, MeasurementLevel: f.MeasurementLevel, App: f.App}
+			a = &ApplicationStats{ExitRef: f.ExitRef.Normalized(), Origin: f.Origin, MeasurementLevel: f.MeasurementLevel, App: f.App}
 			groups[key] = a
 		}
 		a.Flows += f.Flows
