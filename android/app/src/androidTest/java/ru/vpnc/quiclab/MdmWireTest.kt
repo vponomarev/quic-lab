@@ -28,7 +28,7 @@ class MdmWireTest {
   val ca=String(Base64.decode(args.getString("mdm_ca"),Base64.DEFAULT),Charsets.UTF_8)
   val c=Isolated(InstrumentationRegistry.getInstrumentation().targetContext)
   try{
-   VpnProfiles.list(c);val store=MdmStore(c)
+   VpnProfiles.list(c);val originalApps=MdmConfiguration.snapshotLocal(c).getJSONArray("globalApps").toString();val store=MdmStore(c)
    val controller=MdmController(store,{object:MdmGateway{
     var transport:MdmTransport?=null
     override fun post(b:MdmBinding,op:String,body:JSONObject,secret:String):JSONObject{
@@ -45,13 +45,19 @@ class MdmWireTest {
    assertTrue(controller.report{s->MdmDeviceReport.snapshot(c,s).put("name","Wire test")})
    var desired:MdmConfigRevision?=null
    assertTrue(controller.poll{_,response->desired=response.desiredConfig})
+   if(args.getString("mdm_manual_apply")=="true") {
+    val status=android.os.Bundle();status.putString("ready_binding",store.read().binding!!.id);InstrumentationRegistry.getInstrumentation().sendStatus(0,status)
+    val deadline=android.os.SystemClock.elapsedRealtime()+180000
+    while(desired==null && android.os.SystemClock.elapsedRealtime()<deadline){Thread.sleep(1000);controller.poll{_,response->desired=response.desiredConfig}}
+   }
    assertNotNull("Server did not create desired config from report",desired)
    val port=object:MdmVpnPort{override fun active()=false;override fun stop(){};override fun start()="stopped"}
    MdmApplyCoordinatorTest.suspendRealVpnForIsolatedPorts()
    val result=try{MdmApplyCoordinator(c,port).apply(store.read(),desired!!)}finally{MdmApplyCoordinatorTest.restoreRealVpn()}
    if(args.getString("mdm_research_scope")=="true")assertEquals("all_apps",store.read().researchScope.mode)
    assertTrue(result.errorCode,result.configurationApplied)
-   assertEquals("org.example.selected",MdmConfiguration.snapshotLocal(c).getJSONArray("globalApps").getString(0))
+   if(args.getString("mdm_manual_apply")=="true")assertEquals(originalApps,MdmConfiguration.snapshotLocal(c).getJSONArray("globalApps").toString())
+   else assertEquals("org.example.selected",MdmConfiguration.snapshotLocal(c).getJSONArray("globalApps").getString(0))
    controller.report{s->MdmDeviceReport.snapshot(c,s).put("name","Wire test")}
    controller.poll{_,response->assertNull("Applied revision must be acknowledged",response.desiredConfig)}
    assertEquals(desired!!.revision,store.read().appliedRevision)
