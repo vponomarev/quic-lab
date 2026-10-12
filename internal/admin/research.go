@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"quiclab/internal/research"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +67,10 @@ func (w *Web) researchRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /lab/research/settings", w.researchSettingsPost)
 }
 func researchQuery(v url.Values) (research.Query, error) {
-	q := research.Query{Route: v.Get("route"), ExitID: v.Get("exit"), Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	q := research.Query{SNI: v.Get("sni"), Route: v.Get("route"), ExitID: v.Get("exit"), Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	if len(q.SNI) > 253 || strings.ContainsRune(q.SNI, 0) {
+		return q, fmt.Errorf("invalid SNI")
+	}
 	if q.Route != "" && q.Route != "vpn" && q.Route != "direct" && q.Route != "unknown" {
 		return q, fmt.Errorf("unknown route")
 	}
@@ -223,6 +227,8 @@ type researchRow struct {
 	Record           research.Record
 	Flow             research.FlowData
 	Application, Raw string
+	Events           []research.Record
+	EventCount       int
 }
 type researchGap struct {
 	Record                  research.Record
@@ -255,6 +261,9 @@ type researchAppStats struct {
 	research.ApplicationStats
 	Name, Source, URL, Up, Down string
 	Selected                    bool
+	GroupStart                  bool
+	GroupSpan                   int
+	GroupURL                    string
 }
 
 func researchBytes(n uint64) string {
@@ -309,7 +318,7 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if v.Tab != "dns" {
+	if v.Tab != "dns" && v.Tab != "events" {
 		v.Tab = "flows"
 	}
 	params := r.URL.Query()
@@ -324,7 +333,12 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 	} else if openErr != nil || store == nil {
 		v.Message = "Хранилище недоступно или не настроено. Задайте квоту хранения; при ошибке проверьте состояние сервера."
 	} else {
-		p, e := store.Query(r.Context(), q)
+		rawQuery := q
+		if v.Tab == "flows" {
+			rawQuery.Cursor = ""
+			rawQuery.Limit = 1
+		}
+		p, e := store.Query(r.Context(), rawQuery)
 		if e != nil {
 			http.Error(rw, "Research query failed", 400)
 			return
@@ -369,10 +383,30 @@ func (w *Web) researchPage(rw http.ResponseWriter, r *http.Request) {
 			selected := q.Application == key && (q.Origin == "" || q.Origin == a.Origin)
 			v.Applications = append(v.Applications, researchAppStats{ApplicationStats: a, Name: name, Source: source, URL: w.base + "research?" + links.Encode(), Up: researchBytes(a.BytesUp), Down: researchBytes(a.BytesDown), Selected: selected})
 		}
-		v.Coverage = p.Coverage
+		groupResearchApplications(v.Applications, r.URL.Query(), w.base)
+		v.Coverage = summary.Coverage
+		if v.Tab == "flows" {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			connections, err := store.Connections(ctx, q)
+			cancel()
+			if err != nil {
+				v.Message = "Не удалось прочитать сводку соединений."
+			} else {
+				v.Coverage = connections.Coverage
+				v.SummaryPartial = v.SummaryPartial || connections.Partial
+				for _, c := range connections.Rows {
+					row := researchRow{Record: c.Record, Flow: c.Flow, Events: c.Events, EventCount: c.EventCount, Application: researchAppName(c.Flow.App)}
+					v.Rows = append(v.Rows, row)
+				}
+				p.NextCursor = connections.NextCursor
+			}
+		}
 		for _, rec := range p.Records {
 			if rec.Type == "gap" {
 				v.Gaps = append(v.Gaps, researchGapRow(rec))
+				continue
+			}
+			if v.Tab == "flows" {
 				continue
 			}
 			dns := rec.Type == "dns"
@@ -421,3 +455,42 @@ func (w *Web) researchStore() (*research.Store, error) {
 //go:embed research.html
 var researchHTML string
 var researchTemplate = template.Must(template.New("research").Parse(researchHTML))
+
+func researchAppName(a research.App) string {
+	labels := a.Labels
+	if len(labels) == 0 {
+		labels = a.Packages
+	}
+	if len(labels) == 0 {
+		return "Неизвестное приложение"
+	}
+	return strings.Join(labels, ", ")
+}
+func groupResearchApplications(rows []researchAppStats, params url.Values, base string) {
+	key := func(a researchAppStats) string {
+		p := append([]string(nil), a.App.Packages...)
+		sort.Strings(p)
+		return a.App.Attribution + "/" + strings.Join(p, ",")
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return key(rows[i]) < key(rows[j]) })
+	for i := 0; i < len(rows); {
+		j := i + 1
+		for j < len(rows) && key(rows[j]) == key(rows[i]) {
+			j++
+		}
+		rows[i].GroupStart = true
+		rows[i].GroupSpan = j - i
+		p := url.Values{}
+		for k, v := range params {
+			p[k] = append([]string(nil), v...)
+		}
+		p.Del("cursor")
+		app := rows[i].App.Attribution
+		if len(rows[i].App.Packages) > 0 {
+			app = rows[i].App.Packages[0]
+		}
+		p.Set("application", app)
+		rows[i].GroupURL = base + "research?" + p.Encode()
+		i = j
+	}
+}

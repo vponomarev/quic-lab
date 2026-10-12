@@ -46,6 +46,14 @@ class ResearchDirectLiveTest {
    val profile=JSONObject(File(c.filesDir,"research-fixture.private.json").readText());ProfileImport.save(c,profile);added=VpnProfiles.current(c).id
    val bond=InstrumentationRegistry.getArguments().getString("research_bond")=="true"
    val p=VpnProfiles.preferences(c,added);p.edit().putBoolean("global_apps",false).putInt("mode",1).putStringSet("apps",setOf(probe)).putBoolean("demux_enabled",bond).putBoolean("max_availability",bond).putInt("quic_pool_size",3).putInt("https_pool_size",3).commit()
+   if(args.getString("research_prepare_only")=="true"){
+    check(createdAcceptanceBackup){"Preparation requires durable restoration backup"}
+    val transport=args.getString("research_transport")?:"quic";require(transport in listOf("quic","https"))
+    consent(true);MdmStore(c).setResearchScope(ResearchScope("all_apps",setOf("ru.vpnc.quicprobe.direct")));ResearchSettings.changed()
+    VpnProfiles.preferences(c,added).edit().putString("transport",transport).putString("endpoint",profile.getString(transport)).commit()
+    val budget=VpnBudgetRun.sharedForContext(c);budget.start(VpnBudgetSettings.limitBytes(c));budget.setResumeEligible(true);budget.release()
+    leavePrepared=true;return
+   }
    val requestedTransport=InstrumentationRegistry.getArguments().getString("research_transport")
    val transports=if(requestedTransport==null)listOf("quic","https")else listOf(requestedTransport.also{require(it in listOf("quic","https"))})
    for(transport in transports){
@@ -62,6 +70,13 @@ class ResearchDirectLiveTest {
      runProbe("tcp","scope_${transport}_${mode}_direct",pkg="ru.vpnc.quicprobe.direct")
      runProbe("udp","scope_${transport}_${mode}_direct_udp",pkg="ru.vpnc.quicprobe.direct")
      runProbe("dns","scope_${transport}_${mode}_direct_dns","1.1.1.1",53,pkg="ru.vpnc.quicprobe.direct")
+     if(args.getString("research_tls")=="true"){
+      for(pkg in listOf(probe,"ru.vpnc.quicprobe.direct")){
+       runProbe("tls-sni","tls_${transport}_${pkg}_sni".replace('.','_'),pkg=pkg)
+       runProbe("tls-ech","tls_${transport}_${pkg}_ech".replace('.','_'),pkg=pkg)
+      }
+      runProbe("https","tls_${transport}_real_https","quic-lab.vpnc.ru",443)
+     }
      Thread.sleep(if(InstrumentationRegistry.getArguments().getString("research_wait_window")=="true")65000 else 5000)
      if(args.getString("research_switch_networks")=="true") {
       for(wifi in listOf(false,true,false,true)) {

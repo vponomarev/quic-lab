@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"quiclab/internal/netobserve"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ type ApplicationStats struct {
 	Last                                  time.Time
 }
 type ApplicationSummary struct {
+	Coverage     Coverage
 	Applications []ApplicationStats
 	Partial      bool
 }
@@ -26,17 +28,21 @@ type summaryFlowKey struct {
 }
 type summaryFlow struct {
 	ApplicationStats
+	tls      *netobserve.TLSInfo
 	observed bool
 }
 
 // ApplicationSummary ignores page/cursor and aggregates one bounded history
 // snapshot. Origins remain separate; no client/server byte reconciliation.
 func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSummary, error) {
-	result := ApplicationSummary{Applications: []ApplicationStats{}}
+	result := ApplicationSummary{Applications: []ApplicationStats{}, Coverage: s.coverage()}
+	sni := q.SNI
+	q.SNI = ""
 	q.Cursor = ""
 	q.Limit = 0
 	flows := map[summaryFlowKey]*summaryFlow{}
 	err := s.scan(ctx, q, func(r Record, _ string) error {
+		includeCoverage(&result.Coverage, r)
 		if r.Type == "gap" {
 			result.Partial = true
 			return nil
@@ -85,6 +91,9 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 		if r.At.After(f.Last) {
 			f.Last = r.At
 		}
+		if d.TLS != nil && (f.tls == nil || f.tls.State != "observed") {
+			f.tls = d.TLS
+		}
 		if d.Incomplete {
 			result.Partial = true
 		}
@@ -118,6 +127,9 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 	}
 	groups := map[string]*ApplicationStats{}
 	for _, f := range flows {
+		if sni != "" && (f.tls == nil || (sni == "<ECH>" && !f.tls.ECHOffered) || (sni != "<ECH>" && !strings.EqualFold(sni, f.tls.ServerName))) {
+			continue
+		}
 		if !f.observed && f.DNSQueries == 0 {
 			continue
 		}

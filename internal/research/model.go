@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"quiclab/internal/netobserve"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,7 @@ func (e ExitRef) validate() error {
 }
 
 type FlowData struct {
+	TLS *netobserve.TLSInfo `json:"tls,omitempty"`
 	ExitRef
 	AppSource        string     `json:"app_source,omitempty"`
 	ClientFlow       *FlowKey   `json:"client_flow,omitempty"`
@@ -148,6 +150,11 @@ func validate(r Record) error {
 		}
 		if len(d.UserID) > 256 || len(d.Source) > 512 || len(d.Destination) > 512 || len(d.Domain) > 253 || len(d.Protocol) > 16 || len(d.Reason) > 1024 {
 			return errors.New("flow strings exceed limits")
+		}
+		if d.TLS != nil {
+			if err := d.TLS.Validate(); err != nil {
+				return err
+			}
 		}
 		if d.CounterKind != "delta" && d.CounterKind != "total" {
 			return errors.New("invalid counter kind")

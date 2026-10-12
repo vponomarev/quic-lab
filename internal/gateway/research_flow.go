@@ -52,6 +52,8 @@ type observedDNS struct {
 }
 type observedConnection struct {
 	statsMu         sync.Mutex
+	tls             *netobserve.TLSProbe
+	upstreamSeen    atomic.Bool
 	ready           atomic.Bool
 	resolveIdentity bool
 	ioMu            sync.Mutex
@@ -96,6 +98,7 @@ func (s *Server) observeConnection(ctx context.Context, req Request, network str
 	if state, ok := f.stateLocked(time.Now()); ok {
 		f.generation = state.generation
 	}
+	r.connections[f] = struct{}{}
 	f.ready.Store(!f.resolveIdentity)
 	r.mu.Unlock()
 	go f.run()
@@ -145,6 +148,7 @@ func (f *observedConnection) reset() {
 	f.packetsUp = 0
 	f.packetsDown = 0
 	f.dns = nil
+	f.tls = nil
 	f.from = time.Time{}
 	f.dropped.Store(0)
 }
@@ -157,10 +161,14 @@ func (f *observedConnection) stateLocked(now time.Time) (researchSession, bool) 
 	return state, state.enabled && state.allowed && now.Before(state.until)
 }
 func (f *observedConnection) payload(b []byte, up bool) {
+	firstUp := false
+	if up {
+		firstUp = !f.upstreamSeen.Swap(true)
+	}
 	if !f.ready.Load() {
 		return
 	}
-	// This lock protects only a handful of counters and a bounded packet copy.
+	// This lock protects counters and bounded DNS/TLS prefix inspection.
 	// No policy lookup, JSON parsing, persistence or receiver lock happens here.
 	f.statsMu.Lock()
 	defer f.statsMu.Unlock()
@@ -183,6 +191,12 @@ func (f *observedConnection) payload(b []byte, up bool) {
 		f.down += uint64(len(b))
 	}
 	if f.network != "udp4" {
+		if up {
+			if f.tls == nil {
+				f.tls = netobserve.NewTLSProbe(!firstUp)
+			}
+			f.tls.Feed(b)
+		}
 		return
 	}
 	if up {
@@ -217,7 +231,12 @@ func (f *observedConnection) run() {
 
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	defer func() { f.receiver.mu.Lock(); f.receiver.observers--; f.receiver.mu.Unlock() }()
+	defer func() {
+		f.receiver.mu.Lock()
+		delete(f.receiver.connections, f)
+		f.receiver.observers--
+		f.receiver.mu.Unlock()
+	}()
 	for {
 		select {
 		case <-ticker.C:
@@ -235,8 +254,12 @@ func (f *observedConnection) flush(closed bool) {
 	defer r.mu.Unlock()
 	now := time.Now().UTC()
 	f.statsMu.Lock()
+	if state, ok := f.stateLocked(now); !ok || state.generation != f.generation {
+		f.reset()
+	}
 	generation, from := f.generation, f.from
 	up, down, pu, pd := f.up, f.down, f.packetsUp, f.packetsDown
+	tlsInfo := f.tls.Info()
 	jobs := f.dns
 	lost := f.dropped.Swap(0)
 	f.up = 0
@@ -262,7 +285,7 @@ func (f *observedConnection) flush(closed bool) {
 		if f.network == "udp4" {
 			proto = "udp"
 		}
-		data := research.FlowData{ExitRef: research.ExitRef{Route: "vpn", Type: "unknown"}, UserID: f.user, App: research.App{Attribution: "unknown"}, Protocol: proto, Destination: f.destination, ClientFlow: &ref, ObservedFrom: from, ObservedTo: now, BytesUp: up, BytesDown: down, PacketsUp: pu, PacketsDown: pd, CounterKind: "delta", MeasurementLevel: "exit_socket_payload", Incomplete: true, Reason: "observation_window_not_full_connection"}
+		data := research.FlowData{TLS: tlsInfo, ExitRef: research.ExitRef{Route: "vpn", Type: "unknown"}, UserID: f.user, App: research.App{Attribution: "unknown"}, Protocol: proto, Destination: f.destination, ClientFlow: &ref, ObservedFrom: from, ObservedTo: now, BytesUp: up, BytesDown: down, PacketsUp: pu, PacketsDown: pd, CounterKind: "delta", MeasurementLevel: "exit_socket_payload", Incomplete: true, Reason: "observation_window_not_full_connection"}
 		if app, ok := r.apps[appKey(ref)]; ok && app.generation == generation && now.Sub(app.at) <= 2*time.Minute && app.protocol == proto && app.destination == f.destination {
 			data.App = app.app
 			data.AppSource = "client"

@@ -45,6 +45,7 @@ type ResearchReceiver struct {
 	apps                                 map[string]observedApp
 	epoch                                string
 	nextObservedFlow, nextObservedRecord uint64
+	connections                          map[*observedConnection]struct{}
 	observers                            int
 	mu                                   sync.Mutex
 	identity                             func(tls.ConnectionState) (string, string, bool)
@@ -54,7 +55,7 @@ type ResearchReceiver struct {
 }
 
 func NewResearchReceiver(identity func(tls.ConnectionState) (string, string, bool), appendRecord func(research.Record) bool) *ResearchReceiver {
-	return &ResearchReceiver{epoch: identityNonce(), apps: make(map[string]observedApp), identities: make(map[[32]byte]observedIdentity), identity: identity, appendRecord: appendRecord, sessions: map[string]researchSession{}, devices: map[string]int{}}
+	return &ResearchReceiver{connections: make(map[*observedConnection]struct{}), epoch: identityNonce(), apps: make(map[string]observedApp), identities: make(map[[32]byte]observedIdentity), identity: identity, appendRecord: appendRecord, sessions: map[string]researchSession{}, devices: map[string]int{}}
 }
 func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, b ResearchBatch) ResearchReply {
 	if r == nil || r.identity == nil || r.appendRecord == nil || ctx.Err() != nil || b.Generation == 0 || len(b.Session) != 32 || len(b.Records) > 128 {
@@ -104,6 +105,15 @@ func (r *ResearchReceiver) Receive(ctx context.Context, cs tls.ConnectionState, 
 	}
 	r.sessions[key] = researchSession{directAuthorized: directAllowed && allowed && b.Enabled && b.DirectEnabled, historyUntil: historyUntil, historyDirect: historyDirect, directEnabled: b.DirectEnabled, generation: b.Generation, enabled: b.Enabled, allowed: allowed, until: time.Now().Add(15 * time.Second)}
 	r.observationStates.Store(key, r.sessions[key])
+	if !allowed || !b.Enabled || (exists && b.Generation != state.generation) {
+		for f := range r.connections {
+			if f.device == device && f.ref.Session == b.Session {
+				f.statsMu.Lock()
+				f.reset()
+				f.statsMu.Unlock()
+			}
+		}
+	}
 	reply := ResearchReply{Allowed: allowed && b.Enabled, FlowObservationVersion: 1}
 	if directAllowed {
 		reply.DirectObservationVersion = 1

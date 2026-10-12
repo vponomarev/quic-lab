@@ -11,6 +11,14 @@ import org.json.JSONObject;
 // Debug-only companion with its own UID. Contains no VPN credentials.
 public class ProbeActivity extends Activity {
  private static byte[] readN(InputStream in,int limit)throws IOException{ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[limit];while(out.size()<limit){int n=in.read(buf,0,limit-out.size());if(n<0)break;out.write(buf,0,n);}return out.toByteArray();}
+ private static byte[] tlsHello(boolean ech)throws IOException{
+ ByteArrayOutputStream ex=new ByteArrayOutputStream();DataOutputStream e=new DataOutputStream(ex);byte[] name="probe.example.org".getBytes(StandardCharsets.US_ASCII);
+ e.writeShort(0);e.writeShort(name.length+5);e.writeShort(name.length+3);e.writeByte(0);e.writeShort(name.length);e.write(name);
+ e.writeShort(16);e.writeShort(5);e.writeShort(3);e.writeByte(2);e.writeBytes("h2");
+ if(ech){e.writeShort(0xfe0d);e.writeShort(4);e.writeInt(0x00010203);}
+ ByteArrayOutputStream body=new ByteArrayOutputStream();DataOutputStream b=new DataOutputStream(body);b.writeShort(0x0303);b.write(new byte[32]);b.writeByte(0);b.writeShort(2);b.writeShort(0x1301);b.writeByte(1);b.writeByte(0);b.writeShort(ex.size());b.write(ex.toByteArray());
+ ByteArrayOutputStream record=new ByteArrayOutputStream();DataOutputStream r=new DataOutputStream(record);r.writeByte(22);r.writeShort(0x0301);r.writeShort(body.size()+4);r.writeByte(1);r.writeByte(0);r.writeShort(body.size());r.write(body.toByteArray());return record.toByteArray();
+ }
  @Override public void onCreate(Bundle b){super.onCreate(b);TextView text=new TextView(this);text.setText("TCP/UDP test probe");setContentView(text);
  final String host=getIntent().getStringExtra("host"),kind=getIntent().getStringExtra("kind"),id=getIntent().getStringExtra("id");final int port=getIntent().getIntExtra("port",39081);
  if(host==null||id==null||!id.matches("[a-zA-Z0-9_-]{1,64}")){finish();return;}
@@ -19,6 +27,7 @@ public class ProbeActivity extends Activity {
  result.put("id",id).put("kind",kind).put("uid",android.os.Process.myUid());
  android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);android.net.NetworkCapabilities caps=cm.getNetworkCapabilities(cm.getActiveNetwork());result.put("vpn",caps!=null&&caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN));
  byte[] payload=("quic-lab-probe-"+id).getBytes(StandardCharsets.UTF_8);String reply;
+ if("tls-sni".equals(kind)||"tls-ech".equals(kind))payload=tlsHello("tls-ech".equals(kind));
  if("https-long".equals(kind)){try(SSLSocket s=(SSLSocket)SSLSocketFactory.getDefault().createSocket(host,port)){
  SSLParameters params=s.getSSLParameters();params.setEndpointIdentificationAlgorithm("HTTPS");s.setSSLParameters(params);s.setSoTimeout(10000);s.startHandshake();
  InputStream in=s.getInputStream();long end=android.os.SystemClock.elapsedRealtime()+45000,maxRtt=0;int count=0;
@@ -44,7 +53,7 @@ public class ProbeActivity extends Activity {
  }}
  else if("udp".equals(kind)){try(DatagramSocket s=new DatagramSocket()){s.setSoTimeout(5000);s.connect(InetAddress.getByName(host),port);s.send(new DatagramPacket(payload,payload.length));byte[] buf=new byte[1024];DatagramPacket p=new DatagramPacket(buf,buf.length);s.receive(p);reply=new String(buf,0,p.getLength(),StandardCharsets.UTF_8);}}
  else if("https".equals(kind)){HttpsURLConnection c=(HttpsURLConnection)new URL("https://"+host+"/").openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);c.setRequestProperty("Connection","close");try(InputStream in=c.getInputStream()){reply=new String(readN(in,100),StandardCharsets.UTF_8);}finally{c.disconnect();}}
- else{try(Socket s=new Socket()){s.connect(new InetSocketAddress(host,port),5000);s.setSoTimeout(5000);s.getOutputStream().write(payload);byte[] buf=readN(s.getInputStream(),payload.length);reply=new String(buf,StandardCharsets.UTF_8);}}
+ else{try(Socket s=new Socket()){s.connect(new InetSocketAddress(host,port),5000);s.setSoTimeout(5000);if(kind.startsWith("tls-")){for(byte v:payload)s.getOutputStream().write(new byte[]{v});}else{s.getOutputStream().write(payload);}byte[] buf=readN(s.getInputStream(),payload.length);reply=new String(buf,StandardCharsets.UTF_8);}}
  result.put("ok", "https".equals(kind)?!reply.trim().isEmpty():reply.equals(new String(payload,StandardCharsets.UTF_8))).put("reply",reply);
  }catch(Exception e){try{result.put("ok",false).put("error",e.getClass().getSimpleName()+": "+e.getMessage());}catch(Exception ignored){}}
  try(FileOutputStream out=openFileOutput(id+".json",MODE_PRIVATE)){out.write(result.toString().getBytes(StandardCharsets.UTF_8));}catch(Exception ignored){}

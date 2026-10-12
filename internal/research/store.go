@@ -25,6 +25,7 @@ type StoreOptions struct {
 	QueueSize int
 }
 type Query struct {
+	SNI         string    `json:"sni,omitempty"`
 	Route       string    `json:"route,omitempty"`
 	ExitID      string    `json:"exit_id,omitempty"`
 	Origin      string    `json:"origin,omitempty"`
@@ -41,13 +42,15 @@ type Query struct {
 	Limit       int       `json:"limit,omitempty"`
 }
 type Coverage struct {
-	Incomplete   bool      `json:"incomplete"`
-	Reason       string    `json:"reason,omitempty"`
-	From         time.Time `json:"from"`
-	To           time.Time `json:"to"`
-	Dropped      uint64    `json:"dropped,string"`
-	RecoveryGaps uint64    `json:"recovery_gaps,string"`
-	Truncated    bool      `json:"truncated"`
+	ClientDropped   uint64    `json:"client_dropped,string"`
+	ObserverDropped uint64    `json:"observer_dropped,string"`
+	Incomplete      bool      `json:"incomplete"`
+	Reason          string    `json:"reason,omitempty"`
+	From            time.Time `json:"from"`
+	To              time.Time `json:"to"`
+	Dropped         uint64    `json:"dropped,string"`
+	RecoveryGaps    uint64    `json:"recovery_gaps,string"`
+	Truncated       bool      `json:"truncated"`
 }
 type Page struct {
 	Records    []Record `json:"records"`
@@ -339,6 +342,9 @@ func matches(r Record, q Query) bool {
 		if q.Protocol != "" && q.Protocol != d.Protocol || q.Address != "" && !strings.Contains(d.Source, q.Address) && !strings.Contains(d.Destination, q.Address) || q.Domain != "" && q.Domain != d.Domain {
 			return false
 		}
+		if q.SNI != "" && (d.TLS == nil || (q.SNI == "<ECH>" && !d.TLS.ECHOffered) || (q.SNI != "<ECH>" && !strings.EqualFold(q.SNI, d.TLS.ServerName))) {
+			return false
+		}
 		if q.Application != "" {
 			found := q.Application == d.App.Attribution
 			for _, p := range d.App.Packages {
@@ -371,6 +377,16 @@ func includeCoverage(c *Coverage, r Record) {
 	}
 	if r.Type == "gap" {
 		c.Incomplete = true
+		var gap struct {
+			Dropped string `json:"dropped"`
+		}
+		json.Unmarshal(r.Data, &gap)
+		n, _ := strconv.ParseUint(gap.Dropped, 10, 64)
+		if r.Origin == "client" || r.Origin == "" {
+			c.ClientDropped += n
+		} else {
+			c.ObserverDropped += n
+		}
 		if c.Reason == "" {
 			c.Reason = "client_reported_loss"
 		}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"quiclab/internal/gateway"
+	"quiclab/internal/netobserve"
 	"quiclab/internal/research"
 )
 
@@ -76,6 +77,7 @@ type researchCollector struct {
 	wake                 chan struct{}
 }
 type researchFlow struct {
+	tls                              *netobserve.TLSProbe
 	exit                             research.ExitRef
 	uid                              int64
 	recording                        bool
@@ -271,9 +273,13 @@ func (c *researchCollector) disableLocked() {
 		c.queue = nil
 		c.queueBytes = 0
 	}
+	for _, f := range c.closedFlows {
+		f.tls = nil
+	}
 	clear(c.closedFlows)
 	for _, f := range c.flows {
 		f.recording = false
+		f.tls = nil
 		f.up = 0
 		f.down = 0
 		f.packetsUp = 0
@@ -409,6 +415,9 @@ func (c *researchCollector) beginLocked(f *researchFlow, now time.Time, incomple
 		return
 	}
 	f.recording = true
+	if f.protocol == 6 {
+		f.tls = netobserve.NewTLSProbe(incomplete)
+	}
 	f.from = now
 	f.incomplete = incomplete
 	f.up = 0
@@ -493,7 +502,7 @@ func (c *researchCollector) flowRecordLocked(f *researchFlow, kind string, now t
 	if f.protocol == 17 {
 		protocol = "udp"
 	}
-	d := research.FlowData{ExitRef: f.exit, App: f.app, Protocol: protocol, Source: net.JoinHostPort(f.local, strconv.FormatInt(f.localPort, 10)),
+	d := research.FlowData{TLS: f.tls.Info(), ExitRef: f.exit, App: f.app, Protocol: protocol, Source: net.JoinHostPort(f.local, strconv.FormatInt(f.localPort, 10)),
 		Destination: net.JoinHostPort(f.remote, strconv.FormatInt(f.remotePort, 10)), ObservedFrom: f.from, ObservedTo: now, StartedAt: f.started,
 		BytesUp: f.up, BytesDown: f.down, PacketsUp: f.packetsUp, PacketsDown: f.packetsDown, CounterKind: "delta", MeasurementLevel: "logical_payload", Incomplete: f.incomplete}
 	if kind == "flow_close" || f.closed {
