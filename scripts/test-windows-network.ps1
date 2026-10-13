@@ -74,8 +74,3 @@ try {
  $result.Success=$result.Success -and $result.DefaultRoutesUnchanged -and $result.DNSUnchanged -and $result.AdapterCount -eq 0
  $result | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $destination 'result.json')
 }
-
-
-
-
-
