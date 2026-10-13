@@ -24,6 +24,7 @@ require (
 require (
 	filippo.io/age v1.3.2 // indirect
 	filippo.io/hpke v0.4.0 // indirect
+	github.com/Microsoft/go-winio v0.6.4 // indirect
 	golang.org/x/term v0.47.0 // indirect
 )
 

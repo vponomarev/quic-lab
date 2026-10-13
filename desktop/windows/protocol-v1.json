@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "id": "fixture-1",
+  "command": "apply_config",
+  "config": {
+    "Revision": 1,
+    "Profiles": {
+      "version": 1,
+      "exits": [
+        {
+          "id": "demo",
+          "name": "Тестовый выход",
+          "kind": "standalone"
+        }
+      ],
+      "profiles": [
+        {
+          "id": "quic",
+          "exit_id": "demo",
+          "transport": "quic",
+          "mode": "auto",
+          "endpoint": "example.org:443",
+          "priority": 0,
+          "pool_size": 1,
+          "check_reserve": false
+        }
+      ]
+    }
+  }
+}
