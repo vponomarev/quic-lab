@@ -45,6 +45,7 @@ class ProfileUpdateTest {
   val names=mutableSetOf<String>()
   private val directory=java.io.File(base.cacheDir,prefix).apply {check(mkdirs())}
   override fun getFilesDir()=directory
+  override fun getNoBackupFilesDir()=directory
   override fun getSharedPreferences(name:String,mode:Int):android.content.SharedPreferences {
    names.add(prefix+name);return baseContext.getSharedPreferences(prefix+name,mode)
   }

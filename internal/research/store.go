@@ -25,21 +25,22 @@ type StoreOptions struct {
 	QueueSize int
 }
 type Query struct {
-	SNI         string    `json:"sni,omitempty"`
-	Route       string    `json:"route,omitempty"`
-	ExitID      string    `json:"exit_id,omitempty"`
-	Origin      string    `json:"origin,omitempty"`
-	UserID      string    `json:"user_id,omitempty"`
-	DeviceID    string    `json:"device_id,omitempty"`
-	SessionID   string    `json:"session_id,omitempty"`
-	Application string    `json:"application,omitempty"`
-	Protocol    string    `json:"protocol,omitempty"`
-	Address     string    `json:"address,omitempty"`
-	Domain      string    `json:"domain,omitempty"`
-	From        time.Time `json:"from"`
-	To          time.Time `json:"to"`
-	Cursor      string    `json:"cursor,omitempty"`
-	Limit       int       `json:"limit,omitempty"`
+	DetectedProtocol string    `json:"detected_protocol,omitempty"`
+	SNI              string    `json:"sni,omitempty"`
+	Route            string    `json:"route,omitempty"`
+	ExitID           string    `json:"exit_id,omitempty"`
+	Origin           string    `json:"origin,omitempty"`
+	UserID           string    `json:"user_id,omitempty"`
+	DeviceID         string    `json:"device_id,omitempty"`
+	SessionID        string    `json:"session_id,omitempty"`
+	Application      string    `json:"application,omitempty"`
+	Protocol         string    `json:"protocol,omitempty"`
+	Address          string    `json:"address,omitempty"`
+	Domain           string    `json:"domain,omitempty"`
+	From             time.Time `json:"from"`
+	To               time.Time `json:"to"`
+	Cursor           string    `json:"cursor,omitempty"`
+	Limit            int       `json:"limit,omitempty"`
 }
 type Coverage struct {
 	ClientDropped   uint64    `json:"client_dropped,string"`
@@ -340,6 +341,9 @@ func matches(r Record, q Query) bool {
 			return false
 		}
 		if q.Protocol != "" && q.Protocol != d.Protocol || q.Address != "" && !strings.Contains(d.Source, q.Address) && !strings.Contains(d.Destination, q.Address) || q.Domain != "" && q.Domain != d.Domain {
+			return false
+		}
+		if q.DetectedProtocol != "" && (d.Detected == nil || !strings.EqualFold(q.DetectedProtocol, d.Detected.Name)) {
 			return false
 		}
 		if q.SNI != "" && (d.TLS == nil || (q.SNI == "<ECH>" && !d.TLS.ECHOffered) || (q.SNI != "<ECH>" && !strings.EqualFold(q.SNI, d.TLS.ServerName))) {

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
+	"os"
 	"quiclab/internal/research"
 	"testing"
 	"time"
@@ -69,4 +70,37 @@ func TestServerResearchTLSMetadataAndRevocation(t *testing.T) {
 		t.Fatalf("reinterpreted midstream: %+v", d.TLS)
 	}
 	_ = time.Now()
+}
+
+func TestServerResearchQUICMetadata(t *testing.T) {
+	for _, name := range []string{"quic-v1", "quic-v2", "quic-ech"} {
+		t.Run(name, func(t *testing.T) {
+			packet, err := os.ReadFile("../netobserve/testdata/" + name + ".bin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var records []research.Record
+			r := NewResearchReceiver(func(tls.ConnectionState) (string, string, bool) { return "u", "d", true }, func(rec research.Record) bool { records = append(records, rec); return true })
+			ref := ResearchFlowRef{Version: 1, Session: "0123456789abcdef0123456789abcdef", FlowID: 1}
+			r.Receive(context.Background(), tls.ConnectionState{}, ResearchBatch{Session: ref.Session, Generation: 1, Enabled: true})
+			f := &observedConnection{receiver: r, user: "u", device: "d", network: "udp4", destination: "1.2.3.4:18456", ref: ref, id: 1}
+			f.ready.Store(true)
+			r.connections[f] = struct{}{}
+			f.payload(packet, true)
+			f.flush(false)
+			var d research.FlowData
+			json.Unmarshal(records[len(records)-1].Data, &d)
+			want := "QUIC v1"
+			if name == "quic-v2" {
+				want = "QUIC v2"
+			}
+			if d.Detected == nil || d.Detected.Name != want || d.TLS == nil || d.TLS.ServerName != "api.example.org" || d.TLS.ECHOffered != (name == "quic-ech") || d.BytesUp != uint64(len(packet)) {
+				t.Fatalf("metadata: %+v", d)
+			}
+			r.Receive(context.Background(), tls.ConnectionState{}, ResearchBatch{Session: ref.Session, Generation: 2, Enabled: false})
+			if f.tls != nil {
+				t.Fatal("retained after revoke")
+			}
+		})
+	}
 }

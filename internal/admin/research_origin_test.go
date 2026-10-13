@@ -2,6 +2,8 @@ package admin
 
 import (
 	"bytes"
+"regexp"
+"os"
 	"quiclab/internal/research"
 	"strings"
 	"testing"
@@ -18,4 +20,13 @@ func TestResearchOriginRendering(t *testing.T) {
 			t.Fatal("origin missing or application not escaped")
 		}
 	}
+}
+
+func TestResearchPageUsesExternalScript(t *testing.T) {
+ var out bytes.Buffer
+ if err := researchTemplate.Execute(&out,researchView{Query:research.Query{UserID:"fixture"}}); err != nil {t.Fatal(err)}
+ page:=out.String()
+ if regexp.MustCompile(`<script[^>]*>\s*[^<\s]`).MatchString(page) || !strings.Contains(page,`src="research-ui.js"`) {t.Fatal("research must work with script-src self")}
+ if strings.Index(page,`id="quick-periods"`)>strings.Index(page,`<h2>Приложения</h2>`) || strings.Contains(page,`hidden id="quick-periods"`) {t.Fatal("periods must be visible before applications")}
+ if path:=os.Getenv("RESEARCH_UI_FIXTURE");path!="" {if err:=os.WriteFile(path,out.Bytes(),0600);err!=nil{t.Fatal(err)}}
 }

@@ -56,18 +56,33 @@ func (w *Web) ResearchAllowed(userID string) bool {
 }
 func (w *Web) researchRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /research", w.researchPage)
+	m.HandleFunc("GET /research-ui.js", w.researchScript)
 	m.HandleFunc("GET /research/records", w.researchRecords)
 	m.HandleFunc("GET /research/export", w.researchExport)
 	m.HandleFunc("POST /research/settings", w.researchSettingsPost)
 	// Preserve old standalone fixture URLs.
 
 	m.HandleFunc("GET /lab/research", w.researchPage)
+	m.HandleFunc("GET /lab/research-ui.js", w.researchScript)
 	m.HandleFunc("GET /lab/research/records", w.researchRecords)
 	m.HandleFunc("GET /lab/research/export", w.researchExport)
 	m.HandleFunc("POST /lab/research/settings", w.researchSettingsPost)
 }
 func researchQuery(v url.Values) (research.Query, error) {
-	q := research.Query{SNI: v.Get("sni"), Route: v.Get("route"), ExitID: v.Get("exit"), Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	q := research.Query{DetectedProtocol: v.Get("detected_protocol"), SNI: v.Get("sni"), Route: v.Get("route"), ExitID: v.Get("exit"), Origin: v.Get("origin"), UserID: v.Get("user"), DeviceID: v.Get("device"), SessionID: v.Get("session"), Application: v.Get("application"), Protocol: v.Get("protocol"), Address: v.Get("address"), Domain: v.Get("domain"), Cursor: v.Get("cursor"), Limit: 100}
+	if q.DetectedProtocol != "" {
+		canonical := ""
+		for _, name := range []string{"DNS", "HTTP", "TLS", "QUIC v1", "QUIC v2"} {
+			if strings.EqualFold(q.DetectedProtocol, name) {
+				canonical = name
+				break
+			}
+		}
+		if canonical == "" {
+			return q, fmt.Errorf("unknown detected protocol")
+		}
+		q.DetectedProtocol = canonical
+	}
 	if len(q.SNI) > 253 || strings.ContainsRune(q.SNI, 0) {
 		return q, fmt.Errorf("invalid SNI")
 	}
@@ -230,6 +245,11 @@ type researchRow struct {
 	Events           []research.Record
 	EventCount       int
 }
+
+func (r researchRow) PendingFirstReport() bool {
+	return r.Record.Type == "connection" && r.EventCount == 1 && len(r.Events) == 1 && r.Events[0].Type == "flow_open" && r.Flow.Status == "open" && r.Flow.BytesUp == 0 && r.Flow.BytesDown == 0
+}
+
 type researchGap struct {
 	Record                  research.Record
 	UserID, Dropped, Reason string
@@ -493,4 +513,13 @@ func groupResearchApplications(rows []researchAppStats, params url.Values, base 
 		rows[i].GroupURL = base + "research?" + p.Encode()
 		i = j
 	}
+}
+
+//go:embed research_ui.js
+var researchUIJS []byte
+
+func (w *Web) researchScript(rw http.ResponseWriter,r *http.Request) {
+ rw.Header().Set("Content-Type","text/javascript; charset=utf-8")
+ rw.Header().Set("Cache-Control","no-cache")
+ rw.Write(researchUIJS)
 }

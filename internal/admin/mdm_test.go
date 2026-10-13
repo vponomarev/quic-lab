@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/url"
 	"path/filepath"
 	"quiclab/internal/mdm"
@@ -59,6 +60,25 @@ func TestMDMAdminConsentAndAccess(t *testing.T) {
 	if out.Code != 200 || !strings.Contains(out.Body.String(), "Wi-Fi") || !strings.Contains(out.Body.String(), "нет согласия") {
 		t.Fatal("detail", out.Code, out.Body.String())
 	}
+	if out := call(h, "GET", "/mdm?device="+b.ID+"&summary=1", "", nil); out.Code != 303 {
+		t.Fatal("public summary", out.Code)
+	}
+	summary := call(h, "GET", "/mdm?device="+b.ID+"&summary=1", "", cookie)
+	var data struct {
+		Consent bool                  `json:"consent"`
+		Policy  mdm.TelemetryPolicy   `json:"policy"`
+		Records []mdm.TelemetryRecord `json:"records"`
+	}
+	if err := json.Unmarshal(summary.Body.Bytes(), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Consent || !data.Policy.Enabled || data.Policy.RetentionDays != 90 || len(data.Records) != 0 {
+		t.Fatalf("incorrect summary: %+v", data)
+	}
+	if !strings.Contains(out.Body.String(), "mdm/device?id="+b.ID) {
+		t.Fatal("missing device return link")
+	}
+
 }
 func TestMDMOwnershipAdmin(t *testing.T) {
 	c := config(t)

@@ -52,7 +52,7 @@ type observedDNS struct {
 }
 type observedConnection struct {
 	statsMu         sync.Mutex
-	tls             *netobserve.TLSProbe
+	tls             *netobserve.ProtocolProbe
 	upstreamSeen    atomic.Bool
 	ready           atomic.Bool
 	resolveIdentity bool
@@ -190,13 +190,19 @@ func (f *observedConnection) payload(b []byte, up bool) {
 	} else {
 		f.down += uint64(len(b))
 	}
-	if f.network != "udp4" {
-		if up {
-			if f.tls == nil {
-				f.tls = netobserve.NewTLSProbe(!firstUp)
+	if up {
+		if f.tls == nil {
+			proto := int64(6)
+			if f.network == "udp4" {
+				proto = 17
 			}
-			f.tls.Feed(b)
+			_, port, _ := net.SplitHostPort(f.destination)
+			number, _ := strconv.ParseInt(port, 10, 64)
+			f.tls = netobserve.NewProtocolProbe(proto, number, !firstUp)
 		}
+		f.tls.Feed(b)
+	}
+	if f.network != "udp4" {
 		return
 	}
 	if up {
@@ -260,6 +266,7 @@ func (f *observedConnection) flush(closed bool) {
 	generation, from := f.generation, f.from
 	up, down, pu, pd := f.up, f.down, f.packetsUp, f.packetsDown
 	tlsInfo := f.tls.Info()
+	detected := f.tls.Detected()
 	jobs := f.dns
 	lost := f.dropped.Swap(0)
 	f.up = 0
@@ -285,7 +292,7 @@ func (f *observedConnection) flush(closed bool) {
 		if f.network == "udp4" {
 			proto = "udp"
 		}
-		data := research.FlowData{TLS: tlsInfo, ExitRef: research.ExitRef{Route: "vpn", Type: "unknown"}, UserID: f.user, App: research.App{Attribution: "unknown"}, Protocol: proto, Destination: f.destination, ClientFlow: &ref, ObservedFrom: from, ObservedTo: now, BytesUp: up, BytesDown: down, PacketsUp: pu, PacketsDown: pd, CounterKind: "delta", MeasurementLevel: "exit_socket_payload", Incomplete: true, Reason: "observation_window_not_full_connection"}
+		data := research.FlowData{TLS: tlsInfo, Detected: detected, ExitRef: research.ExitRef{Route: "vpn", Type: "unknown"}, UserID: f.user, App: research.App{Attribution: "unknown"}, Protocol: proto, Destination: f.destination, ClientFlow: &ref, ObservedFrom: from, ObservedTo: now, BytesUp: up, BytesDown: down, PacketsUp: pu, PacketsDown: pd, CounterKind: "delta", MeasurementLevel: "exit_socket_payload", Incomplete: true, Reason: "observation_window_not_full_connection"}
 		if app, ok := r.apps[appKey(ref)]; ok && app.generation == generation && now.Sub(app.at) <= 2*time.Minute && app.protocol == proto && app.destination == f.destination {
 			data.App = app.app
 			data.AppSource = "client"

@@ -7,6 +7,24 @@ import org.junit.Test
 import java.io.File
 
 class ResearchScopeTest {
+ @Test fun returningToScopeRefreshesConsentWithoutLosingSelection(){
+  val inst=InstrumentationRegistry.getInstrumentation();val c=inst.targetContext
+  val before=MdmStore(c).read()
+  inst.uiAutomation.executeShellCommand("am start -W -n ru.vpnc.quiclab/.MainActivity").use{android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()}
+  val activity=inst.startActivitySync(android.content.Intent(c,ResearchScopeActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+  fun views(v:android.view.View):List<android.view.View> = listOf(v)+(if(v is android.view.ViewGroup)(0 until v.childCount).flatMap{views(v.getChildAt(it))} else emptyList())
+  try {inst.runOnMainSync{
+   val all=views(activity.window.decorView)
+   val checkbox=all.filterIsInstance<android.widget.CheckBox>().single{it.text.toString()=="Анализ трафика вне VPN"}
+   val spinner=all.filterIsInstance<android.widget.Spinner>().single()
+   val expected=if(before.binding!=null)before.rights.researchDirect else before.standaloneResearchDirect
+   spinner.setSelection(2);checkbox.isChecked=!expected
+   inst.callActivityOnPause(activity);inst.callActivityOnResume(activity)
+   assertEquals("Consent must refresh on return from MDM",expected,checkbox.isChecked)
+   assertEquals("Keep unsaved scope selection",2,spinner.selectedItemPosition)
+  };assertEquals(before,MdmStore(c).read())}finally{inst.runOnMainSync{activity.finish()}}
+ }
+
  @Test fun scopeScreenRendersWithoutChangingConsent(){
   org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("research_ui")=="true")
   val inst=InstrumentationRegistry.getInstrumentation();val c=inst.targetContext;val before=MdmStore(c).read()

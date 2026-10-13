@@ -27,6 +27,8 @@ public class ProbeActivity extends Activity {
  result.put("id",id).put("kind",kind).put("uid",android.os.Process.myUid());
  android.net.ConnectivityManager cm=getSystemService(android.net.ConnectivityManager.class);android.net.NetworkCapabilities caps=cm.getNetworkCapabilities(cm.getActiveNetwork());result.put("vpn",caps!=null&&caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN));
  byte[] payload=("quic-lab-probe-"+id).getBytes(StandardCharsets.UTF_8);String reply;
+ if(kind.startsWith("quic-")){try(InputStream asset=getAssets().open(kind+".bin")){payload=readN(asset,4096);}}
+ if("http".equals(kind))payload="GET /probe HTTP/1.1\r\nHost: example.org\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
  if("tls-sni".equals(kind)||"tls-ech".equals(kind))payload=tlsHello("tls-ech".equals(kind));
  if("https-long".equals(kind)){try(SSLSocket s=(SSLSocket)SSLSocketFactory.getDefault().createSocket(host,port)){
  SSLParameters params=s.getSSLParameters();params.setEndpointIdentificationAlgorithm("HTTPS");s.setSSLParameters(params);s.setSoTimeout(10000);s.startHandshake();
@@ -51,7 +53,7 @@ public class ProbeActivity extends Activity {
  s.setSoTimeout(10000);s.connect(InetAddress.getByName(host),port);s.send(new DatagramPacket(query,query.length));DatagramPacket answer=new DatagramPacket(new byte[4096],4096);s.receive(answer);byte[] data=answer.getData();
  if(answer.getLength()<12||data[0]!=query[0]||data[1]!=query[1]||(data[2]&0x80)==0||(data[3]&15)!=0)throw new IOException("Invalid DNS response");reply=new String(payload,StandardCharsets.UTF_8);
  }}
- else if("udp".equals(kind)){try(DatagramSocket s=new DatagramSocket()){s.setSoTimeout(5000);s.connect(InetAddress.getByName(host),port);s.send(new DatagramPacket(payload,payload.length));byte[] buf=new byte[1024];DatagramPacket p=new DatagramPacket(buf,buf.length);s.receive(p);reply=new String(buf,0,p.getLength(),StandardCharsets.UTF_8);}}
+ else if("udp".equals(kind)||kind.startsWith("quic-")){try(DatagramSocket s=new DatagramSocket()){s.setSoTimeout(5000);s.connect(InetAddress.getByName(host),port);s.send(new DatagramPacket(payload,payload.length));byte[] buf=new byte[4096];DatagramPacket p=new DatagramPacket(buf,buf.length);s.receive(p);if(!java.util.Arrays.equals(payload,java.util.Arrays.copyOf(buf,p.getLength())))throw new IOException("UDP bytes differ");reply=new String(payload,StandardCharsets.UTF_8);}}
  else if("https".equals(kind)){HttpsURLConnection c=(HttpsURLConnection)new URL("https://"+host+"/").openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);c.setRequestProperty("Connection","close");try(InputStream in=c.getInputStream()){reply=new String(readN(in,100),StandardCharsets.UTF_8);}finally{c.disconnect();}}
  else{try(Socket s=new Socket()){s.connect(new InetSocketAddress(host,port),5000);s.setSoTimeout(5000);if(kind.startsWith("tls-")){for(byte v:payload)s.getOutputStream().write(new byte[]{v});}else{s.getOutputStream().write(payload);}byte[] buf=readN(s.getInputStream(),payload.length);reply=new String(buf,StandardCharsets.UTF_8);}}
  result.put("ok", "https".equals(kind)?!reply.trim().isEmpty():reply.equals(new String(payload,StandardCharsets.UTF_8))).put("reply",reply);

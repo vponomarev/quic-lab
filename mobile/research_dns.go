@@ -9,13 +9,19 @@ import (
 
 // Only ordinary UDP/53 datagrams are DNS evidence. No DoH/DoT or IP-name inference.
 func (f *researchFlow) dnsPacket(packet []byte, upstream bool) {
-	if f == nil || f.protocol != 17 || f.remotePort != 53 || len(packet) < 12 || len(packet) > 4096 {
+	if f == nil || f.protocol != 17 {
 		return
 	}
 	c := f.collector
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active || c.stopped || f.closed || !f.recording || (c.eligible != nil && !c.eligible(f)) {
+		return
+	}
+	if upstream {
+		f.tls.Feed(packet)
+	}
+	if f.remotePort != 53 || len(packet) < 12 || len(packet) > 4096 {
 		return
 	}
 	job := researchDNSJob{flow: f, generation: c.generation, packet: append([]byte(nil), packet...), upstream: upstream, at: time.Now().UTC()}

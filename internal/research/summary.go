@@ -28,6 +28,7 @@ type summaryFlowKey struct {
 }
 type summaryFlow struct {
 	ApplicationStats
+	detected *netobserve.ProtocolInfo
 	tls      *netobserve.TLSInfo
 	observed bool
 }
@@ -36,6 +37,8 @@ type summaryFlow struct {
 // snapshot. Origins remain separate; no client/server byte reconciliation.
 func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSummary, error) {
 	result := ApplicationSummary{Applications: []ApplicationStats{}, Coverage: s.coverage()}
+	detectedProtocol := q.DetectedProtocol
+	q.DetectedProtocol = ""
 	sni := q.SNI
 	q.SNI = ""
 	q.Cursor = ""
@@ -91,6 +94,9 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 		if r.At.After(f.Last) {
 			f.Last = r.At
 		}
+		if f.detected == nil && d.Detected != nil {
+			f.detected = d.Detected
+		}
 		if d.TLS != nil && (f.tls == nil || f.tls.State != "observed") {
 			f.tls = d.TLS
 		}
@@ -127,6 +133,9 @@ func (s *Store) ApplicationSummary(ctx context.Context, q Query) (ApplicationSum
 	}
 	groups := map[string]*ApplicationStats{}
 	for _, f := range flows {
+		if detectedProtocol != "" && (f.detected == nil || !strings.EqualFold(detectedProtocol, f.detected.Name)) {
+			continue
+		}
 		if sni != "" && (f.tls == nil || (sni == "<ECH>" && !f.tls.ECHOffered) || (sni != "<ECH>" && !strings.EqualFold(sni, f.tls.ServerName))) {
 			continue
 		}

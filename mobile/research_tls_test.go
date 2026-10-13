@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"os"
 	"quiclab/internal/gateway"
 	"quiclab/internal/research"
 	"testing"
@@ -111,5 +112,44 @@ func TestResearchClosedPendingTLSRevoke(t *testing.T) {
 	defer c.mu.Unlock()
 	if f.tls != nil {
 		t.Fatal("closed flow retained TLS prefix awaiting owner after revocation")
+	}
+}
+
+func TestResearchQUICWireMetadata(t *testing.T) {
+	for _, name := range []string{"quic-v1", "quic-v2", "quic-ech"} {
+		t.Run(name, func(t *testing.T) {
+			packet, err := os.ReadFile("../internal/netobserve/testdata/" + name + ".bin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			o := &researchTestObserver{}
+			o.allowed.Store(true)
+			c := researchTestCollector(t, o, func(context.Context, gateway.ResearchBatch) (gateway.ResearchReply, error) {
+				return gateway.ResearchReply{Allowed: true}, nil
+			})
+			c.sync(time.Now())
+			f := c.openFlow(17, "10.0.0.2", 12345, "1.2.3.4", 18456)
+			f.dnsPacket(packet, true)
+			f.add(uint64(len(packet)), 0, 1, 0)
+			c.mu.Lock()
+			c.flowRecordLocked(f, "flow_delta", time.Now())
+			var d research.FlowData
+			json.Unmarshal(c.queue[len(c.queue)-1].record.Data, &d)
+			c.mu.Unlock()
+			want := "QUIC v1"
+			if name == "quic-v2" {
+				want = "QUIC v2"
+			}
+			if d.Detected == nil || d.Detected.Name != want || d.TLS == nil || d.TLS.ServerName != "api.example.org" || d.TLS.ECHOffered != (name == "quic-ech") || d.BytesUp != uint64(len(packet)) {
+				t.Fatalf("metadata: %+v", d)
+			}
+			o.allowed.Store(false)
+			c.changed()
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if f.tls != nil {
+				t.Fatal("retained after revoke")
+			}
+		})
 	}
 }

@@ -32,7 +32,7 @@ type mdmRow struct {
 }
 type mdmView struct {
 	ManagementOnly                 bool
-	Temporary bool
+	Temporary                      bool
 	UserID                         string
 	Users                          []User
 	Dropped                        int64
@@ -82,12 +82,22 @@ func (w *Web) mdmPage(rw http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		rows, e := w.MDM.TelemetryPage(v.Device, now, before, 200)
+		limit := 200
+		if r.URL.Query().Get("summary") == "1" {
+			limit = 1
+		}
+		rows, e := w.MDM.TelemetryPage(v.Device, now, before, limit)
 		if e != nil {
 			http.Error(rw, "Telemetry unavailable", 503)
 			return
 		}
 		v.Records = rows
+		if r.URL.Query().Get("summary") == "1" {
+			rw.Header().Set("Cache-Control", "no-store")
+			rw.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(rw).Encode(map[string]any{"records": rows, "policy": v.Policy, "consent": v.Consent, "dropped": v.Dropped})
+			return
+		}
 		if r.URL.Query().Get("format") == "json" {
 			rw.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(rw).Encode(rows)

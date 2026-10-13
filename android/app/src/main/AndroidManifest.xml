@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application android:name=".QuicLabApplication" android:label="QUIC Lab" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+        <activity android:name=".ApkUpdateActivity" android:exported="false" />
+        <receiver android:name=".ApkDownloadReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.DOWNLOAD_COMPLETE" /></intent-filter></receiver>
         <activity android:name=".ResearchScopeActivity" android:exported="false" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.diagnostics" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/diagnostic_paths" />

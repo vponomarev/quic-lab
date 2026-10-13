@@ -133,8 +133,9 @@ class VpnActivity:Activity() {
   updateStatus=ui.text(ApplicationUpdates.status(this)).apply{accessibilityLiveRegion=android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE};updates.addView(updateStatus)
   for(offer in ApplicationUpdates.offers(this)){
    updates.addView(ui.text("На сервере ${offer.server}: ${offer.name} (${offer.code})"))
-   if(offer.code>BuildConfig.VERSION_CODE)ui.add(updates,ui.button("Обновить",true){action{startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(offer.url)))}})
+   if(offer.code>BuildConfig.VERSION_CODE)ui.add(updates,ui.button("Обновить",true){action{startActivity(Intent(this,ApkUpdateActivity::class.java).putExtra("url",offer.url).putExtra("code",offer.code).putExtra("name",offer.name))}})
   }
+  if(ApkDownloads.hasDownload(this))ui.add(updates,ui.button("Скачивание / установка APK"){startActivity(Intent(this,ApkUpdateActivity::class.java))})
   updateProgress=ProgressBar(this).apply{isIndeterminate=true;contentDescription="Проверяем обновления"};updates.addView(updateProgress,LinearLayout.LayoutParams(ui.dp(28),ui.dp(28)))
   updateCheck=ui.button("Проверить обновления"){checkUpdates(true)};ui.add(updates,updateCheck!!);refreshUpdateStatus()
 

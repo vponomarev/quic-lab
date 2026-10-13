@@ -38,6 +38,7 @@ func (s *Store) Connections(ctx context.Context, q Query) (ConnectionPage, error
 	scanQ.Route = ""
 	scanQ.ExitID = ""
 	scanQ.SNI = ""
+	scanQ.DetectedProtocol = ""
 	flows := map[summaryFlowKey]*Connection{}
 	size, eventsSize := 0, 0
 	err := s.scan(ctx, scanQ, func(r Record, _ string) error {
@@ -82,6 +83,10 @@ func (s *Store) Connections(ctx context.Context, q Query) (ConnectionPage, error
 			return nil
 		}
 		app, tlsInfo := f.Flow.App, f.Flow.TLS
+		detected := f.Flow.Detected
+		if detected == nil && d.Detected != nil {
+			detected = d.Detected
+		}
 		if len(d.App.Packages) > 0 || app.Attribution == "" {
 			app = d.App
 		}
@@ -113,6 +118,7 @@ func (s *Store) Connections(ctx context.Context, q Query) (ConnectionPage, error
 		f.Flow.ExitRef = exit
 		f.Flow.App = app
 		f.Flow.TLS = tlsInfo
+		f.Flow.Detected = detected
 		f.Flow.ObservedFrom = from
 		f.Flow.ObservedTo = to
 		f.Flow.StartedAt = started

@@ -230,3 +230,24 @@ func TestResearchMountedUnderLab(t *testing.T) {
 		t.Fatal("legacy route removed")
 	}
 }
+
+func TestResearchPendingTrafficAndSourcePort(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		kind, status := "flow_open", "open"
+		if closed {
+			kind, status = "flow_close", "closed"
+		}
+		view := researchView{Query: research.Query{UserID: "u"}, Policy: ResearchPolicy{Users: map[string]string{}}, Rows: []researchRow{{Record: research.Record{Type: "connection"}, Flow: research.FlowData{Source: "10.254.254.1:55030", Destination: "62.76.154.48:443", Status: status}, EventCount: 1, Events: []research.Record{{Type: kind}}}}}
+		var b bytes.Buffer
+		if err := researchTemplate.Execute(&b, view); err != nil {
+			t.Fatal(err)
+		}
+		html := b.String()
+		if !strings.Contains(html, "10.254.254.1:55030 → 62.76.154.48:443") {
+			t.Fatal("source endpoint must be visible in main row")
+		}
+		if strings.Contains(html, "Ожидаем первый отчёт") == closed {
+			t.Fatal("pending label must distinguish open-only from closed zero traffic")
+		}
+	}
+}
