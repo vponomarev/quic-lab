@@ -11,7 +11,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 
-/** DownloadManager owns transfer/retries across Activity and process lifetimes. */
+/** Legacy DownloadManager results remain installable; new transfers run as our own UID. */
 internal object ApkDownloads {
  const val NOTIFICATION=7401
  private const val MAX=268435456L
@@ -25,21 +25,16 @@ internal object ApkDownloads {
   require(offer.code>=BuildConfig.VERSION_CODE){"Предложенная версия старее установленной"}
   ServiceTransfer.validateMetadata(JSONObject().put("apk_url",offer.url))
   val previous=snapshot(c)
-  if(previous.id>0 && prefs(c).getString("url","")==offer.url && previous.code==offer.code && (previous.active || previous.status==DownloadManager.STATUS_SUCCESSFUL))return
-  check(!previous.active){"Уже скачивается другое обновление"}
-  val request=DownloadManager.Request(Uri.parse(offer.url))
-   .setTitle("QUIC Lab · ${offer.name}").setDescription("Обновление приложения")
-   .setMimeType("application/vnd.android.package-archive")
-   .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-   .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,"quic-lab-${offer.code}-${UUID.randomUUID().toString().take(8)}.apk")
-  val id=manager(c).enqueue(request)
-  if(!prefs(c).edit().putLong("id",id).putString("url",offer.url).putString("name",offer.name).putInt("code",offer.code).commit()){
-   manager(c).remove(id);error("Не удалось сохранить состояние загрузки")
-  }
+  val same=previous.id>0 && prefs(c).getString("url","")==offer.url && previous.code==offer.code
+  if(same && (previous.status==DownloadManager.STATUS_SUCCESSFUL || (OwnedApkDownloads.owns(c) && previous.active)))return
+  check(!previous.active || same || !OwnedApkDownloads.owns(c)){"Уже скачивается другое обновление"}
+  cancel(c)
+  OwnedApkDownloads.start(c,offer)
  }
  fun retry(c:Context){val p=prefs(c);val o=ApplicationUpdates.Offer("","",p.getString("name","").orEmpty(),p.getInt("code",0),p.getString("url","").orEmpty());cancel(c);start(c,o)}
- @Synchronized fun cancel(c:Context){val id=prefs(c).getLong("id",0);if(id>0)manager(c).remove(id);prefs(c).edit().remove("id").commit();dismissNotification(c)}
+ @Synchronized fun cancel(c:Context){if(OwnedApkDownloads.owns(c))OwnedApkDownloads.cancel(c) else {val id=prefs(c).getLong("id",0);if(id>0)manager(c).remove(id);prefs(c).edit().remove("id").commit()};dismissNotification(c)}
  fun snapshot(c:Context):State {
+  if(OwnedApkDownloads.owns(c))return OwnedApkDownloads.snapshot(c)
   val p=prefs(c);val id=p.getLong("id",0);if(id==0L)return State(message="Загрузка отменена")
   val name=p.getString("name","").orEmpty();val code=p.getInt("code",0)
   manager(c).query(DownloadManager.Query().setFilterById(id)).use {q->
@@ -76,7 +71,7 @@ internal object ApkDownloads {
   dir.listFiles()?.filter{it.name.startsWith("download-") && it.lastModified()<System.currentTimeMillis()-86400000L}?.forEach{it.delete()}
   val file=File(dir,"download-${state.id}-${UUID.randomUUID()}.apk")
   try {
-   val uri=requireNotNull(manager(c).getUriForDownloadedFile(state.id)){"APK больше не доступен"}
+   val uri=requireNotNull(if(OwnedApkDownloads.owns(c))OwnedApkDownloads.uri(c) else manager(c).getUriForDownloadedFile(state.id)){"APK больше не доступен"}
    requireNotNull(c.contentResolver.openInputStream(uri)).use {input->file.outputStream().use {out->
     val b=ByteArray(65536);var count=0L
     while(true){val n=input.read(b);if(n<0)break;count+=n;require(count<=MAX){"APK превышает допустимый размер"};out.write(b,0,n)}

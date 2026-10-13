@@ -25,6 +25,18 @@ class ApkDownloadTest {
  @Test fun downloadSurvivesReopenAndCanBeInstalled(){
   val url=InstrumentationRegistry.getArguments().getString("apkDownloadUrl")
   org.junit.Assume.assumeTrue(url!=null)
+  c.startActivity(android.content.Intent(c,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+  Thread.sleep(1000)
+  val requireVpn=InstrumentationRegistry.getArguments().getString("apkRequireVpn")=="true"
+  val cm=c.getSystemService(android.net.ConnectivityManager::class.java)
+  fun vpns()=cm.allNetworks.filter{cm.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)==true}.toSet()
+  if(requireVpn){
+   c.startForegroundService(android.content.Intent(c,LabVpnService::class.java))
+   val ready=System.currentTimeMillis()+30000
+   while(vpns().isEmpty() && System.currentTimeMillis()<ready)Thread.sleep(250)
+   assertTrue("VPN must be up before download",vpns().isNotEmpty())
+  }
+  val vpnBefore=vpns()
   ApkDownloads.cancel(c)
   val offer=ApplicationUpdates.Offer("acceptance","quic-lab",BuildConfig.VERSION_NAME,BuildConfig.VERSION_CODE,url!!)
   ApkDownloads.start(c,offer)
@@ -35,10 +47,11 @@ class ApkDownloadTest {
   var state=ApkDownloads.snapshot(c)
   while(state.status!=android.app.DownloadManager.STATUS_SUCCESSFUL && state.status!=android.app.DownloadManager.STATUS_FAILED && System.currentTimeMillis()<until){Thread.sleep(500);state=ApkDownloads.snapshot(c)}
   assertEquals(state.message,android.app.DownloadManager.STATUS_SUCCESSFUL,state.status)
+  if(requireVpn)assertEquals("VPN must not be restarted to download",vpnBefore,vpns())
   val nm=c.getSystemService(android.app.NotificationManager::class.java)
   val noticeUntil=System.currentTimeMillis()+10000
   while(nm.activeNotifications.none{it.id==ApkDownloads.NOTIFICATION} && System.currentTimeMillis()<noticeUntil)Thread.sleep(200)
-  assertTrue("Real DownloadManager completion must notify",nm.activeNotifications.any{it.id==ApkDownloads.NOTIFICATION})
+  assertTrue("Completed transfer must notify",nm.activeNotifications.any{it.id==ApkDownloads.NOTIFICATION})
   val file=ApkDownloads.prepareInstaller(c)
   assertTrue(file.isFile)
   val intent=ApkDownloads.installerIntent(c,file)
@@ -46,11 +59,36 @@ class ApkDownloadTest {
   assertEquals("application/vnd.android.package-archive",intent.type)
   assertNotEquals(0,intent.flags and android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
  }
+ @Test fun interruptedServiceOffersRetry(){
+  val args=InstrumentationRegistry.getArguments()
+  val stage=args.getString("apkDeathStage")
+  org.junit.Assume.assumeTrue(stage!=null)
+  c.startActivity(android.content.Intent(c,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+  Thread.sleep(1000)
+  if(stage=="prepare"){
+   ApkDownloads.cancel(c)
+   ApkDownloads.start(c,ApplicationUpdates.Offer("","",BuildConfig.VERSION_NAME,BuildConfig.VERSION_CODE,args.getString("apkSlowUrl")!!))
+   val until=System.currentTimeMillis()+20000
+   while(ApkDownloads.snapshot(c).bytes==0L && ApkDownloads.snapshot(c).active && System.currentTimeMillis()<until)Thread.sleep(100)
+   assertTrue("Slow download must be running before runner terminates process",ApkDownloads.snapshot(c).active)
+   assertTrue(ApkDownloads.snapshot(c).bytes>0)
+  }else{
+   val interrupted=ApkDownloads.snapshot(c)
+   assertEquals(android.app.DownloadManager.STATUS_FAILED,interrupted.status)
+   assertTrue(interrupted.message,interrupted.message.contains("Повторить"))
+   ApkDownloads.retry(c)
+   val until=System.currentTimeMillis()+180000
+   while(ApkDownloads.snapshot(c).active && System.currentTimeMillis()<until)Thread.sleep(500)
+   assertEquals(ApkDownloads.snapshot(c).message,android.app.DownloadManager.STATUS_SUCCESSFUL,ApkDownloads.snapshot(c).status)
+  }
+ }
  @Test fun liveHttpFailureRetryAndCancel(){
   val url=InstrumentationRegistry.getArguments().getString("apkDownloadUrl")
   org.junit.Assume.assumeTrue(url!=null)
-  val prefix="apk-test-"+System.nanoTime()
-  val isolated=object:android.content.ContextWrapper(c){override fun getSharedPreferences(name:String,mode:Int)=baseContext.getSharedPreferences(prefix+name,mode)}
+  c.startActivity(android.content.Intent(c,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+  Thread.sleep(1000)
+  val isolated=c
+  ApkDownloads.cancel(c)
   try {
    ApkDownloads.start(isolated,ApplicationUpdates.Offer("","",BuildConfig.VERSION_NAME,BuildConfig.VERSION_CODE,url+"-missing"))
    val first=ApkDownloads.snapshot(isolated).id
@@ -63,7 +101,7 @@ class ApkDownloadTest {
    assertNotEquals(first,ApkDownloads.snapshot(isolated).id)
    ApkDownloads.cancel(isolated)
    assertFalse(ApkDownloads.hasDownload(isolated))
-  }finally{ApkDownloads.cancel(isolated);c.deleteSharedPreferences(prefix+"apk_download")}
+  }finally{ApkDownloads.cancel(isolated)}
  }
 
 }
