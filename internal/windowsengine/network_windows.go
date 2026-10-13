@@ -1,0 +1,45 @@
+//go:build windows
+
+package windowsengine
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"unicode/utf16"
+)
+
+// All mutations target the freshly created adapter GUID. No shared DNS/default routes are modified.
+func (l *tunLink) Configure(ctx context.Context, s Settings) error {
+	targets, _ := json.Marshal(s.Targets)
+	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $a=@(Get-NetAdapter -IncludeHidden | Where-Object {$_.InterfaceGuid -eq '` + l.guid.String() + `'}); if($a.Count -ne 1){throw 'Owned adapter missing'}; $idx=$a[0].ifIndex; if(Get-NetIPAddress -AddressFamily IPv4 -IPAddress '10.254.253.1' -ErrorAction SilentlyContinue){throw 'Adapter address already in use'}; Set-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -DadTransmits 0; New-NetIPAddress -InterfaceIndex $idx -IPAddress '10.254.253.1' -PrefixLength 32 -AddressFamily IPv4 -PolicyStore ActiveStore | Out-Null; Set-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -NlMtuBytes 1280 -InterfaceMetric 5000 -DadTransmits 0; $targets=ConvertFrom-Json '` + string(targets) + `'; foreach($target in $targets){New-NetRoute -DestinationPrefix $target -InterfaceIndex $idx -NextHop '0.0.0.0' -RouteMetric 1 -PolicyStore ActiveStore | Out-Null}; $ready=$false; for($n=0;$n -lt 50;$n++){ $ip=Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue; if($ip.AddressState -eq 'Preferred'){$ready=$true;break};Start-Sleep -Milliseconds 100}; if(-not $ready){throw 'Adapter address not ready'}; $selections=@(); foreach($target in $targets){$remote=$target.Split('/')[0];$selected=@(Find-NetRoute -RemoteIPAddress $remote | Select-Object -ExpandProperty InterfaceIndex -Unique);if($selected.Count -ne 1){throw 'Ambiguous route'};$selections+=@{target=$target;interface_index=$selected[0]}}; @{owner=$idx;routes=@($selections)} | ConvertTo-Json -Depth 3 -Compress;`
+	units := utf16.Encode([]rune(script))
+	b := make([]byte, len(units)*2)
+	for i, v := range units {
+		binary.LittleEndian.PutUint16(b[2*i:], v)
+	}
+	shell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	command := exec.CommandContext(ctx, shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
+	hideWindow(command)
+	out, err := command.Output()
+	if err != nil {
+
+		return errors.New("owned adapter route setup failed")
+	}
+
+	var result struct {
+		Owner  uint32           `json:"owner"`
+		Routes []RouteSelection `json:"routes"`
+	}
+	if json.Unmarshal(out, &result) != nil {
+		return errors.New("invalid route selection response")
+	}
+	return VerifyRoutes(result.Owner, s.Targets, result.Routes)
+}
