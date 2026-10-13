@@ -156,3 +156,25 @@ func TestInstalledServiceRejectsForeignAccount(t *testing.T) {
 		t.Fatal("expected access denied, got", e)
 	}
 }
+func TestServiceBackendSelection(t *testing.T) {
+	b, c, e := selectServiceBackend(nil)
+	if e != nil || c != nil || b.(vpnclient.RuntimeProvider).RuntimeInfo().Mode != "fixture" {
+		t.Fatal("fixture selection")
+	}
+	raw := []byte(`{"transport":"quic","endpoint":"192.0.2.1:443","hostname":"test","certificate":"CERT","key":"SECRET","interface_index":25,"targets":["1.1.1.1/32"]}`)
+	b, c, e = selectServiceBackend(raw)
+	if e != nil || c == nil {
+		t.Fatal(e)
+	}
+	info := b.(vpnclient.RuntimeProvider).RuntimeInfo()
+	if info.Mode != "vpn" || info.Traffic.Available {
+		t.Fatal(info)
+	}
+	encoded, _ := json.Marshal(info)
+	if bytes.Contains(encoded, []byte("SECRET")) {
+		t.Fatal("secret exposed")
+	}
+	if _, _, e = selectServiceBackend([]byte(`{"unknown":true}`)); e == nil {
+		t.Fatal("invalid engine accepted")
+	}
+}

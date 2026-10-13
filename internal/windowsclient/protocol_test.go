@@ -130,3 +130,44 @@ func TestSharedProtocolFixture(t *testing.T) {
 		t.Fatal("invalid fixture")
 	}
 }
+func TestBackendRejectsConfigurationBeforeSaving(t *testing.T) {
+	store := &memoryStore{}
+	h := NewHandler(vpnclient.NewController(&rejectingBackend{}), store)
+	c := config()
+	r := h.Handle(context.Background(), Request{Version: 1, ID: "rejected", Command: "apply_config", Config: &c})
+	if r.OK || r.Error != "invalid_config" || store.c != nil {
+		t.Fatal("invalid backend config persisted", r)
+	}
+}
+
+type rejectingBackend struct{ testBackend }
+
+func (*rejectingBackend) ValidateConfig(vpnclient.Config) error {
+	return errors.New("identity mismatch")
+}
+
+func TestProvisionedConfigOverridesOldCache(t *testing.T) {
+	old := config()
+	current := config()
+	current.Profiles.Profiles[0].Endpoint = "192.0.2.1:443"
+	saved := &memoryStore{c: &old}
+	store := serviceConfigStore(&current, saved)
+	got, err := store.Load(context.Background())
+	if err != nil || got.Profiles.Profiles[0].Endpoint != current.Profiles.Profiles[0].Endpoint {
+		t.Fatal("stale cache overrides engine config")
+	}
+	if store.Save(context.Background(), old) == nil {
+		t.Fatal("accepted incompatible config")
+	}
+	got.Profiles.Profiles[0].Endpoint = "changed"
+	again, _ := store.Load(context.Background())
+	if again.Profiles.Profiles[0].Endpoint != "192.0.2.1:443" {
+		t.Fatal("mutable fixed config")
+	}
+	if saved.c.Profiles.Profiles[0].Endpoint != old.Profiles.Profiles[0].Endpoint {
+		t.Fatal("fixture cache changed")
+	}
+	if serviceConfigStore(nil, saved) != saved {
+		t.Fatal("fixture store replaced")
+	}
+}

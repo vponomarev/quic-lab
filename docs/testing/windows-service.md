@@ -39,6 +39,27 @@ References: [named pipe security](https://learn.microsoft.com/en-us/windows/win3
 
 The review reproduced hostile state-directory precreation on actual NTFS: a SYSTEM-intended store accepted a directory owned by the ordinary user. Regression failed before the fix and passes now. Directory creation supplies restrictive security attributes atomically; preexisting foreign owners and reparse ancestors are rejected before DACL repair. Installer rejects a preexisting state directory. The fixed binary was installed and restarted; non-admin .NET/WPF tests passed again.
 
-Deferred minor findings (before distribution): UI file import has a check/reopen race around its size bound; DPAPI native plaintext output is freed without explicit zeroing. The service still enforces frame/config bounds. This checkpoint is not a distributable client.
+Deferred minor findings (before distribution): DPAPI native plaintext output is freed without explicit zeroing. The UI import check/reopen issue was fixed in the dashboard checkpoint below. The service still enforces frame/config bounds. This checkpoint is not a distributable client.
 
 Automatic approval review initially required explicit local-account authorization. The user subsequently authorized it; scripts/test-windows-service-account.ps1 completed the separate-account denial test and removed the account. No temporary qltest accounts, development SCM service or fixture processes remain. Protected test binaries and encrypted fixture state are retained for audit. Final native tests, Linux race tests, Windows vet, WPF build (zero warnings/errors), and removed-service rejection passed.
+
+## Compact dashboard checkpoint — 2026-10-14
+
+The owner requested autonomous development without further UAC prompts. No SCM install/start, Wintun adapter, route or DNS mutation was performed in this checkpoint.
+
+The WPF window is 440×570, with connect/disconnect, status, transport/endpoint, session TX/RX totals and current TX/RX rates. It polls once per second; closing the window cancels polling but leaves the service running. Missing data is shown as an em dash, not invented zero traffic. Rate freshness is reevaluated on every timer tick even if IPC is blocked. Unknown/legacy service runtime metadata carries an explicit unverified-VPN warning; fixture mode says it does not carry traffic.
+
+The additive IPC runtime schema reads aggregate gateway traffic events. Counters represent application payload bytes, excluding tunnel overhead. Rates use differences between samples, reset safely when a new session/counter reset occurs, and expire after four seconds. After Stop, totals are labelled as the last observed sample: the final sub-second interval may be absent.
+
+The service has an explicit `-engine` mode reading bounded, strict `engine.json` from its private state directory. Its provisioned settings are authoritative and read-only through generic IPC imports; an old fixture cache cannot override the selected endpoint. The fixture cache is retained untouched. Engine-compatible validation occurs before saving or starting. Real mode is built, but installation and actual dashboard-to-SCM-to-Wintun validation remain pending a later UAC-enabled session. The already-tested headless engine remains limited to QUIC/HTTPS and explicit IPv4 /32 targets, not a whole-PC VPN or release beta.
+
+Evidence on Windows 10 Pro 19045:
+
+- Linux Go race tests: vpnclient, windowsclient, windowsengine PASS; Windows-target vet PASS; Windows service build PASS.
+- Native Windows tests PASS for DPAPI, store corruption/restart, pipe authorization/identity, backend selection, fixed-profile cache migration and pre-save validation. The separately installed-service foreign-account test was skipped in this no-UAC run.
+- WPF Release build: zero warnings/errors. Actual STA window tests PASS for start/stop, counters, polling, delayed reply freshness, legacy warning, close/reopen and unavailable service.
+- Non-elevated .NET/WPF → actual foreground Go fixture roundtrip PASS. Contract traffic formatting/freshness tests PASS. The fixture process was stopped afterward.
+- Repository-owned WPF RenderTargetBitmap output inspected: primary controls fit without scrolling; rendered counters are deterministic test data, not a live VPN measurement. No hardware mouse acceptance claimed.
+- RED→GREEN observed for delayed-poll stale speed, stale persisted profile and incompatible pre-save configuration. Static review had no Critical findings; its three Important findings were fixed. Imported files are now read on one handle with a streaming size bound.
+
+Local build: `desktop/windows/QuicLab.Windows/bin/Release/net10.0-windows/QuicLab.Windows.exe` (requires .NET 10 Desktop Runtime or a later self-contained package). This is a development artifact; installer, final import UI, tray behavior, full routing, protocol parity and beta acceptance remain in the plan.

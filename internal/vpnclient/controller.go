@@ -29,9 +29,10 @@ const (
 )
 
 type Snapshot struct {
-	State    State  `json:"state"`
-	Reason   string `json:"reason,omitempty"`
-	Revision uint64 `json:"revision"`
+	Runtime  *RuntimeInfo `json:"runtime,omitempty"`
+	State    State        `json:"state"`
+	Reason   string       `json:"reason,omitempty"`
+	Revision uint64       `json:"revision"`
 }
 
 var (
@@ -56,7 +57,16 @@ type Controller struct {
 func NewController(b Backend) *Controller {
 	return &Controller{backend: b, gate: make(chan struct{}, 1), s: Snapshot{State: Stopped}}
 }
-func (c *Controller) Snapshot() Snapshot { c.mu.Lock(); defer c.mu.Unlock(); return c.s }
+func (c *Controller) Snapshot() Snapshot {
+	c.mu.Lock()
+	s := c.s
+	c.mu.Unlock()
+	if p, ok := c.backend.(RuntimeProvider); ok {
+		info := p.RuntimeInfo()
+		s.Runtime = &info
+	}
+	return s
+}
 func (c *Controller) lock(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -69,7 +79,7 @@ func (c *Controller) lock(ctx context.Context) error {
 	}
 }
 func (c *Controller) Start(ctx context.Context, cfg Config) error {
-	if vpnmodel.Validate(cfg.Profiles) != nil {
+	if c.ValidateConfig(cfg) != nil {
 		return ErrInvalidConfig
 	}
 	c.mu.Lock()
@@ -189,5 +199,17 @@ func (c *Controller) Stop(ctx context.Context) error {
 	c.dirty = false
 	c.s.State = Stopped
 	c.s.Reason = ""
+	return nil
+}
+
+func (c *Controller) ValidateConfig(cfg Config) error {
+	if vpnmodel.Validate(cfg.Profiles) != nil {
+		return ErrInvalidConfig
+	}
+	if v, ok := c.backend.(interface{ ValidateConfig(Config) error }); ok {
+		if v.ValidateConfig(cfg) != nil {
+			return ErrInvalidConfig
+		}
+	}
 	return nil
 }

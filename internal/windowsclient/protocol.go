@@ -9,7 +9,7 @@ import (
 	"errors"
 	"io"
 	"quiclab/internal/vpnclient"
-	"quiclab/internal/vpnmodel"
+
 	"regexp"
 	"sync"
 )
@@ -113,7 +113,7 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 	case "stop":
 		err = h.controller.Stop(ctx)
 	case "validate_config":
-		if vpnmodel.Validate(q.Config.Profiles) != nil {
+		if h.controller.ValidateConfig(*q.Config) != nil {
 			err = vpnclient.ErrInvalidConfig
 		}
 	case "apply_config", "start":
@@ -121,7 +121,7 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 		if q.Command == "apply_config" {
 			if h.controller.Snapshot().State != vpnclient.Stopped {
 				err = errors.New("stop_before_apply")
-			} else if vpnmodel.Validate(q.Config.Profiles) != nil {
+			} else if h.controller.ValidateConfig(*q.Config) != nil {
 				err = vpnclient.ErrInvalidConfig
 			} else if h.store.Save(ctx, *q.Config) != nil {
 				err = errors.New("config_store_failed")

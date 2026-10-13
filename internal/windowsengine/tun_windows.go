@@ -10,8 +10,10 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wintun"
 	"io"
+	"quiclab/internal/vpnclient"
 	"quiclab/mobile"
 	"sync"
+	"time"
 
 	"unsafe"
 )
@@ -117,12 +119,14 @@ type ownedEndpoint struct {
 func (e *ownedEndpoint) Close() { e.link.Close() }
 
 type NativeGateway struct {
-	g    *mobile.Gateway
-	Sink mobile.EventSink
+	meter vpnclient.TrafficMeter
+	g     *mobile.Gateway
+	Sink  mobile.EventSink
 }
 
 func (g *NativeGateway) Start(ctx context.Context, s Settings) error {
-	g.g = mobile.NewGateway(g.Sink)
+	g.meter.Reset(time.Now().UTC().Format(time.RFC3339Nano))
+	g.g = mobile.NewGateway(g)
 	return g.g.Start(s.GatewayJSON(), interfaceBinder(s.InterfaceIndex))
 }
 func (g *NativeGateway) Attach(l Link) error {
@@ -149,3 +153,11 @@ func (i interfaceBinder) Bind(fd int64) error {
 	binary.BigEndian.PutUint32(v[:], uint32(i))
 	return windows.Setsockopt(windows.Handle(fd), windows.IPPROTO_IP, 31, (*byte)(unsafe.Pointer(&v[0])), 4)
 }
+
+func (g *NativeGateway) OnEvent(raw string) {
+	g.meter.Observe(raw, time.Now().UTC())
+	if g.Sink != nil {
+		g.Sink.OnEvent(raw)
+	}
+}
+func (g *NativeGateway) TrafficSnapshot() vpnclient.Traffic { return g.meter.Snapshot() }

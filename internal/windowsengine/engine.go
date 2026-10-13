@@ -115,3 +115,18 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
+	info := vpnclient.RuntimeInfo{Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets)}
+	if p, ok := e.g.(interface{ TrafficSnapshot() vpnclient.Traffic }); ok {
+		info.Traffic = p.TrafficSnapshot()
+	}
+	return info
+}
+
+func (e *Engine) ValidateConfig(c vpnclient.Config) error {
+	if e.s.Validate() != nil || !reflect.DeepEqual(c, e.Config()) {
+		return vpnclient.ErrInvalidConfig
+	}
+	return nil
+}

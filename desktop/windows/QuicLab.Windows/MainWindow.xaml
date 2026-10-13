@@ -1,1 +1,30 @@
-<Window x:Class="QuicLab.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="QUIC Lab · Windows" Width="820" Height="620" MinWidth="620" MinHeight="440" Background="#F3F6F8"><Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><TextBlock Text="QUIC Lab" FontSize="26" FontWeight="SemiBold"/><Border Grid.Row="1" Background="#FFF0CA" Padding="12" Margin="0,12"><TextBlock TextWrapping="Wrap" Text="Этап W2: тестовый движок. Кнопки проверяют управление службой; VPN и маршрутизация пока не включаются."/></Border><StackPanel Grid.Row="2"><TextBlock x:Name="StateText" Text="Проверка службы…" FontSize="18" Margin="0,0,0,12"/><StackPanel Orientation="Horizontal" Margin="0,0,0,16"><Button x:Name="StartButton" Content="Запустить тест" Click="StartClick"/><Button x:Name="StopButton" Content="Остановить" Click="StopClick"/><Button x:Name="RefreshButton" Content="Обновить статус" Click="RefreshClick"/></StackPanel><TextBlock Text="Конфигурация выходов · JSON" Margin="0,0,0,6"/></StackPanel><TextBox Grid.Row="3" x:Name="ConfigText" FontFamily="Consolas" FontSize="13" AcceptsReturn="True" AcceptsTab="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="10"/><StackPanel Grid.Row="4" Margin="0,14,0,0"><StackPanel Orientation="Horizontal"><Button x:Name="ImportButton" Content="Открыть файл…" Click="ImportClick"/><Button x:Name="ValidateButton" Content="Проверить" Click="ValidateClick"/><Button x:Name="ApplyButton" Content="Применить" Click="ApplyClick"/></StackPanel><TextBlock x:Name="MessageText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="#365267"/></StackPanel></Grid></Window>
+<Window x:Class="QuicLab.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="QUIC Lab · VPN" Width="440" Height="570" MinWidth="390" MinHeight="470" Background="#F3F6F8" FontFamily="Segoe UI" Foreground="#183544">
+ <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="22">
+  <DockPanel Margin="0,0,0,20"><TextBlock Text="QUIC Lab" FontSize="24" FontWeight="SemiBold"/><Button x:Name="RefreshButton" Content="↻" ToolTip="Обновить статус" Click="RefreshClick" FontSize="20" Padding="6,0" Width="34" HorizontalAlignment="Right" Background="Transparent" BorderThickness="0"/></DockPanel>
+  <Border Background="White" CornerRadius="12" Padding="18" BorderBrush="#DCE6EB" BorderThickness="1"><StackPanel>
+   <StackPanel Orientation="Horizontal"><Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#8B9CA5" Margin="0,0,9,0"/><TextBlock x:Name="StateText" Text="Проверка службы…" FontSize="20" FontWeight="SemiBold"/></StackPanel>
+   <TextBlock x:Name="ProfileText" Text="Подключение к службе" Margin="0,7,0,12" Foreground="#607783" TextWrapping="Wrap"/>
+   <Border x:Name="ModeBanner" Background="#FFF2CF" CornerRadius="5" Padding="8" Margin="0,0,0,12" Visibility="Collapsed"><TextBlock x:Name="ModeText" TextWrapping="Wrap" FontSize="12"/></Border>
+   <Button x:Name="ToggleButton" Content="Подключить" Click="ToggleClick" Background="#00877F" Foreground="White" BorderThickness="0" Padding="14,11" FontSize="15" HorizontalContentAlignment="Center" IsEnabled="False"/>
+   <ProgressBar x:Name="BusyBar" Height="3" IsIndeterminate="True" Visibility="Collapsed" Margin="0,8,0,0"/>
+  </StackPanel></Border>
+  <Border Background="White" CornerRadius="12" Padding="18" Margin="0,12,0,0" BorderBrush="#DCE6EB" BorderThickness="1"><StackPanel>
+   <TextBlock Text="Трафик VPN" ToolTip="Полезные данные приложений; служебный трафик туннеля не учитывается." FontSize="14" FontWeight="SemiBold" Margin="0,0,0,12"/>
+   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="↑ Отправлено · TX" Foreground="#647B86" FontSize="12"/><TextBlock Grid.Column="1" Text="↓ Получено · RX" Foreground="#647B86" FontSize="12"/>
+    <TextBlock x:Name="TxTotalText" Grid.Row="1" Text="—" FontSize="24" Margin="0,3,0,12"/><TextBlock x:Name="RxTotalText" Grid.Row="1" Grid.Column="1" Text="—" FontSize="24" Margin="0,3,0,12"/>
+    <TextBlock Grid.Row="2" Text="Скорость сейчас" Foreground="#647B86" FontSize="12"/><TextBlock Grid.Row="2" Grid.Column="1" Text="Скорость сейчас" Foreground="#647B86" FontSize="12"/>
+    <TextBlock x:Name="TxRateText" Grid.Row="3" Text="—" FontSize="18" Margin="0,3,0,0"/><TextBlock x:Name="RxRateText" Grid.Row="3" Grid.Column="1" Text="—" FontSize="18" Margin="0,3,0,0"/>
+   </Grid><TextBlock x:Name="TrafficHintText" Text="Счётчики ещё не получены" FontSize="11" Foreground="#647B86" Margin="0,12,0,0" TextWrapping="Wrap"/>
+  </StackPanel></Border>
+  <TextBlock x:Name="MessageText" Margin="2,12,2,8" FontSize="12" Foreground="#607783" TextWrapping="Wrap"/>
+  <Expander x:Name="SettingsPanel" Header="Настройки подключения" Margin="0,5,0,0"><StackPanel Margin="0,12,0,0">
+   <TextBlock Text="Конфигурация службы · JSON" Margin="0,0,0,6"/>
+   <TextBlock Text="В MVP рабочий профиль задаётся администратором в engine.json. JSON ниже применяется только к тестовому движку. Импорт профилей в обычной форме появится следующим этапом." TextWrapping="Wrap" FontSize="11" Foreground="#607783" Margin="0,0,0,8"/>
+   <TextBox x:Name="ConfigText" Height="180" FontFamily="Consolas" FontSize="12" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="8"/>
+   <WrapPanel Margin="0,8,0,0"><Button x:Name="ImportButton" Content="Открыть…" Click="ImportClick"/><Button x:Name="ValidateButton" Content="Проверить" Click="ValidateClick"/><Button x:Name="ApplyButton" Content="Применить" Click="ApplyClick"/></WrapPanel>
+  </StackPanel></Expander>
+
+ </StackPanel></ScrollViewer>
+</Window>

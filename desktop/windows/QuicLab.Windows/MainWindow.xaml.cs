@@ -1,15 +1,69 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 namespace QuicLab.Windows;
 
 public partial class MainWindow : Window
 {
-    readonly PipeClient client; bool busy;
-    public MainWindow(PipeClient client) { InitializeComponent(); this.client = client; Loaded += async (_, _) => await Command("status"); }
-    void SetBusy(bool value) { busy = value; StartButton.IsEnabled = StopButton.IsEnabled = RefreshButton.IsEnabled = ImportButton.IsEnabled = ValidateButton.IsEnabled = ApplyButton.IsEnabled = !value; }
-    async Task Command(string command) { if (busy) return; SetBusy(true); MessageText.Text = "Выполняется…"; try { JsonElement? config = null; if (command is "validate_config" or "apply_config") { if (System.Text.Encoding.UTF8.GetByteCount(ConfigText.Text) > Frames.Maximum) throw new InvalidDataException(); using var doc = JsonDocument.Parse(ConfigText.Text); config = doc.RootElement.Clone(); } var reply = await client.SendAsync(command, config); StateText.Text = reply.State switch { "running" => "Тестовая служба: запущено", "stopped" => "Тестовая служба: остановлено", "starting" => "Запуск…", "stopping" => "Остановка…", _ => "Требуется внимание" }; MessageText.Text = reply.Ok ? $"Готово · ревизия {reply.Revision}" : $"Не выполнено: {reply.Error}"; } catch (JsonException) { MessageText.Text = "Проверьте формат JSON."; } catch (UnauthorizedAccessException) { MessageText.Text = "Не удалось подтвердить подлинность службы. Данные не отправлены."; } catch (Exception) { MessageText.Text = "Служба недоступна или запрос не выполнен. Проверьте её запуск и повторите."; } finally { SetBusy(false); } }
-    async void StartClick(object sender, RoutedEventArgs e) => await Command("start"); async void StopClick(object sender, RoutedEventArgs e) => await Command("stop"); async void RefreshClick(object sender, RoutedEventArgs e) => await Command("status"); async void ValidateClick(object sender, RoutedEventArgs e) => await Command("validate_config"); async void ApplyClick(object sender, RoutedEventArgs e) => await Command("apply_config");
-    async void ImportClick(object sender, RoutedEventArgs e) { var dialog = new OpenFileDialog { Filter = "JSON|*.json" }; if (dialog.ShowDialog() != true) return; try { if (new FileInfo(dialog.FileName).Length > Frames.Maximum) throw new InvalidDataException(); ConfigText.Text = await File.ReadAllTextAsync(dialog.FileName); MessageText.Text = "Файл открыт. Проверьте конфигурацию и нажмите «Применить»."; } catch (Exception) { MessageText.Text = "Не удалось открыть конфигурацию."; } }
+    readonly IStatusClient client;
+    readonly CancellationTokenSource lifetime = new();
+    readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    bool busy, closed, connectedToService;
+    Reply? latest;
+    public MainWindow(IStatusClient client)
+    {
+        InitializeComponent(); this.client = client;
+        Loaded += async (_, _) => { await Command("status"); if (!closed) timer.Start(); };
+        timer.Tick += async (_, _) => { if (connectedToService && latest is not null) RenderTraffic(latest); await Command("status", true); };
+        Closed += (_, _) => { closed = true; timer.Stop(); lifetime.Cancel(); };
+    }
+    void SetBusy(bool value, bool polling = false) { busy = value; BusyBar.Visibility = value && !polling ? Visibility.Visible : Visibility.Collapsed; UpdateButtons(); }
+    void UpdateButtons() { ToggleButton.IsEnabled = !busy && connectedToService && latest?.State is "stopped" or "running" or "failed"; RefreshButton.IsEnabled = ImportButton.IsEnabled = !busy; ValidateButton.IsEnabled = !busy && connectedToService && latest?.Runtime?.Mode == "fixture"; ApplyButton.IsEnabled = !busy && connectedToService && latest?.State == "stopped" && latest?.Runtime?.Mode == "fixture"; }
+    void Render(Reply r)
+    {
+        latest = r; connectedToService = true; bool running = r.State == "running", fixture = r.Runtime?.Mode == "fixture", vpn = r.Runtime?.Mode == "vpn";
+        StateText.Text = r.State switch { "running" => fixture ? "Тест запущен" : vpn ? "Движок запущен" : "VPN не подтверждён", "stopped" => "Отключено", "starting" => "Подключение…", "stopping" => "Отключение…", _ => "Ошибка подключения" };
+        StatusDot.Fill = new SolidColorBrush(running ? Color.FromRgb(0, 135, 127) : r.State == "failed" ? Color.FromRgb(183, 71, 64) : Color.FromRgb(139, 156, 165));
+        ToggleButton.Content = running ? "Отключить" : r.State == "failed" ? "Сбросить ошибку" : "Подключить";
+        ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\nАдресов через VPN: {r.Runtime.RouteCount}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
+        ModeBanner.Visibility = !vpn ? Visibility.Visible : Visibility.Collapsed; ModeText.Text = fixture ? "Тестовый движок: сеть не изменяется, трафик не передаётся." : "Служба не сообщает тип движка. Работа VPN не подтверждена.";
+        ConfigText.ToolTip = vpn ? "Профиль MVP задаётся администратором в engine.json. Импорт через окно доступен только тестовому движку." : null;
+        RenderTraffic(r); UpdateButtons();
+    }
+    void RenderTraffic(Reply r)
+    {
+        var t = TrafficDisplay.Create(r, DateTimeOffset.UtcNow); TxTotalText.Text = t.TxTotal; RxTotalText.Text = t.RxTotal; TxRateText.Text = t.TxRate; RxRateText.Text = t.RxRate; TrafficHintText.Text = t.Hint;
+    }
+    async Task Command(string command, bool polling = false)
+    {
+        if (busy || closed) return; SetBusy(true, polling); if (!polling) MessageText.Text = "Выполняется…";
+        try
+        {
+            JsonElement? config = null; if (command is "validate_config" or "apply_config") { if (Encoding.UTF8.GetByteCount(ConfigText.Text) > Frames.Maximum) throw new InvalidDataException(); using var doc = JsonDocument.Parse(ConfigText.Text); config = doc.RootElement.Clone(); }
+            var reply = await client.SendAsync(command, config, lifetime.Token); if (closed) return; Render(reply);
+            if (!reply.Ok) MessageText.Text = ErrorText(reply.Error); else if (!polling) MessageText.Text = $"Готово · ревизия {reply.Revision}";
+        }
+        catch (OperationCanceledException) when (closed) { }
+        catch (JsonException) { MessageText.Text = "Проверьте формат JSON."; }
+        catch (UnauthorizedAccessException) { Unavailable("Не удалось подтвердить подлинность службы. Данные не отправлены."); }
+        catch (Exception) { if (!closed) Unavailable("Служба недоступна. Для настоящего VPN требуется установка службы; окно не запрашивает UAC автоматически."); }
+        finally { if (!closed) SetBusy(false); }
+    }
+    void Unavailable(string message) { connectedToService = false; StateText.Text = "Нет связи со службой"; StatusDot.Fill = Brushes.Gray; MessageText.Text = message; TxTotalText.Text = RxTotalText.Text = TxRateText.Text = RxRateText.Text = "—"; TrafficHintText.Text = "Нет актуальных данных"; UpdateButtons(); }
+    static string ErrorText(string code) => code switch { "config_required" => "Сначала откройте и примените конфигурацию.", "stop_before_apply" => "Отключите VPN перед применением настроек.", "invalid_config" => "Конфигурация не поддерживается или содержит ошибку.", "cleanup_required" => "Не удалось завершить очистку. Повторите отключение.", "backend_start_failed" => "Подключение не удалось. Проверьте профиль и сеть.", _ => "Команда не выполнена. Обновите статус и повторите." };
+    async void ToggleClick(object sender, RoutedEventArgs e) => await Command(latest?.State is "running" or "failed" ? "stop" : "start");
+    async void RefreshClick(object sender, RoutedEventArgs e) => await Command("status");
+    async void ValidateClick(object sender, RoutedEventArgs e) => await Command("validate_config");
+    async void ApplyClick(object sender, RoutedEventArgs e) => await Command("apply_config");
+    async void ImportClick(object sender, RoutedEventArgs e)
+    {
+        if (busy) return; var dialog = new OpenFileDialog { Filter = "JSON|*.json" }; if (dialog.ShowDialog() != true) return; SetBusy(true);
+        try { await using var file = new FileStream(dialog.FileName, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true); using var limited = new MemoryStream(); byte[] buffer = new byte[8192]; int n; while ((n = await file.ReadAsync(buffer, lifetime.Token)) != 0) { if (limited.Length + n > Frames.Maximum) throw new InvalidDataException(); await limited.WriteAsync(buffer.AsMemory(0, n), lifetime.Token); } if (closed) return; ConfigText.Text = new UTF8Encoding(false, true).GetString(limited.ToArray()).TrimStart('\uFEFF'); MessageText.Text = "Файл открыт. Проверьте и примените настройки."; }
+        catch (Exception) { if (!closed) MessageText.Text = "Не удалось открыть конфигурацию (не UTF-8 или больше 1 МиБ)."; }
+        finally { if (!closed) SetBusy(false); }
+    }
 }

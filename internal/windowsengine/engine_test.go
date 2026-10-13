@@ -154,3 +154,10 @@ func TestProbeExitMustBePresentAndMatch(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+func TestSettingsParserBoundsAndStrictness(t *testing.T) {
+	for _, raw := range [][]byte{[]byte(`{}`), []byte(`{"unknown":1}`), make([]byte, (1<<20)+1)} {
+		if _, e := ParseSettings(raw); e == nil {
+			t.Fatal("invalid settings accepted")
+		}
+	}
+}

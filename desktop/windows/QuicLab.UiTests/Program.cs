@@ -1,12 +1,41 @@
-using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using System.Text.Json;
 using QuicLab.Windows;
 class UiTests
 {
-    [STAThread] static int Main(string[] args) { int exit = 1; var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; app.Startup += async (_, _) => { try { var client = new PipeClient(); var w = new MainWindow(client); w.Show(); await Ready(w); using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(args[0])); ((TextBox)w.FindName("ConfigText")).Text = doc.RootElement.GetProperty("config").GetRawText(); await Click(w, "ValidateButton"); await Click(w, "ApplyButton"); await Click(w, "StartButton"); if (!Text(w, "StateText").Contains("запущено")) throw new Exception("start state"); w.Close(); var w2 = new MainWindow(client); w2.Show(); await Ready(w2); if (!Text(w2, "StateText").Contains("запущено")) throw new Exception("window close stopped service"); await Click(w2, "StopButton"); if (!Text(w2, "StateText").Contains("остановлено")) throw new Exception("stop state"); w2.Close(); Console.WriteLine("WPF event binding + close/reopen + SCM IPC PASS"); exit = 0; } catch (Exception e) { Console.WriteLine(e.GetType().Name + ": " + e.Message); } finally { app.Shutdown(); } }; app.Run(); return exit; }
-    static string Text(MainWindow w, string name) => ((TextBlock)w.FindName(name)).Text;
-    static async Task Ready(MainWindow w) { var until = DateTime.UtcNow.AddSeconds(8); while (DateTime.UtcNow < until) { if (Text(w, "MessageText").StartsWith("Готово")) return; if (Text(w, "MessageText").StartsWith("Не выполнено") || Text(w, "MessageText").StartsWith("Служба недоступна")) throw new Exception(Text(w, "MessageText")); await Task.Delay(25); } throw new TimeoutException("UI operation"); }
-    static async Task Click(MainWindow w, string name) { var b = (Button)w.FindName(name); if (!b.IsEnabled) throw new Exception("button disabled"); b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Ready(w); }
+    [STAThread]
+    static int Main(string[] args)
+    {
+        int exit = 1; var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; app.Startup += async (_, _) =>
+        {
+            try
+            {
+                var fake = new FakeClient(); var w = new MainWindow(fake); w.Show(); await Ready(w);
+                Check(w.Width <= 460, "compact window"); Check(!((Expander)w.FindName("SettingsPanel")).IsExpanded, "settings initially collapsed");
+                await Click(w, "ToggleButton"); Check(Text(w, "StateText") == "Движок запущен", "start state"); Check(Text(w, "TxTotalText") == "2 КиБ", "TX total"); Check(Text(w, "RxRateText") == "2 КиБ/с", "RX rate");
+                var preview = Environment.GetEnvironmentVariable("QUIC_UI_PREVIEW");
+                if (!string.IsNullOrEmpty(preview)) { w.UpdateLayout(); var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)w.ActualWidth, (int)w.ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32); bitmap.Render(w); var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder(); encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap)); using var image = System.IO.File.Create(preview); encoder.Save(image); }
+                int polls = fake.Calls; await Task.Delay(1300); Check(fake.Calls > polls, "automatic polling");
+                fake.DelayStatus = true; await Task.Delay(5500); Check(Text(w, "TxRateText") == "—", "delayed polling must age rates"); fake.DelayStatus = false;
+                w.Close(); int closedCalls = fake.Calls; await Task.Delay(1300); Check(fake.Calls == closedCalls, "polling stopped on close"); Check(fake.State == "running", "closing UI stopped backend");
+                var w2 = new MainWindow(fake); w2.Show(); await Ready(w2); Check(Text(w2, "StateText") == "Движок запущен", "reopen state"); await Click(w2, "ToggleButton"); Check(Text(w2, "TxRateText") == "0 Б/с", "stopped rate");
+                fake.Fail = true; await Click(w2, "RefreshButton", false); Check(!((Button)w2.FindName("ToggleButton")).IsEnabled, "unavailable must disable start"); Check(Text(w2, "TxRateText") == "—", "unavailable stats"); w2.Close();
+                var legacy = new MainWindow(new FakeClient { State = "running", Legacy = true }); legacy.Show(); await Ready(legacy); Check(((Border)legacy.FindName("ModeBanner")).Visibility == Visibility.Visible, "legacy service warning"); Check(Text(legacy, "StateText") != "Движок запущен", "legacy cannot confirm VPN"); legacy.Close();
+                if (args.Length == 3) { var client = new PipeClient(args[1], uint.Parse(args[2])); var native = new MainWindow(client); native.Show(); await Ready(native); using var doc = JsonDocument.Parse(await System.IO.File.ReadAllTextAsync(args[0])); ((TextBox)native.FindName("ConfigText")).Text = doc.RootElement.GetProperty("config").GetRawText(); await Click(native, "ValidateButton"); await Click(native, "ApplyButton"); await Click(native, "ToggleButton"); Check(Text(native, "StateText") == "Тест запущен", "native fixture label"); Check(Text(native, "TxTotalText") == "—", "fixture cannot invent traffic"); await Click(native, "ToggleButton"); native.Close(); }
+                Console.WriteLine("WPF dashboard: state/stats/polling/close/reopen/unavailable/native fixture PASS"); exit = 0;
+            }
+            catch (Exception e) { Console.WriteLine(e.GetType().Name + ": " + e.Message); }
+            finally { app.Shutdown(); }
+        }; app.Run(); return exit;
+    }
+    static void Check(bool b, string why) { if (!b) throw new Exception(why); }
+    static string Text(MainWindow w, string n) => ((TextBlock)w.FindName(n)).Text;
+    static async Task Ready(MainWindow w) { var until = DateTime.UtcNow.AddSeconds(8); while (DateTime.UtcNow < until) { if (Text(w, "MessageText").StartsWith("Готово")) return; await Task.Delay(25); } throw new TimeoutException(Text(w, "MessageText")); }
+    static async Task Click(MainWindow w, string name, bool ready = true) { var b = (Button)w.FindName(name); var until = DateTime.UtcNow.AddSeconds(4); while (!b.IsEnabled && DateTime.UtcNow < until) await Task.Delay(25); Check(b.IsEnabled, "button disabled " + name); b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); if (ready) await Ready(w); else await Task.Delay(100); }
+    sealed class FakeClient : IStatusClient
+    {
+        public string State = "stopped"; public int Calls; public bool Fail, DelayStatus, Legacy;
+        public async Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default) { Calls++; if (command == "status" && DelayStatus) await Task.Delay(15000, cancellationToken); if (Fail) throw new System.IO.IOException(); if (command == "start") State = "running"; if (command == "stop") State = "stopped"; return new Reply(true, State, "", 1, Legacy ? null : new RuntimeInfo("vpn", "quic", "192.0.2.1:443", 1, new TrafficInfo(true, "one", DateTimeOffset.UtcNow, 2048, 4096, 1024, 2048))); }
+    }
 }

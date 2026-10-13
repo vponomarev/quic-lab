@@ -18,7 +18,12 @@ func main() {
 	data := flag.String("data-dir", "", "private absolute state directory")
 	fixture := flag.Bool("fixture", false, "foreground fixture; no VPN")
 	pipe := flag.String("pipe", windowsclient.ServicePipe, "fixture pipe name")
+	engine := flag.Bool("engine", false, "use administrator-provisioned engine.json from private data directory")
 	flag.Parse()
+	if *engine && *fixture {
+		fmt.Fprintln(os.Stderr, "real engine requires SCM mode")
+		os.Exit(2)
+	}
 	if *owner == "" || !filepath.IsAbs(*data) {
 		fmt.Fprintln(os.Stderr, "owner SID and absolute data directory required")
 		os.Exit(2)
@@ -29,7 +34,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "SCM required; use -fixture only for explicit no-network tests")
 			os.Exit(2)
 		}
-		if svc.Run(windowsclient.ServiceName, &windowsclient.Service{OwnerSID: *owner, DataDir: *data}) != nil {
+		if svc.Run(windowsclient.ServiceName, &windowsclient.Service{OwnerSID: *owner, DataDir: *data, Engine: *engine}) != nil {
 			os.Exit(1)
 		}
 		return
