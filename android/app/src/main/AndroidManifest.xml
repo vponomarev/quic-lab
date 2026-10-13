@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -18,6 +19,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application android:name=".QuicLabApplication" android:label="QUIC Lab" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+        <service android:name=".ApkTransferService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".ApkUpdateActivity" android:exported="false" />
         <receiver android:name=".ApkDownloadReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.DOWNLOAD_COMPLETE" /></intent-filter></receiver>
         <activity android:name=".ResearchScopeActivity" android:exported="false" />
