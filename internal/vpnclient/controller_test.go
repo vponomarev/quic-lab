@@ -189,3 +189,40 @@ func TestConcurrentStartAndStop(t *testing.T) {
 		t.Fatal("leaked run", b.starts.Load(), b.stops.Load(), c.Snapshot())
 	}
 }
+
+func TestPendingStopInhibitsNewStart(t *testing.T) {
+	b := &fakeBackend{}
+	c := NewController(b)
+	c.gate <- struct{}{}
+	stop := make(chan error, 1)
+	go func() { stop <- c.Stop(context.Background()) }()
+	until := time.Now().Add(time.Second)
+	for c.Snapshot().State != Stopping && time.Now().Before(until) {
+		time.Sleep(time.Millisecond)
+	}
+	if c.Snapshot().State != Stopping {
+		<-c.gate
+		<-stop
+		t.Fatal("Stop did not publish intent before gate wait")
+	}
+	started := make(chan error, 1)
+	go func() { started <- c.Start(context.Background(), cfg()) }()
+	select {
+	case err := <-started:
+		if err == nil {
+			t.Fatal("start accepted behind Stop")
+		}
+	case <-time.After(time.Second):
+		<-c.gate
+		<-stop
+		c.Stop(context.Background())
+		t.Fatal("Start did not honor pending Stop")
+	}
+	<-c.gate
+	if err := <-stop; err != nil {
+		t.Fatal(err)
+	}
+	if b.starts.Load() != 0 {
+		t.Fatal("backend started during Stop")
+	}
+}

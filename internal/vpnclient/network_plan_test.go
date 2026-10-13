@@ -3,6 +3,8 @@ package vpnclient
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -94,11 +96,14 @@ func TestCrashAfterMutationBeforeResultSave(t *testing.T) {
 	// First entry intent was durably saved; OS mutation happened, process died before next journal write.
 	s.r = Journal{Version: 1, Owner: p.Owner, Entries: []JournalEntry{{Change: p.Changes[0], Intent: true}}}
 	n.values[p.Changes[0].Resource] = p.Changes[0].After
-	if err := Rollback(context.Background(), n, s); err != nil {
-		t.Fatal(err)
+	if err := Rollback(context.Background(), n, s); !errors.Is(err, ErrConflict) {
+		t.Fatal("ambiguous intent needs explicit recovery", err)
 	}
-	if n.values[p.Changes[0].Resource] != p.Changes[0].Before {
-		t.Fatal("not restored")
+	if n.values[p.Changes[0].Resource] != p.Changes[0].After {
+		t.Fatal("ambiguous value overwritten")
+	}
+	if !errors.Is(p.Apply(context.Background(), n, s), ErrPending) {
+		t.Fatal("unresolved intent overwritten")
 	}
 }
 func TestRollbackPreservesForeignChange(t *testing.T) {
@@ -139,5 +144,47 @@ func TestJournalRejectsForeignResourceAndCorruption(t *testing.T) {
 		if _, e := DecodeJournal([]byte(raw)); e == nil {
 			t.Fatal("accepted", raw)
 		}
+	}
+}
+
+func TestPreexistingDesiredValueMustNotBeRolledBack(t *testing.T) {
+	s, n := fixture(t)
+	p := plan()
+	n.values[p.Changes[0].Resource] = p.Changes[0].After
+	if p.Apply(context.Background(), n, s) == nil {
+		t.Fatal("missing CAS conflict")
+	}
+	if n.values[p.Changes[0].Resource] != p.Changes[0].After {
+		t.Fatal("overwrote foreign value after failed CAS")
+	}
+}
+func TestJournalEncodeNeverWritesUndecodableSize(t *testing.T) {
+	j := Journal{Version: 1, Owner: "quic-test"}
+	for i := 0; i < 256; i++ {
+		c := plan().Changes[0]
+		c.Resource = fmt.Sprintf("quic-test/%d", i)
+		c.Before.Data = strings.Repeat("x", 4096)
+		c.After.Data = strings.Repeat("y", 4096)
+		j.Entries = append(j.Entries, JournalEntry{Change: c})
+	}
+	if b, e := EncodeJournal(j); e == nil {
+		if _, e = DecodeJournal(b); e != nil {
+			t.Fatal("encoder produced unreadable journal")
+		}
+	}
+}
+
+func TestJournalFailureAfterMutationRetainsAmbiguousState(t *testing.T) {
+	s, n := fixture(t)
+	p := plan()
+	s.failAt = 3
+	if err := p.Apply(context.Background(), n, s); !errors.Is(err, ErrJournal) || !errors.Is(err, ErrConflict) {
+		t.Fatal(err)
+	}
+	if n.values[p.Changes[0].Resource] != p.Changes[0].After {
+		t.Fatal("ambiguous change overwritten")
+	}
+	if !errors.Is(p.Apply(context.Background(), n, s), ErrPending) {
+		t.Fatal("pending recovery bypassed")
 	}
 }

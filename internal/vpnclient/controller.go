@@ -36,19 +36,21 @@ type Snapshot struct {
 
 var (
 	ErrInvalidConfig = errors.New("invalid_config")
+	ErrStopping      = errors.New("stop_pending")
 	ErrRunning       = errors.New("already_running")
 	ErrCleanup       = errors.New("cleanup_required")
 	ErrStart         = errors.New("backend_start_failed")
 )
 
 type Controller struct {
-	backend  Backend
-	gate     chan struct{}
-	mu       sync.Mutex
-	s        Snapshot
-	cancel   context.CancelFunc
-	dirty    bool
-	accepted Config
+	backend      Backend
+	gate         chan struct{}
+	mu           sync.Mutex
+	s            Snapshot
+	cancel       context.CancelFunc
+	dirty        bool
+	accepted     Config
+	stopsPending int
 }
 
 func NewController(b Backend) *Controller {
@@ -70,6 +72,12 @@ func (c *Controller) Start(ctx context.Context, cfg Config) error {
 	if vpnmodel.Validate(cfg.Profiles) != nil {
 		return ErrInvalidConfig
 	}
+	c.mu.Lock()
+	pending := c.stopsPending != 0
+	c.mu.Unlock()
+	if pending {
+		return ErrStopping
+	}
 	// Own slices: a UI must not change an accepted config while the backend starts.
 	cfg.Profiles.Exits = append([]vpnmodel.Exit(nil), cfg.Profiles.Exits...)
 	cfg.Profiles.Profiles = append([]vpnmodel.Profile(nil), cfg.Profiles.Profiles...)
@@ -78,6 +86,10 @@ func (c *Controller) Start(ctx context.Context, cfg Config) error {
 	}
 	defer func() { <-c.gate }()
 	c.mu.Lock()
+	if c.stopsPending != 0 {
+		c.mu.Unlock()
+		return ErrStopping
+	}
 	if c.s.State == Running {
 		same := reflect.DeepEqual(c.accepted, cfg)
 		c.mu.Unlock()
@@ -100,12 +112,24 @@ func (c *Controller) Start(ctx context.Context, cfg Config) error {
 	unhook := context.AfterFunc(ctx, cancel)
 	err := c.backend.Start(run, cfg)
 	unhook()
+	// Publish success under the same mutex used by Stop to cancel this run.
+	c.mu.Lock()
 	if err == nil {
 		err = run.Err()
 	}
 	if err == nil {
 		err = ctx.Err()
 	}
+	if err == nil && c.stopsPending != 0 {
+		err = ErrStopping
+	}
+	if err == nil {
+		c.s.State = Running
+		c.s.Reason = ""
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
 	if err != nil {
 		cancel()
 		cleanupCtx, done := context.WithTimeout(context.Background(), 10*time.Second)
@@ -128,21 +152,20 @@ func (c *Controller) Start(ctx context.Context, cfg Config) error {
 		}
 		return ErrStart
 	}
-	c.mu.Lock()
-	c.s.State = Running
-	c.s.Reason = ""
-	c.mu.Unlock()
-	return nil
+	return ErrStart
 }
 func (c *Controller) Stop(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c.mu.Lock()
+	c.stopsPending++
+	c.s.State = Stopping
 	if c.cancel != nil {
 		c.cancel()
 	}
 	c.mu.Unlock()
+	defer func() { c.mu.Lock(); c.stopsPending--; c.mu.Unlock() }()
 	if err := c.lock(ctx); err != nil {
 		return err
 	}

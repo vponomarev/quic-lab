@@ -21,6 +21,7 @@ type Journal struct {
 }
 type JournalEntry struct {
 	Change   Change `json:"change"`
+	Applied  bool   `json:"applied"`
 	Intent   bool   `json:"intent"`
 	Reverted bool   `json:"reverted"`
 }
@@ -36,7 +37,7 @@ func validateJournal(j Journal) error {
 	}
 	p := NetworkPlan{Owner: j.Owner}
 	for _, e := range j.Entries {
-		if e.Reverted && !e.Intent {
+		if (e.Reverted || e.Applied) && !e.Intent {
 			return ErrJournal
 		}
 		p.Changes = append(p.Changes, e.Change)
@@ -53,7 +54,11 @@ func EncodeJournal(j Journal) ([]byte, error) {
 	if e := validateJournal(j); e != nil {
 		return nil, e
 	}
-	return json.Marshal(j)
+	b, err := json.Marshal(j)
+	if err != nil || len(b) > 1<<20 {
+		return nil, ErrJournal
+	}
+	return b, nil
 }
 func DecodeJournal(b []byte) (Journal, error) {
 	if len(b) > 1<<20 {

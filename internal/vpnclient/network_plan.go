@@ -24,7 +24,9 @@ type NetworkPlan struct {
 }
 
 // Network operations are serialized by Controller. The adapter must verify resource ownership
-// and compare immediately before writing. Never implement this by restoring a full host snapshot.
+// and compare immediately before writing. ErrConflict guarantees no mutation occurred.
+// Ownership must remain provable for applied entries (an adapter-owned resource or OS receipt);
+// matching Data alone is not proof for shared resources. Never implement this by restoring a full host snapshot.
 type Network interface {
 	Read(context.Context, string) (Value, error)
 	CompareAndSwap(context.Context, string, Value, Value) error
@@ -92,14 +94,25 @@ func (p NetworkPlan) Apply(ctx context.Context, n Network, s JournalStore) error
 		if s.Save(ctx, j) != nil {
 			return fail(ErrJournal)
 		}
-		if n.CompareAndSwap(ctx, c.Resource, c.Before, c.After) != nil {
+		if err := n.CompareAndSwap(ctx, c.Resource, c.Before, c.After); err != nil {
+			if errors.Is(err, ErrConflict) {
+				j.Entries[i].Reverted = true // definitive failure: this change did not happen
+				if s.Save(ctx, j) != nil {
+					return fail(ErrJournal)
+				}
+			}
 			return fail(ErrApply)
+		}
+		j.Entries[i].Applied = true
+		if s.Save(ctx, j) != nil {
+			return fail(ErrJournal)
 		}
 	}
 	return nil
 }
 
 // Recovery handles the ambiguous crash window: intent recorded, mutation possibly applied.
+// Without a durable success record, matching After is ambiguous and is never undone.
 // A foreign value is retained and the journal remains unresolved for explicit recovery.
 func Rollback(ctx context.Context, n Network, s JournalStore) error {
 	j, err := s.Load(ctx)
@@ -126,6 +139,10 @@ func Rollback(ctx context.Context, n Network, s JournalStore) error {
 		switch current {
 		case e.Change.Before:
 		case e.Change.After:
+			if !e.Applied {
+				failures = append(failures, ErrConflict)
+				continue
+			}
 			if err = n.CompareAndSwap(ctx, e.Change.Resource, e.Change.After, e.Change.Before); err != nil {
 				failures = append(failures, ErrConflict)
 				continue

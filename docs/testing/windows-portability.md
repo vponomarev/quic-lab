@@ -23,3 +23,11 @@ Minimal endpoint extraction preserves Android Attach(fd); common attachLink owns
 Linux race passed for vpnmodel/routing/pathpolicy/trafficbudget/gateway/awg/vless/mobile, with existing scoped Xray checkptr exclusions. One initial full-suite run timed out in pre-existing TestBothPathsTemporarilyUnavailable (no TUN attachment in that test). Three isolated repetitions passed; a repeat full suite passed (mobile 55.063s). This timing instability remains recorded, not suppressed or relabelled a Windows fix.
 
 Fresh gomobile bind for android/arm64 and android/amd64 at API30 passed; compatibility AAR is test-only, not installed or published. Windows compile does not validate Wintun, routing, SCM or GUI. Production and phones were untouched by W0.
+
+## W1 and L0 verification — 2026-10-14
+
+Portable Controller, validated network transaction journal and isolated Linux backend are implemented. W1 race tests repeated ten times, vet and Windows amd64 test cross-compilation pass. Linux real TUN QUIC/HTTPS TCP/UDP, Stop cleanup and unchanged management route pass; see linux-platform-probe.md. Windows SCM/Wintun/IPC/GUI runtime remains untested pending VM access.
+
+Review reproduced and fixed: Stop missing an unpublished startup cancellation; failed CAS rolling back a foreign matching value; journal encoder accepting more than decoder's 1 MiB limit. Regression tests failed before the fixes and pass afterward.
+
+Recovery policy is conservative: a journal records intent before mutation and applied success afterward. A crash or persistence failure between these records leaves an ambiguous mutation; matching the desired value is insufficient proof. Recovery retains that value, reports a conflict and blocks further Apply until explicit recovery. This is a known recovery boundary, not a claim of automatic system rollback for every crash window. Windows adapters must provide provable ownership of applied resources (adapter/filter identity or OS provenance) and may not implement shared DNS rollback from value equality alone. W3 must test these guarantees with actual Windows APIs.
