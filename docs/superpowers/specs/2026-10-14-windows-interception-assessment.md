@@ -1,5 +1,7 @@
 # Windows per-application interception assessment
 
+> **Superseded 2026-10-14:** This assessment records the earlier strict isolation requirements. The primary approach is now [Wintun + user-space attribution + direct](2026-10-14-windows-per-app-tun-design.md). A custom WFP driver and fail-closed behavior are not prerequisites for that scope. The historical decision below must not be used as current implementation guidance.
+
 Date: 2026-10-14. Status: deployment decision open; no driver installed.
 
 ## Required behavior

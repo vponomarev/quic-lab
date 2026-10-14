@@ -1,5 +1,7 @@
 # Windows application routing implementation plan
 
+> **Superseded 2026-10-14 — do not execute this plan:** The accepted primary architecture is [Wintun + user-space attribution + direct](../specs/2026-10-14-windows-per-app-tun-design.md). A1 helpers and the draft application picker can be reused after adapting their semantics; the WFP backend and strict failure guards below are not the current implementation plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Selected exe TCP/UDP uses VPN, other applications remain direct; selected traffic blocks on VPN failure.
