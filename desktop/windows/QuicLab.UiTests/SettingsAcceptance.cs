@@ -30,15 +30,22 @@ static class SettingsAcceptance {
   }finally{await client.SendAsync("stop");var view=await client.SendSettingsAsync("read_settings");if(view.View==null)throw new Exception("cannot restore profile");var restored=await client.SendSettingsAsync("apply_settings",new(){ExpectedRevision=view.View.Revision,Settings=original});if(!restored.Status.Ok)throw new Exception("restore: "+restored.Status.Error);}
  }
  public static async Task RunUI(){
-  var client=new FakeSettings();var w=new SettingsWindow(client);w.Show();await Task.Delay(200);
+  var client=new FakeSettings();var w=new SettingsWindow(client,(_,_)=>Task.FromResult(UrlProfileLoader.Parse("""{"version":1,"kind":"vpn","hostname":"loaded.example","name":"Loaded","quic":"loaded.example:443","https":"loaded.example:8443","key":"new-key","certificate":"new-cert"}""")));w.Show();await Task.Delay(200);
   if(w.HasChanges)throw new Exception("unchanged editor dirty");
   var name=(TextBox)w.FindName("NameBox");name.Text="edited";if(!w.HasChanges)throw new Exception("edit not dirty");
   ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
   if(client.View.Settings.Name!="edited"||client.View.Revision!=2||w.HasChanges)throw new Exception("save/reload failed");
   if(Environment.GetEnvironmentVariable("QUIC_LAB_SETTINGS_PREVIEW") is string file){w.UpdateLayout();var bitmap=new System.Windows.Media.Imaging.RenderTargetBitmap((int)w.ActualWidth,(int)w.ActualHeight,96,96,System.Windows.Media.PixelFormats.Pbgra32);bitmap.Render(w);var enc=new System.Windows.Media.Imaging.PngBitmapEncoder();enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));using var stream=System.IO.File.Create(file);enc.Save(stream);}
+  ((TextBox)w.FindName("UrlBox")).Text="https://example.test/profile";
+  ((Button)w.FindName("LoadUrlButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
+  if(client.View.Revision!=2||!w.HasChanges||((TextBox)w.FindName("HostBox")).Text!="loaded.example")throw new Exception("URL changed service or failed to fill draft");
+  ((ComboBox)w.FindName("DownloadedTransportBox")).SelectedIndex=1;
+  if(((TextBox)w.FindName("PortBox")).Text!="8443")throw new Exception("downloaded transport selection");
+  ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
+  if(client.View.Revision!=3||client.View.Settings.Transport!="https"||!client.View.Settings.Targets.SequenceEqual(new[]{"1.1.1.0/30"})||client.View.Settings.InterfaceIndex!=5)throw new Exception("URL import altered local routes/interface");
   var ca=(TextBox)w.FindName("CABox");ca.Text="old QUIC trust";((ComboBox)w.FindName("TransportBox")).SelectedIndex=3;
   if(ca.Text!=""||((FrameworkElement)w.FindName("CaFields")).Visibility!=Visibility.Visible)throw new Exception("transport change retained hidden trust or hid VLESS CA");
-  ((ComboBox)w.FindName("TransportBox")).SelectedIndex=0;ca.Text="";
+  ((ComboBox)w.FindName("TransportBox")).SelectedIndex=1;ca.Text="";
   w.Close();
   var conflicting=new FakeSettings{Conflict=true};var stale=new SettingsWindow(conflicting);stale.Show();await Task.Delay(200);
   var staleName=(TextBox)stale.FindName("NameBox");string originalName=staleName.Text;staleName.Text="stale edit";

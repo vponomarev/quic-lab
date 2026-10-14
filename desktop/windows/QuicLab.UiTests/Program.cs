@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using QuicLab.Windows;
@@ -16,7 +16,7 @@ partial class UiTests
                 await ServiceRecoveryAcceptance();
                 await CompactLayoutAcceptance();
                 await ApplicationSelectionAcceptance();
-                SettingsAcceptance.RunModel();await SettingsAcceptance.RunUI();
+                await UrlImportAcceptance.Run();SettingsAcceptance.RunModel();await SettingsAcceptance.RunUI();
                 var fake = new FakeClient(); var w = new MainWindow(fake); w.Show(); await Ready(w);
                 Check(w.Width <= 460, "compact window"); Check(!((Expander)w.FindName("SettingsPanel")).IsExpanded, "settings initially collapsed");
                 await Click(w, "ToggleButton"); Check(Text(w, "StateText") == "Движок запущен", "start state"); Check(Text(w, "TxTotalText") == "2 КиБ", "TX total"); Check(Text(w, "RxRateText") == "2 КиБ/с", "RX rate");
