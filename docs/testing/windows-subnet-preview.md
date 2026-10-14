@@ -51,3 +51,7 @@ Automated unit/race, Windows vet and native IPC/store checks are recorded with t
 ### Build
 
 With Go 1.26.8: cross-build `./cmd/windows-vpn-engine` and `./cmd/windows-service` for GOOS=windows GOARCH=amd64, named quic-windows-engine.exe and quic-windows-service.exe. Publish desktop/windows/QuicLab.Windows with .NET SDK 10.0.402, Release, win-x64, self-contained into ui/. Include official signed Wintun 0.14.1 and its prebuilt-binary license, dependency licenses, Install.ps1 and the example profile. payload-sha256.json maps relative package filenames to SHA-256 hashes; never include a filled private profile.
+
+## Post-preview ICMP correction
+
+The original 0.1.0-preview.1 archive forwards TCP/UDP only. Subsequent source adds real IPv4 ICMP Echo for QUIC/HTTPS and requires the corresponding server update. See [ICMP verification and deployment](windows-icmp-echo.md). This does not add general ICMP/traceroute support.

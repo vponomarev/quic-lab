@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"net/netip"
+	"quiclab/internal/gateway"
+	"quiclab/internal/icmprelay"
 )
 
 // AttachWindowsLink takes ownership of a Windows packet endpoint; not exported in gomobile builds.
@@ -19,4 +22,22 @@ func (g *Gateway) StartWindowsContext(ctx context.Context, configJSON string, bi
 		return errors.New("unsupported Windows MVP transport")
 	}
 	return g.startWithContext(ctx, configJSON, binder)
+}
+
+// EchoWindows uses the authenticated tunnel only; never fall back to direct IP.
+func (g *Gateway) EchoWindows(ctx context.Context, address netip.Addr, message []byte) ([]byte, error) {
+	st, e := g.dialStream(ctx, "icmp-echo-v1", address.String())
+	if e != nil {
+		return nil, e
+	}
+	defer st.Close()
+	stop := context.AfterFunc(ctx, func() { st.Close() })
+	defer stop()
+	if d, ok := ctx.Deadline(); ok {
+		st.SetDeadline(d)
+	}
+	if e = gateway.WritePacket(st, message); e != nil {
+		return nil, e
+	}
+	return gateway.ReadPacket(st, icmprelay.MaxMessage)
 }

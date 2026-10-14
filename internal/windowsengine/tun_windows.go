@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wintun"
 	"io"
+	"quiclab/internal/icmprelay"
 	"quiclab/internal/vpnclient"
 	"quiclab/mobile"
 	"sync"
@@ -27,6 +28,7 @@ type tunLink struct {
 	closed   bool
 	once     sync.Once
 	endpoint *iobased.Endpoint
+	echo     *icmprelay.Relay
 }
 
 func (WindowsPlatform) Open(ctx context.Context, s Settings) (Link, error) {
@@ -66,6 +68,9 @@ func (l *tunLink) Read(b []byte) (int, error) {
 			n := copy(b, p)
 			l.session.ReleaseReceivePacket(p)
 			l.mu.RUnlock()
+			if l.echo != nil && l.echo.Handle(b[:n]) {
+				continue
+			}
 			return n, nil
 		}
 		if e != windows.ERROR_NO_MORE_ITEMS {
@@ -98,6 +103,9 @@ func (l *tunLink) Write(b []byte) (int, error) {
 }
 func (l *tunLink) Close() error {
 	l.once.Do(func() {
+		if l.echo != nil {
+			l.echo.Close()
+		}
 		l.mu.Lock()
 		l.closed = true
 		l.session.End()
@@ -134,6 +142,7 @@ func (g *NativeGateway) Attach(l Link) error {
 	if !ok {
 		return errors.New("invalid Windows link")
 	}
+	t.echo = icmprelay.New(g.g.EchoWindows, func(p []byte) error { _, err := t.Write(p); return err })
 	return g.g.AttachWindowsLink(&ownedEndpoint{t.endpoint, t})
 }
 func (g *NativeGateway) Stop() {

@@ -50,10 +50,11 @@ type Server struct {
 	slots            chan struct{}
 	handshakes       chan struct{}
 	researchSlots    chan struct{}
+	icmpSlots        chan struct{}
 }
 
 func New(allow string, log *slog.Logger) (*Server, error) {
-	s := &Server{Log: log, slots: make(chan struct{}, 1024), handshakes: make(chan struct{}, 1024), researchSlots: make(chan struct{}, 32)}
+	s := &Server{Log: log, slots: make(chan struct{}, 1024), handshakes: make(chan struct{}, 1024), researchSlots: make(chan struct{}, 32), icmpSlots: make(chan struct{}, 32)}
 	for _, v := range strings.Split(allow, ",") {
 		p, e := netip.ParsePrefix(strings.TrimSpace(v))
 		if e != nil || !p.Addr().Is4() {
@@ -267,6 +268,13 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 	s.handleRequest(ctx, st, req, id, log, datagrams, counters...)
 }
 func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id string, log *slog.Logger, datagrams *DatagramMux, counters ...func(int, int)) {
+	if req.Network == "icmp-echo-v1" {
+		if len(counters) > 0 && counters[0] != nil {
+			st = countedStream{Stream: st, count: counters[0]}
+		}
+		s.serveICMP(ctx, st, req, id)
+		return
+	}
 	if req.Network == "research-v1" {
 		s.serveResearch(ctx, st)
 		return

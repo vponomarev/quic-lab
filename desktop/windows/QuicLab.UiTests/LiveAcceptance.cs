@@ -6,13 +6,13 @@ using QuicLab.Windows;
 
 partial class UiTests
 {
-    // Explicit opt-in: requires the administrator-provisioned bounded 1.1.1.1/32 fixture.
+    // Explicit opt-in: requires the administrator-provisioned bounded 1.1.1.0/30 fixture.
     static async Task LiveAcceptance(string expectedExit)
     {
         if (!System.Net.IPAddress.TryParse(expectedExit, out var expected) || expected.AddressFamily != AddressFamily.InterNetwork) throw new ArgumentException("IPv4 exit required");
         var client = new PipeClient();
         var before = await client.SendAsync("status");
-        Check(before.Ok && before.State == "stopped" && before.Runtime?.Mode == "vpn" && before.Runtime.RouteCount == 1, "bounded stopped real service required");
+        Check(before.Ok && before.State == "stopped" && before.Runtime?.Mode == "vpn" && before.Runtime.RouteCount == 1 && before.Runtime.Targets?.Contains("1.1.1.0/30") == true, "bounded stopped real service required");
         MainWindow? window = null;
         try
         {
@@ -23,6 +23,14 @@ partial class UiTests
                 Arguments = "-NoProfile -Command \"$r=Find-NetRoute -RemoteIPAddress 1.1.1.1; if(-not ($r | Where-Object InterfaceAlias -like 'QUIC Lab MVP *')){exit 1}\"",
                 UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true } }) {
                 route.Start();using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(15));await route.WaitForExitAsync(deadline.Token);Check(route.ExitCode==0,"probe is not routed through owned adapter");
+            }
+            using (var ping = new System.Net.NetworkInformation.Ping()) {
+                foreach (var size in new[] {32, 1200}) {
+                    var payload=Enumerable.Range(0,size).Select(i=>(byte)i).ToArray();
+                    var response=await ping.SendPingAsync("1.1.1.0",4000,payload);
+                    Check(response.Status==System.Net.NetworkInformation.IPStatus.Success && response.Address.ToString()=="1.1.1.0" && response.Buffer.SequenceEqual(payload), "ICMP Echo through subnet ("+size+" bytes): "+response.Status);
+                    Console.WriteLine("ICMP Echo 1.1.1.0: "+size+" bytes, "+response.RoundtripTime+" ms PASS");
+                }
             }
             using var handler = new HttpClientHandler { UseProxy = false };
             using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };

@@ -42,6 +42,8 @@ func (c Config) DialContext(ctx context.Context, network, address string) (net.C
 	case "udp", "udp4":
 		local = &net.UDPAddr{IP: net.ParseIP(c.SourceIP)}
 		network = "udp4"
+	case "ip4:icmp":
+		local = &net.IPAddr{IP: net.ParseIP(c.SourceIP)}
 	default:
 		return nil, errors.New("unsupported transit network")
 	}
