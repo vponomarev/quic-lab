@@ -54,4 +54,4 @@ With Go 1.26.8: cross-build `./cmd/windows-vpn-engine` and `./cmd/windows-servic
 
 ## Post-preview ICMP correction
 
-The original 0.1.0-preview.1 archive forwards TCP/UDP only. Subsequent source adds real IPv4 ICMP Echo for QUIC/HTTPS and requires the corresponding server update. See [ICMP verification and deployment](windows-icmp-echo.md). This does not add general ICMP/traceroute support.
+The original 0.1.0-preview.1 archive forwards TCP/UDP only. Subsequent source adds real IPv4 ICMP Echo for QUIC/HTTPS and requires the corresponding server update. See [ICMP verification and deployment](windows-icmp-echo.md). The subsequent v2 extension also forwards Echo TTL and related router errors for traceroute; it does not add general raw IP support. Android is unchanged.

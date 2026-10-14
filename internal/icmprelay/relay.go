@@ -16,6 +16,16 @@ type Relay struct {
 }
 
 func New(exchange Exchange, write func([]byte) error) *Relay {
+	return NewPacket(func(ctx context.Context, p []byte) ([]byte, error) {
+		d, q, _ := Parse(p)
+		m, e := exchange(ctx, d, q)
+		if e != nil {
+			return nil, e
+		}
+		return Reply(p, m), nil
+	}, write)
+}
+func NewPacket(exchange func(context.Context, []byte) ([]byte, error), write func([]byte) error) *Relay {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Relay{ctx: ctx, cancel: cancel, queue: make(chan []byte, 32)}
 	for i := 0; i < 8; i++ {
@@ -30,15 +40,15 @@ func New(exchange Exchange, write func([]byte) error) *Relay {
 					if ctx.Err() != nil {
 						return
 					}
-					d, q, ok := Parse(packet)
+					_, _, ok := Parse(packet)
 					if !ok {
 						continue
 					}
 					probe, stop := context.WithTimeout(ctx, 3*time.Second)
-					message, e := exchange(probe, d, q)
+					reply, e := exchange(probe, packet)
 					stop()
 					if e == nil {
-						if reply := Reply(packet, message); reply != nil {
+						if ValidateResponse(packet, reply) {
 							write(reply)
 						}
 					}

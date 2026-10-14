@@ -273,6 +273,7 @@ func main() {
 		gw.BondOptions = bond.Options{DisconnectGrace: time.Duration(opts.BondDisconnectGraceSeconds) * time.Second}
 		if uplink != nil {
 			gw.DialContext = uplink.DialContext
+			gw.ProbeICMP = uplink.ProbeICMP
 			gw.Probe = uplink.Probe
 			gw.Resolver = uplink.Resolver()
 		}

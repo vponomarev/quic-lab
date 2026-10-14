@@ -39,3 +39,21 @@ func TestBackendRuntimeIncludedInSnapshot(t *testing.T) {
 type infoBackend struct{ fakeBackend }
 
 func (*infoBackend) RuntimeInfo() RuntimeInfo { return RuntimeInfo{Mode: "fixture"} }
+
+func TestAdditionalICMPTraffic(t *testing.T) {
+	var m TrafficMeter
+	m.Reset("a")
+	at := time.Unix(100, 0)
+	m.Observe(`{"event":"traffic","tx_bytes":0,"rx_bytes":0}`, at)
+	m.Add(40, 40)
+	m.Observe(`{"event":"traffic","tx_bytes":100,"rx_bytes":200}`, at.Add(time.Second))
+	s := m.Snapshot()
+	if s.TxBytes != 140 || s.RxBytes != 240 || s.TxRate != 140 || s.RxRate != 240 {
+		t.Fatal(s)
+	}
+	m.Reset("b")
+	m.Observe(`{"event":"traffic","tx_bytes":0,"rx_bytes":0}`, at)
+	if m.Snapshot().TxBytes != 0 {
+		t.Fatal("ICMP counters leaked across session")
+	}
+}

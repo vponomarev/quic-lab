@@ -142,7 +142,16 @@ func (g *NativeGateway) Attach(l Link) error {
 	if !ok {
 		return errors.New("invalid Windows link")
 	}
-	t.echo = icmprelay.New(g.g.EchoWindows, func(p []byte) error { _, err := t.Write(p); return err })
+	t.echo = icmprelay.NewPacket(func(ctx context.Context, p []byte) ([]byte, error) {
+		g.meter.Add(uint64(len(p)-int(p[0]&15)*4), 0)
+		return g.g.EchoWindows(ctx, p)
+	}, func(p []byte) error {
+		_, err := t.Write(p)
+		if err == nil {
+			g.meter.Add(0, uint64(len(p)-20))
+		}
+		return err
+	})
 	return g.g.AttachWindowsLink(&ownedEndpoint{t.endpoint, t})
 }
 func (g *NativeGateway) Stop() {

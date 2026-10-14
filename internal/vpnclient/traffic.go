@@ -27,14 +27,16 @@ type RuntimeProvider interface{ RuntimeInfo() RuntimeInfo }
 
 // TrafficMeter accepts only the aggregate packet engine counters, never flow destinations or credentials.
 type TrafficMeter struct {
-	mu sync.Mutex
-	s  Traffic
+	mu               sync.Mutex
+	s                Traffic
+	extraTx, extraRx uint64
 }
 
 func (m *TrafficMeter) Reset(session string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.s = Traffic{Session: session}
+	m.extraTx, m.extraRx = 0, 0
 }
 func (m *TrafficMeter) Snapshot() Traffic { m.mu.Lock(); defer m.mu.Unlock(); return m.s }
 func (m *TrafficMeter) Observe(raw string, at time.Time) {
@@ -51,6 +53,8 @@ func (m *TrafficMeter) Observe(raw string, at time.Time) {
 	if m.s.Available && !at.After(m.s.ObservedAt) {
 		return
 	}
+	*e.Tx += m.extraTx
+	*e.Rx += m.extraRx
 	tx, rx := 0.0, 0.0
 	if m.s.Available && *e.Tx >= m.s.TxBytes && *e.Rx >= m.s.RxBytes {
 		dt := at.Sub(m.s.ObservedAt).Seconds()
@@ -58,4 +62,11 @@ func (m *TrafficMeter) Observe(raw string, at time.Time) {
 		rx = float64(*e.Rx-m.s.RxBytes) / dt
 	}
 	m.s = Traffic{Available: true, Session: m.s.Session, ObservedAt: at, TxBytes: *e.Tx, RxBytes: *e.Rx, TxRate: tx, RxRate: rx}
+}
+
+func (m *TrafficMeter) Add(tx, rx uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.extraTx += tx
+	m.extraRx += rx
 }

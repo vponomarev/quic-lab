@@ -32,6 +32,21 @@ partial class UiTests
                     Console.WriteLine("ICMP Echo 1.1.1.0: "+size+" bytes, "+response.RoundtripTime+" ms PASS");
                 }
             }
+            using (var ttlProbe = new System.Net.NetworkInformation.Ping()) {
+                bool routerSeen=false;
+                for(int ttl=1;ttl<=8;ttl++) {
+                    var hop=await ttlProbe.SendPingAsync("1.1.1.0",3500,new byte[32],new System.Net.NetworkInformation.PingOptions(ttl,false));
+                    Console.WriteLine($"TTL {ttl}: {hop.Status} {hop.Address}");
+                    if(ttl==1)Check(hop.Status!=System.Net.NetworkInformation.IPStatus.Success,"TTL=1 incorrectly reached destination");
+                    if(hop.Status==System.Net.NetworkInformation.IPStatus.TtlExpired)routerSeen=true;
+                    if(hop.Status==System.Net.NetworkInformation.IPStatus.Success)break;
+                }
+                Check(routerSeen,"no real router ICMP Time Exceeded received");
+            }
+            await Task.Delay(1500);
+            var icmpOnly=await client.SendAsync("status");
+            Check(icmpOnly.Runtime?.Traffic is {TxBytes:>0,RxBytes:>0},"ICMP absent from traffic counters");
+            Console.WriteLine($"ICMP counters: TX={icmpOnly.Runtime!.Traffic!.TxBytes}, RX={icmpOnly.Runtime.Traffic.RxBytes} PASS");
             using var handler = new HttpClientHandler { UseProxy = false };
             using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
             var trace = await http.GetStringAsync("https://1.1.1.1/cdn-cgi/trace");

@@ -41,6 +41,7 @@ type Server struct {
 	Capture          func(tls.ConnectionState, string, string, net.Conn) net.Conn
 	DialContext      func(context.Context, string, string) (net.Conn, error)
 	Probe            func(context.Context) error
+	ProbeICMP        func(context.Context, []byte) ([]byte, error)
 	Resolver         *net.Resolver
 	RegisterProtocol func(tls.ConnectionState, string, func()) (func(), error)
 	Track            func(tls.ConnectionState, string, func() string) (func(int, int), func())
@@ -268,6 +269,13 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 	s.handleRequest(ctx, st, req, id, log, datagrams, counters...)
 }
 func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id string, log *slog.Logger, datagrams *DatagramMux, counters ...func(int, int)) {
+	if req.Network == "icmp-echo-v2" {
+		if len(counters) > 0 && counters[0] != nil {
+			st = countedStream{Stream: st, count: counters[0]}
+		}
+		s.serveICMPv2(ctx, st, req, id)
+		return
+	}
 	if req.Network == "icmp-echo-v1" {
 		if len(counters) > 0 && counters[0] != nil {
 			st = countedStream{Stream: st, count: counters[0]}

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"quiclab/internal/icmprelay"
 	"time"
 )
 
@@ -73,4 +74,11 @@ func (c Config) Probe(ctx context.Context) error {
 		return errors.New("transit gateway did not respond")
 	}
 	return nil
+}
+
+func (c Config) ProbeICMP(ctx context.Context, packet []byte) ([]byte, error) {
+	if c.Validate() != nil {
+		return nil, errors.New("invalid transit config")
+	}
+	return icmprelay.Probe(ctx, c.SourceIP, packet)
 }
