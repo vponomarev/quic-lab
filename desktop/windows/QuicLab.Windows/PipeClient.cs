@@ -17,9 +17,9 @@ public record Reply(bool Ok, string State, string Error, ulong Revision, Runtime
 public interface IStatusClient { Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default); }
 public sealed class PipeClient : IStatusClient
 {
-    const string Service = "QuicLabWindowsDev";
+    const string Service = "QuicLabWindowsPreview";
     readonly string pipeName; readonly uint? fixturePid;
-    public PipeClient(string pipeName = "quic-lab-windows-dev-v1", uint? fixturePid = null) { this.pipeName = pipeName; this.fixturePid = fixturePid; }
+    public PipeClient(string pipeName = "quic-lab-windows-preview-v1", uint? fixturePid = null) { this.pipeName = pipeName; this.fixturePid = fixturePid; }
     public async Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken); deadline.CancelAfter(TimeSpan.FromSeconds(30)); var ct = deadline.Token;

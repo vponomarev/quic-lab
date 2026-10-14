@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -42,6 +41,7 @@ func run() int {
 	duration := flag.Duration("duration", 2*time.Minute, "bounded foreground lifetime")
 	probe := flag.Bool("probe", false, "verify HTTPS and DNS through 1.1.1.1")
 	expected := flag.String("expected-exit", "", "required IPv4 server exit for probe")
+	validate := flag.Bool("validate", false, "validate configuration only; no network changes")
 	flag.Parse()
 	if *duration < time.Second || *duration > 30*time.Minute {
 		return 2
@@ -56,17 +56,16 @@ func run() int {
 	if e != nil || len(raw) > 1<<20 {
 		return 2
 	}
-	var s windowsengine.Settings
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if d.Decode(&s) != nil || s.Validate() != nil {
-		fmt.Println("invalid bounded configuration")
+	s, e := windowsengine.ParseSettings(raw)
+	if e != nil {
+		fmt.Println("invalid configuration")
 		return 2
 	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return 2
+	if *validate {
+		fmt.Println("configuration_valid")
+		return 0
 	}
+
 	if *probe {
 		if e = s.ValidateProbe(*expected); e != nil {
 			fmt.Println("invalid probe scope")

@@ -7,10 +7,10 @@ param(
 $ErrorActionPreference='Stop'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {throw 'Administrator required'}
-$name='QuicLabWindowsDev'
-$directory=Join-Path $env:ProgramFiles 'QUIC Lab Windows Dev'
+$name='QuicLabWindowsPreview'
+$directory=Join-Path $env:ProgramFiles 'QUIC Lab Windows Preview Fixture'
 $destination=Join-Path $directory 'quic-windows-service.exe'
-$state=Join-Path $env:ProgramData 'QUIC Lab Windows Dev'
+$state=Join-Path $env:ProgramData 'QUIC Lab Windows Preview Fixture'
 if ($Action -eq 'Install') {
  if (Get-Service -Name $name -ErrorAction SilentlyContinue) {throw 'Test service already exists; refusing replacement'}
  if (-not $OwnerSID -or -not $ExpectedSHA256 -or (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash -ne $ExpectedSHA256) {throw 'Invalid owner or binary hash'}
@@ -19,7 +19,7 @@ if ($Action -eq 'Install') {
  Copy-Item -LiteralPath $Binary -Destination $destination
  if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $ExpectedSHA256) {throw 'Copied binary hash mismatch'}
  $command='"'+$destination+'" -owner-sid '+$OwnerSID+' -data-dir "'+$state+'"'
- New-Service -Name $name -BinaryPathName $command -DisplayName 'QUIC Lab Windows Dev (no-network fixture)' -StartupType Manual | Out-Null
+ New-Service -Name $name -BinaryPathName $command -DisplayName 'QUIC Lab Windows Preview Fixture (no-network fixture)' -StartupType Manual | Out-Null
  try {Start-Service -Name $name;(Get-Service -Name $name).WaitForStatus('Running',[TimeSpan]::FromSeconds(15))} catch {Stop-Service -Name $name -ErrorAction SilentlyContinue;sc.exe delete $name | Out-Null;throw}
 } elseif ($Action -eq 'Update') {
  $service=Get-CimInstance Win32_Service -Filter "Name='$name'"

@@ -35,7 +35,7 @@ func (s Settings) ValidateProbe(expected string) error {
 		return errors.New("explicit expected exit IPv4 required")
 	}
 	for _, t := range s.Targets {
-		if t == "1.1.1.1/32" {
+		if p, err := netip.ParsePrefix(t); err == nil && p.Contains(netip.MustParseAddr("1.1.1.1")) {
 			return nil
 		}
 	}
@@ -52,4 +52,59 @@ func VerifyProbeExit(body, expected string) error {
 		}
 	}
 	return errors.New("exit IPv4 absent")
+}
+
+func validateTargets(targets []string, endpoint netip.Addr) error {
+	var selected []netip.Prefix
+	reserved := []string{"0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "10.254.253.1/32"}
+	for _, target := range targets {
+		p, err := netip.ParsePrefix(target)
+		if err != nil || !p.Addr().Is4() || p.Bits() == 0 || p != p.Masked() || p.Contains(endpoint) {
+			return errors.New("invalid IPv4 subnet or endpoint overlap")
+		}
+		for _, block := range reserved {
+			if p.Overlaps(netip.MustParsePrefix(block)) {
+				return errors.New("subnet overlaps reserved address space")
+			}
+		}
+		for _, previous := range selected {
+			if p.Overlaps(previous) {
+				return errors.New("overlapping IPv4 subnets")
+			}
+		}
+		selected = append(selected, p)
+	}
+	return nil
+}
+
+// VerifyRouteTable checks the entire requested prefix, including more-specific
+// foreign routes. Equal-prefix competitors are rejected regardless of metrics.
+// This validates the current snapshot; it is not a persistent firewall guard.
+func VerifyRouteTable(owner uint32, targets []string, routes []RouteSelection) error {
+	if owner == 0 || len(targets) == 0 {
+		return errors.New("route table incomplete")
+	}
+	for _, target := range targets {
+		p, err := netip.ParsePrefix(target)
+		if err != nil || !p.Addr().Is4() || p != p.Masked() {
+			return errors.New("invalid target")
+		}
+		found := false
+		for _, route := range routes {
+			r, err := netip.ParsePrefix(route.Target)
+			if err != nil || !r.Addr().Is4() {
+				return errors.New("invalid route table")
+			}
+			if r == p && route.InterfaceIndex == owner {
+				found = true
+			}
+			if r.Bits() >= p.Bits() && p.Overlaps(r) && route.InterfaceIndex != owner {
+				return errors.New("subnet overlaps a competing route")
+			}
+		}
+		if !found {
+			return errors.New("missing owned subnet route")
+		}
+	}
+	return nil
 }

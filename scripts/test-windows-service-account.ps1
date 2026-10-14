@@ -2,9 +2,9 @@ param([Parameter(Mandatory=$true)][string]$TestBinary,[Parameter(Mandatory=$true
 $ErrorActionPreference='Stop'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {throw 'Administrator required'}
-if ((Get-Service QuicLabWindowsDev).Status -ne 'Running') {throw 'Test service must be running'}
+if ((Get-Service QuicLabWindowsPreview).Status -ne 'Running') {throw 'Test service must be running'}
 if ((Get-FileHash -LiteralPath $TestBinary -Algorithm SHA256).Hash -ne $ExpectedSHA256) {throw 'Test binary mismatch'}
-$root=Join-Path $env:ProgramFiles 'QUIC Lab Windows Dev'
+$root=Join-Path $env:ProgramFiles 'QUIC Lab Windows Preview Fixture'
 $test=Join-Path $root 'windowsclient.test.exe'
 Copy-Item -LiteralPath $TestBinary -Destination $test -Force
 if ((Get-FileHash -LiteralPath $test -Algorithm SHA256).Hash -ne $ExpectedSHA256) {throw 'Copied test mismatch'}

@@ -11,7 +11,7 @@ func valid() Settings {
 	return Settings{Transport: "quic", Endpoint: "192.0.2.1:443", Hostname: "test", Certificate: "cert", Key: "key", InterfaceIndex: 5, Targets: []string{"198.51.100.1/32"}}
 }
 func TestRejectUnsafeScope(t *testing.T) {
-	for _, target := range []string{"0.0.0.0/0", "::/0", "192.0.2.1/32", "127.0.0.1/32", "224.0.0.1/32", "198.51.100.0/24"} {
+	for _, target := range []string{"0.0.0.0/0", "::/0", "192.0.2.1/32", "127.0.0.1/32", "224.0.0.1/32"} {
 		s := valid()
 		s.Targets = []string{target}
 		if s.Validate() == nil {
@@ -159,5 +159,47 @@ func TestSettingsParserBoundsAndStrictness(t *testing.T) {
 		if _, e := ParseSettings(raw); e == nil {
 			t.Fatal("invalid settings accepted")
 		}
+	}
+}
+
+func TestSubnetScopeValidation(t *testing.T) {
+	for _, target := range []string{"198.51.100.0/24", "198.51.100.2/31", "10.20.0.0/16"} {
+		s := valid()
+		s.Targets = []string{target}
+		if err := s.Validate(); err != nil {
+			t.Errorf("valid subnet %s: %v", target, err)
+		}
+	}
+	for _, target := range []string{"198.51.100.1/24", "0.0.0.0/1", "192.0.2.0/24", "10.254.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4"} {
+		s := valid()
+		s.Targets = []string{target}
+		if s.Validate() == nil {
+			t.Errorf("unsafe subnet accepted: %s", target)
+		}
+	}
+	s := valid()
+	s.Targets = []string{"198.51.100.0/24", "198.51.100.1/32"}
+	if s.Validate() == nil {
+		t.Fatal("overlapping selection accepted")
+	}
+	s.Targets = []string{"1.1.1.0/24"}
+	if err := s.ValidateProbe("168.119.242.240"); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestWholeSubnetRouteConflicts(t *testing.T) {
+	targets := []string{"198.51.100.0/24"}
+	own := RouteSelection{Target: targets[0], InterfaceIndex: 51}
+	direct := RouteSelection{Target: "0.0.0.0/0", InterfaceIndex: 25}
+	if err := VerifyRouteTable(51, targets, []RouteSelection{own, direct}); err != nil {
+		t.Fatal(err)
+	}
+	for _, conflict := range []string{"198.51.100.0/24", "198.51.100.128/25", "198.51.100.90/32"} {
+		if VerifyRouteTable(51, targets, []RouteSelection{own, direct, {Target: conflict, InterfaceIndex: 25}}) == nil {
+			t.Errorf("foreign route accepted %s", conflict)
+		}
+	}
+	if VerifyRouteTable(51, targets, []RouteSelection{direct}) == nil {
+		t.Fatal("missing own route")
 	}
 }

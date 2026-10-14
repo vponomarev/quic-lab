@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-const ServiceName = "QuicLabWindowsDev"
-const ServicePipe = `\\.\pipe\quic-lab-windows-dev-v1`
+const ServiceName = "QuicLabWindowsPreview"
+const ServicePipe = `\\.\pipe\quic-lab-windows-preview-v1`
 
 // FixtureBackend deliberately opens no socket and changes no system network state.
 // The W2 service/UI explicitly advertise fixture mode until a verified W3 backend replaces it.

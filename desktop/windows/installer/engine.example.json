@@ -1,0 +1,11 @@
+{
+  "transport": "quic",
+  "endpoint": "192.0.2.10:443",
+  "hostname": "vpn.example.org",
+  "certificate": "CLIENT_CERTIFICATE_FROM_YOUR_PROFILE",
+  "key": "PRIVATE_KEY_FROM_YOUR_PROFILE",
+  "ca": "SERVER_CA_FROM_YOUR_PROFILE",
+  "server_name": "vpn.example.org",
+  "interface_index": 1,
+  "targets": ["1.1.1.0/24"]
+}

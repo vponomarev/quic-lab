@@ -12,7 +12,7 @@ import (
 	"strconv"
 )
 
-// Settings is intentionally a bounded IPv4 MVP. Default routes and IPv6 are refused.
+// Settings supports explicit IPv4 subnets. Default routes and IPv6 are refused.
 type Settings struct {
 	Transport      string   `json:"transport"`
 	Endpoint       string   `json:"endpoint"`
@@ -33,14 +33,10 @@ func (s Settings) Validate() error {
 	if e != nil || ae != nil || !a.Is4() || pe != nil || pn < 1 || pn > 65535 || s.Hostname == "" || s.Certificate == "" || s.Key == "" || s.InterfaceIndex == 0 || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https") || len(s.Targets) == 0 || len(s.Targets) > 16 {
 		return errors.New("invalid bounded engine settings")
 	}
-	seen := map[string]bool{}
-	for _, v := range s.Targets {
-		p, e := netip.ParsePrefix(v)
-		if e != nil || !p.Addr().Is4() || p.Bits() != 32 || !p.Addr().IsGlobalUnicast() || p.Contains(a) || p.Addr().String() == "10.254.253.1" || seen[v] {
-			return errors.New("only distinct IPv4 host routes excluding endpoint are supported")
-		}
-		seen[v] = true
+	if err := validateTargets(s.Targets, a); err != nil {
+		return err
 	}
+
 	return nil
 }
 func (s Settings) GatewayJSON() string { b, _ := json.Marshal(s); return string(b) }
@@ -117,7 +113,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 }
 
 func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
-	info := vpnclient.RuntimeInfo{Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets)}
+	info := vpnclient.RuntimeInfo{Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
 	if p, ok := e.g.(interface{ TrafficSnapshot() vpnclient.Traffic }); ok {
 		info.Traffic = p.TrafficSnapshot()
 	}

@@ -39,8 +39,8 @@ public partial class MainWindow : Window
         StateText.Text = r.State switch { "running" => fixture ? "Тест запущен" : vpn ? "Движок запущен" : "VPN не подтверждён", "stopped" => "Отключено", "starting" => "Подключение…", "stopping" => "Отключение…", _ => "Ошибка подключения" };
         StatusDot.Fill = new SolidColorBrush(running ? Color.FromRgb(0, 135, 127) : r.State == "failed" ? Color.FromRgb(183, 71, 64) : Color.FromRgb(139, 156, 165));
         ToggleButton.Content = running ? "Отключить" : r.State == "failed" ? "Сбросить ошибку" : "Подключить";
-        ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\nАдресов через VPN: {r.Runtime.RouteCount}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
-        ModeBanner.Visibility = !vpn ? Visibility.Visible : Visibility.Collapsed; ModeText.Text = fixture ? "Тестовый движок: сеть не изменяется, трафик не передаётся." : "Служба не сообщает тип движка. Работа VPN не подтверждена.";
+        ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\nПодсетей через VPN: {r.Runtime.RouteCount}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
+        ModeBanner.Visibility = Visibility.Visible; ModeText.Text = vpn ? "IPv4: " + (r.Runtime?.Targets is { Length: >0 } targets ? string.Join(", ",targets) : "список подсетей служба не сообщает") + "\nОстальной трафик и системный DNS не перенастраиваются. В preview нет kill switch: после аварии службы выбранный трафик может пойти напрямую." : fixture ? "Тестовый движок: сеть не изменяется, трафик не передаётся." : "Служба не сообщает тип движка. Работа VPN не подтверждена.";
         ConfigText.ToolTip = vpn ? "Профиль MVP задаётся администратором в engine.json. Импорт через окно доступен только тестовому движку." : null;
         RenderTraffic(r); UpdateButtons();
     }
