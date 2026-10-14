@@ -53,12 +53,13 @@ public partial class MainWindow : Window
         if (busy || cancelPending || closed) return;
         if (command == "start") { startPending = true; cancelRequested = false; startSettled = new(TaskCreationOptions.RunContinuationsAsynchronously); StateText.Text = "Подключение…"; }
         bool authenticatedReply = false;
+        bool recoveringService = !connectedToService;
         SetBusy(true, polling); if (!polling) MessageText.Text = "Выполняется…";
         try
         {
             JsonElement? config = null; if (command is "validate_config" or "apply_config") { if (Encoding.UTF8.GetByteCount(ConfigText.Text) > Frames.Maximum) throw new InvalidDataException(); using var doc = JsonDocument.Parse(ConfigText.Text); config = doc.RootElement.Clone(); }
             var reply = await client.SendAsync(command, config, lifetime.Token); authenticatedReply = true; if (closed || command == "start" && cancelRequested) return; Render(reply);
-            if (!reply.Ok) MessageText.Text = ErrorText(reply.Error); else if (!polling) MessageText.Text = $"Готово · ревизия {reply.Revision}";
+            if (!reply.Ok) MessageText.Text = ErrorText(reply.Error); else if (!polling || recoveringService) MessageText.Text = $"Готово · ревизия {reply.Revision}";
         }
         catch (OperationCanceledException) when (closed) { }
         catch (JsonException) { MessageText.Text = "Проверьте формат JSON."; }

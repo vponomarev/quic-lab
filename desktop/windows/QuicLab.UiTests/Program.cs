@@ -12,6 +12,8 @@ partial class UiTests
             try
             {
                 if (args.Length == 2 && args[0] == "--live") { await LiveAcceptance(args[1]); exit = 0; return; }
+                await ServiceRecoveryAcceptance();
+                await CompactLayoutAcceptance();
                 await ApplicationSelectionAcceptance();
                 var fake = new FakeClient(); var w = new MainWindow(fake); w.Show(); await Ready(w);
                 Check(w.Width <= 460, "compact window"); Check(!((Expander)w.FindName("SettingsPanel")).IsExpanded, "settings initially collapsed");
