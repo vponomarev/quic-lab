@@ -30,3 +30,7 @@ IPv4 route/address/interface notifications trigger a debounced rescan; 30-second
 Physical Wi-Fi↔LTE switching and sleep/resume have not been exercised on a laptop modem. Fake uplink lifecycle tests cover recovery, but do not substitute for that hardware acceptance. AWG/VLESS retain their previous live subnet checks; this iteration's full-mode end-to-end tests cover QUIC and HTTPS.
 
 This is a development build; the published preview archive is not replaced by these source changes.
+
+## Windows beta publication
+
+These capabilities are packaged in [Windows 0.1.0-beta.1](../release-windows-0.1.0-beta.1.md). Earlier development/preview statements above describe the historical verification stage.

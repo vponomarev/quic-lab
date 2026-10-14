@@ -51,3 +51,7 @@ Fresh review found and fixed stale-editor revision adoption, AWG ICMP intercepti
 - Reused the existing protected credential field for imported profiles instead of a second credential store; protocol edits require reimport.
 - Reused the shared mobile gateway and existing Go transport cores; Windows socket binding is platform-specific, Android entry points retain their behavior.
 - Replaced shell-specific plan bookkeeping scripts with the equivalent local ledger on Windows; no product behavior difference.
+
+## Windows beta publication
+
+These capabilities are packaged in [Windows 0.1.0-beta.1](../release-windows-0.1.0-beta.1.md). Earlier development/preview statements above describe the historical verification stage.
