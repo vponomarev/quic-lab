@@ -1,6 +1,6 @@
 # Windows engine MVP — 2026-10-14
 
-Working foreground engine checkpoint, not a beta or full W3 completion. The W2 WPF/SCM window still uses its explicitly labelled fixture backend; it does not start this real engine yet.
+Working foreground engine checkpoint, not a beta or full W3 completion. The real WPF/SCM integration is now verified with QUIC and HTTPS under explicit UAC authorization; see windows-service.md for the later live acceptance checkpoint.
 
 ## Implemented
 
@@ -55,7 +55,7 @@ Reproduce the elevated matrix with `scripts/test-windows-network.ps1 -Source <pr
 
 No all-traffic mode, IPv6 protection, kill switch, automatic reconnect, sleep/resume or OS restart acceptance. After process death the owned routes disappear and ordinary routing resumes: cleanup is not leak prevention. Routes can be changed by another administrator after the startup check; continuous enforcement belongs to W3 filtering. System DNS is unchanged; only explicit DNS addressed to a configured target is tunneled. Arbitrary UDP payload/large-transfer/load matrix remains to be tested; current live UDP evidence is DNS.
 
-Startup cancellation during the existing mobile Gateway.Start may wait for its bounded connection timeout. No guarantee of instantaneous Stop during that stage. User-driven subnet selection, production profile import, WPF/service integration, AWG/VLESS and distributable installer remain subsequent work. Full W3 must add policy enforcement and its network failure matrix before claiming a safe whole-machine VPN.
+Windows startup cancellation now propagates through QUIC/HTTPS handshake and Echo negotiation. The UI Cancel path was verified against the installed HTTPS service; timing under every OS failure is not guaranteed. User-driven subnet selection, production profile import, AWG/VLESS and distributable installer remain subsequent work. Full W3 must add policy enforcement and its network failure matrix before claiming a safe whole-machine VPN.
 
 Review: two Important findings (effective route selection and false-positive direct probes) fixed with RED/GREEN regressions and final native tests. Reserved adapter-address target also rejected. No further review pass performed; cancellation latency recorded above.
 
