@@ -4,6 +4,7 @@ import (
 	"context"
 	"golang.org/x/sys/windows/svc"
 	"quiclab/internal/vpnclient"
+	"quiclab/internal/windowsengine"
 	"time"
 )
 
@@ -42,6 +43,13 @@ func (s *Service) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	var handler *Handler
 	var stop func(context.Context) error
 	if s.Engine {
+		cleanup, done := context.WithTimeout(ctx, 10*time.Second)
+		err := windowsengine.RecoverWindowsDNS(cleanup)
+		done()
+		if err != nil {
+			return false, 6
+		}
+
 		manager, err := NewSettingsManager(NewSettingsFileStore(store), newSettingsBackend)
 		if err != nil {
 			return false, 5

@@ -16,13 +16,16 @@ type Traffic struct {
 	RxRate     float64   `json:"rx_bytes_per_second"`
 }
 type RuntimeInfo struct {
-	Name       string   `json:"name,omitempty"`
-	Mode       string   `json:"mode"`
-	Transport  string   `json:"transport,omitempty"`
-	Endpoint   string   `json:"endpoint,omitempty"`
-	RouteCount int      `json:"route_count,omitempty"`
-	Targets    []string `json:"targets,omitempty"`
-	Traffic    Traffic  `json:"traffic"`
+	RoutingMode    string   `json:"routing_mode,omitempty"`
+	NetworkState   string   `json:"network_state,omitempty"`
+	InterfaceIndex uint32   `json:"interface_index,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Mode           string   `json:"mode"`
+	Transport      string   `json:"transport,omitempty"`
+	Endpoint       string   `json:"endpoint,omitempty"`
+	RouteCount     int      `json:"route_count,omitempty"`
+	Targets        []string `json:"targets,omitempty"`
+	Traffic        Traffic  `json:"traffic"`
 }
 type RuntimeProvider interface{ RuntimeInfo() RuntimeInfo }
 

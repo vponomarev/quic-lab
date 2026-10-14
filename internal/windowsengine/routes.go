@@ -34,6 +34,9 @@ func (s Settings) ValidateProbe(expected string) error {
 	if e != nil || !a.Is4() || !a.IsGlobalUnicast() {
 		return errors.New("explicit expected exit IPv4 required")
 	}
+	if s.FullIPv4() {
+		return nil
+	}
 	for _, t := range s.Targets {
 		if p, err := netip.ParsePrefix(t); err == nil && p.Contains(netip.MustParseAddr("1.1.1.1")) {
 			return nil

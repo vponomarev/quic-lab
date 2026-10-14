@@ -8,6 +8,9 @@ public sealed class EngineSettings {
  [JsonPropertyName("server_name")] public string ServerName {get;set;}="";
  [JsonPropertyName("verify_name")] public string VerifyName {get;set;}="";
  [JsonPropertyName("interface_index")] public uint InterfaceIndex {get;set;}
+ [JsonPropertyName("routing_mode")] public string RoutingMode {get;set;}="";
+ [JsonPropertyName("uplink_mode")] public string UplinkMode {get;set;}="";
+ public string Dns {get;set;}="";
  public string[] Targets {get;set;}=[];
 }
 public sealed class SettingsView {public ulong Revision {get;set;} public EngineSettings Settings {get;set;}=new(); [JsonPropertyName("has_key")]public bool HasKey {get;set;}}

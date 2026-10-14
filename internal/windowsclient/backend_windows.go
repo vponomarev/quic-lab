@@ -19,7 +19,12 @@ func selectServiceBackend(raw []byte) (vpnclient.Backend, *vpnclient.Config, err
 	if e != nil {
 		return nil, nil, e
 	}
-	b := windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
+	var b windowsengine.ManagedEngine
+	if s.UplinkMode == "auto" {
+		b = windowsengine.NewWindowsAutomatic(s)
+	} else {
+		b = windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
+	}
 	c := b.Config()
 	return b, &c, nil
 }
@@ -37,6 +42,11 @@ func newSettingsBackend(s windowsengine.Settings) (vpnclient.Backend, vpnclient.
 			return nil, vpnclient.Config{}, errors.New("invalid trust root")
 		}
 	}
-	b := windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
+	var b windowsengine.ManagedEngine
+	if s.UplinkMode == "auto" {
+		b = windowsengine.NewWindowsAutomatic(s)
+	} else {
+		b = windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
+	}
 	return b, b.Config(), nil
 }

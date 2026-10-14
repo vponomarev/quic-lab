@@ -4,9 +4,9 @@ Development build on `codex/windows-client-beta`; installed locally for acceptan
 
 ## User interface
 
-Open **Настройки подключения** from the compact dashboard. Edit connection name, transport, endpoint, physical interface and selected IPv4 prefixes. The subnet tab supports multiline/paste input, individual edits/removal and at most **256** canonical nonoverlapping prefixes. Default routes and IPv6 are excluded; system DNS stays unchanged.
+Open **Настройки подключения** from the compact dashboard. Edit connection name, transport, endpoint, physical interface and selected IPv4 prefixes. The subnet tab supports multiline/paste input, individual edits/removal and at most **256** canonical nonoverlapping prefixes. The newer [full IPv4 mode](windows-full-ipv4.md) adds automatic uplink recovery and tunnel DNS; IPv6 remains unchanged. Legacy subnet mode keeps system DNS unchanged.
 
-QUIC/HTTPS accept client certificate/key and optional trust root. For AWG select AmneziaWG, open a `.conf` (or paste it into the masked profile field), then **Проверить и разобрать профиль**. For VLESS paste a `vless://` URI and use the same preview. Review proposed routes before saving. AWG AllowedIPs are never installed silently, and selected routes must be covered by peer AllowedIPs. An imported default route is not accepted by this preview.
+QUIC/HTTPS accept client certificate/key and optional trust root. For AWG select AmneziaWG, open a `.conf` (or paste it into the masked profile field), then **Проверить и разобрать профиль**. For VLESS paste a `vless://` URI and use the same preview. Review proposed routes before saving. AWG AllowedIPs are never installed silently, and selected routes must be covered by peer AllowedIPs. For all IPv4 select the explicit routing mode; AWG then requires AllowedIPs covering all IPv4.
 
 The top **Загрузить параметры по URL** section accepts an HTTPS link to a QUIC Lab invitation (`.../enroll#token`) or a direct QUIC Lab/Windows profile JSON, AWG configuration or single VLESS URI file. Download fills the draft; a multi-transport QUIC Lab profile offers a transport selector. Local subnets and physical interface are retained. Registration happens when downloading an invitation, not when saving; the screen states this explicitly. A persistent installation identifier derives the same request ID for a repeated invitation, so response-loss retries do not consume another registration. No invitation token or downloaded credential file is saved by the downloader. Imported credentials reach encrypted service storage only on Save. Background refresh/subscriptions are not part of this feature.
 
@@ -24,7 +24,7 @@ One active saved profile is supported. Endpoint, name, routes and interface can 
 | AmneziaWG | Legacy Jc/Jmin/Jmax/S1/S2/H1–H4 `.conf` | Yes | Actual IP exchange inside AWG, TTL and router errors preserved |
 | VLESS | TCP/raw with TLS or REALITY; existing parser validates flow and fingerprint | Yes | Unsupported; no fabricated reply |
 
-AWG 2.x-only extensions and VLESS WS/gRPC/XHTTP are rejected. There is no app routing, MDM, research collection, kill switch or sleep/network recovery promise. A selected physical IPv4 interface is required. Hostname endpoints resolve through it before routes are installed; resolving into a selected prefix is rejected. Traffic totals count payload observed by the bridge, not link overhead.
+AWG 2.x-only extensions and VLESS WS/gRPC/XHTTP are rejected. There is no app routing, MDM, research collection, kill switch or guaranteed session preservation through sleep. Automatic uplink selection/recovery is optional; legacy profiles retain their selected physical interface. Hostname endpoints resolve through it before routes are installed; resolving into a selected prefix is rejected. Traffic totals count payload observed by the bridge, not link overhead.
 
 ## Persistence and credentials
 

@@ -6,6 +6,11 @@
   "key": "PRIVATE_KEY_FROM_YOUR_PROFILE",
   "ca": "SERVER_CA_FROM_YOUR_PROFILE",
   "server_name": "vpn.example.org",
-  "interface_index": 1,
-  "targets": ["1.1.1.0/24"]
+  "interface_index": 0,
+  "targets": [
+    "1.1.1.0/24"
+  ],
+  "routing_mode": "all_ipv4",
+  "uplink_mode": "auto",
+  "dns": "1.1.1.1"
 }

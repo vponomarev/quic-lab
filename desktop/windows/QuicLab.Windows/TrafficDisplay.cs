@@ -5,7 +5,7 @@ namespace QuicLab.Windows;
 public record TrafficInfo(bool Available, string Session, [property: JsonPropertyName("observed_at")] DateTimeOffset ObservedAt,
  [property: JsonPropertyName("tx_bytes")] ulong TxBytes, [property: JsonPropertyName("rx_bytes")] ulong RxBytes,
  [property: JsonPropertyName("tx_bytes_per_second")] double TxRate, [property: JsonPropertyName("rx_bytes_per_second")] double RxRate);
-public record RuntimeInfo(string Mode, string Transport, string Endpoint, [property: JsonPropertyName("route_count")] int RouteCount, TrafficInfo? Traffic, string[]? Targets = null, string? Name = null);
+public record RuntimeInfo(string Mode, string Transport, string Endpoint, [property: JsonPropertyName("route_count")] int RouteCount, TrafficInfo? Traffic, string[]? Targets = null, string? Name = null, [property: JsonPropertyName("routing_mode")] string? RoutingMode = null, [property: JsonPropertyName("network_state")] string? NetworkState = null, [property: JsonPropertyName("interface_index")] uint InterfaceIndex = 0);
 public record TrafficDisplay(string TxTotal, string RxTotal, string TxRate, string RxRate, string Hint)
 {
     public static TrafficDisplay Create(Reply reply, DateTimeOffset now)

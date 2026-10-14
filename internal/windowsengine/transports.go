@@ -82,6 +82,13 @@ func (s Settings) validateTransportOptions() error {
 		if e != nil {
 			return e
 		}
+		if s.FullIPv4() {
+			missing, e := subtractAll(c.Allowed)
+			if e != nil || len(missing) != 0 {
+				return &FieldError{Field: "routing_mode", Code: "awg_requires_full_allowed_ips"}
+			}
+			return nil
+		}
 		for i, target := range s.Targets {
 			p, e := netip.ParsePrefix(target)
 			if e != nil {

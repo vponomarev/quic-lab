@@ -72,9 +72,9 @@ func TestPartialStartRestoresOwnedResources(t *testing.T) {
 		if err := e.Stop(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"open", "connect", "disconnect", "close"}
+		want := []string{"open", "connect", "close", "disconnect"}
 		if !failConnect {
-			want = []string{"open", "connect", "attach", "routes", "disconnect", "close"}
+			want = []string{"open", "connect", "attach", "routes", "close", "disconnect"}
 		}
 		if !reflect.DeepEqual(calls, want) {
 			t.Fatal(calls, want)

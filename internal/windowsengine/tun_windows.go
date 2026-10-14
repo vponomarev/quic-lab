@@ -21,14 +21,16 @@ import (
 
 type WindowsPlatform struct{}
 type tunLink struct {
-	adapter  *wintun.Adapter
-	session  wintun.Session
-	guid     windows.GUID
-	mu       sync.RWMutex
-	closed   bool
-	once     sync.Once
-	endpoint *iobased.Endpoint
-	echo     *icmprelay.Relay
+	cleanupMu sync.Mutex
+	dnsOwner  string
+	adapter   *wintun.Adapter
+	session   wintun.Session
+	guid      windows.GUID
+	mu        sync.RWMutex
+	closed    bool
+	once      sync.Once
+	endpoint  *iobased.Endpoint
+	echo      *icmprelay.Relay
 }
 
 func (WindowsPlatform) Open(ctx context.Context, s Settings) (Link, error) {
@@ -112,10 +114,11 @@ func (l *tunLink) Close() error {
 		l.mu.Unlock()
 		if l.endpoint != nil {
 			l.endpoint.Close()
+			l.endpoint.Wait()
 		}
 		l.adapter.Close()
 	})
-	return nil
+	return l.cleanupDNS()
 }
 
 // Link closes the native reader before the stack waits for its goroutines.
@@ -180,3 +183,5 @@ func (g *NativeGateway) OnEvent(raw string) {
 	}
 }
 func (g *NativeGateway) TrafficSnapshot() vpnclient.Traffic { return g.meter.Snapshot() }
+
+func (g *NativeGateway) Healthy() bool { return g.g != nil && g.g.IsConnected() }

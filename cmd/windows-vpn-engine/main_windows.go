@@ -72,7 +72,19 @@ func run() int {
 			return 2
 		}
 	}
-	engine := windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{Sink: sink{}})
+	cleanupDNS, cancelDNS := context.WithTimeout(context.Background(), 10*time.Second)
+	errDNS := windowsengine.RecoverWindowsDNS(cleanupDNS)
+	cancelDNS()
+	if errDNS != nil {
+		fmt.Println("dns_recovery_failed")
+		return 1
+	}
+	var engine windowsengine.ManagedEngine
+	if s.UplinkMode == "auto" {
+		engine = windowsengine.NewWindowsAutomatic(s)
+	} else {
+		engine = windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{Sink: sink{}})
+	}
 	c := vpnclient.NewController(engine)
 	root, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -83,12 +95,31 @@ func run() int {
 		c.Stop(context.Background())
 		return 1
 	}
+	if s.UplinkMode == "auto" {
+		for ctx.Err() == nil && engine.RuntimeInfo().NetworkState != "ready" {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if ctx.Err() != nil {
+			c.Stop(context.Background())
+			fmt.Println("start_timeout")
+			return 1
+		}
+	}
 	fmt.Println("engine_running", s.Transport)
 	result := 0
 	if *probe {
 		if e = check(ctx, *expected); e != nil {
 			fmt.Println("probe_failed:", e)
 			result = 1
+		}
+		if s.FullIPv4() {
+			addresses, err := net.DefaultResolver.LookupIPAddr(ctx, "example.org")
+			if err != nil || len(addresses) == 0 {
+				fmt.Println("system_dns_failed")
+				result = 1
+			} else {
+				fmt.Println("system_dns_pass")
+			}
 		}
 	} else {
 		<-ctx.Done()

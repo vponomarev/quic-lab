@@ -11,10 +11,13 @@ import (
 	"strconv"
 )
 
-// Settings supports explicit IPv4 subnets. Default routes and IPv6 are refused.
+// Settings supports selected subnets or full IPv4. Missing modes preserve legacy routing.
 const MaxTargets = 256
 
 type Settings struct {
+	RoutingMode    string   `json:"routing_mode,omitempty"`
+	UplinkMode     string   `json:"uplink_mode,omitempty"`
+	DNS            string   `json:"dns,omitempty"`
 	Name           string   `json:"name,omitempty"`
 	Transport      string   `json:"transport"`
 	Endpoint       string   `json:"endpoint"`
@@ -29,13 +32,22 @@ type Settings struct {
 }
 
 func (s Settings) Validate() error {
+	if (s.RoutingMode != "" && s.RoutingMode != "subnets" && s.RoutingMode != "all_ipv4") || (s.UplinkMode != "" && s.UplinkMode != "manual" && s.UplinkMode != "auto") {
+		return &FieldError{Field: "routing_mode", Code: "invalid_mode"}
+	}
+	if s.DNS != "" {
+		a, e := netip.ParseAddr(s.DNS)
+		if e != nil || !a.Is4() || !a.IsGlobalUnicast() {
+			return &FieldError{Field: "dns", Code: "invalid_ipv4"}
+		}
+	}
 	if len(s.Name) > 128 {
 		return &FieldError{Field: "name", Code: "too_long"}
 	}
 	host, port, e := net.SplitHostPort(s.Endpoint)
 	a, _ := netip.ParseAddr(host)
 	pn, pe := strconv.Atoi(port)
-	if e != nil || !validEndpointHost(host) || pe != nil || pn < 1 || pn > 65535 || s.Key == "" || s.InterfaceIndex == 0 || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https" && s.Transport != "awg" && s.Transport != "vless") || len(s.Targets) == 0 || len(s.Targets) > MaxTargets {
+	if e != nil || !validEndpointHost(host) || pe != nil || pn < 1 || pn > 65535 || s.Key == "" || (s.InterfaceIndex == 0 && s.UplinkMode != "auto") || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https" && s.Transport != "awg" && s.Transport != "vless") || (len(s.Targets) == 0 && !s.FullIPv4()) || len(s.Targets) > MaxTargets {
 		return &FieldError{Field: "connection", Code: "invalid_connection_or_route_count"}
 	}
 	if s.Transport == "quic" || s.Transport == "https" {
@@ -50,10 +62,12 @@ func (s Settings) Validate() error {
 	if err := s.validateTransportOptions(); err != nil {
 		return err
 	}
-	if err := validateTargets(s.Targets, a); err != nil {
-		return err
-	}
+	if !s.FullIPv4() {
+		if err := validateTargets(s.Targets, a); err != nil {
+			return err
+		}
 
+	}
 	return nil
 }
 
@@ -125,21 +139,25 @@ func (e *Engine) Start(ctx context.Context, c vpnclient.Config) error {
 	return l.Configure(ctx, effective)
 }
 func (e *Engine) Stop(ctx context.Context) error {
+	// Stop input before shutting down the stack: late TCP handshakes otherwise
+	// register after Stack.Close and leave Stack.Wait blocked.
+	var linkErr error
+	if e.link != nil {
+		linkErr = e.link.Close()
+	}
 	if e.started {
 		e.g.Stop()
 		e.started = false
 	}
-	if e.link != nil {
-		if err := e.link.Close(); err != nil {
-			return err
-		}
-		e.link = nil
+	if linkErr != nil {
+		return linkErr
 	}
+	e.link = nil
 	return nil
 }
 
 func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
-	info := vpnclient.RuntimeInfo{Name: e.s.Name, Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
+	info := vpnclient.RuntimeInfo{RoutingMode: e.s.RoutingMode, Name: e.s.Name, Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
 	if p, ok := e.g.(interface{ TrafficSnapshot() vpnclient.Traffic }); ok {
 		info.Traffic = p.TrafficSnapshot()
 	}
@@ -151,4 +169,12 @@ func (e *Engine) ValidateConfig(c vpnclient.Config) error {
 		return vpnclient.ErrInvalidConfig
 	}
 	return nil
+}
+
+// Health is read by the automatic owner, serialized with Start/Stop.
+func (e *Engine) Healthy() bool {
+	if p, ok := e.g.(interface{ Healthy() bool }); ok {
+		return p.Healthy()
+	}
+	return e.started
 }

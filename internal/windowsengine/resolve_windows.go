@@ -9,11 +9,29 @@ import (
 )
 
 func (WindowsPlatform) Resolve(ctx context.Context, s Settings) (Settings, error) {
+	var u Uplink
+	if s.FullIPv4() || s.UplinkMode == "auto" {
+		var e error
+		u, e = DiscoverWindowsUplink(ctx, s)
+		if e != nil {
+			return s, e
+		}
+		s.InterfaceIndex = u.Index
+	}
 	host, port, e := net.SplitHostPort(s.Endpoint)
 	if e != nil {
 		return s, e
 	}
 	if a, e := netip.ParseAddr(host); e == nil && a.Is4() {
+		if s.FullIPv4() {
+			s.Targets, e = FullIPv4Routes(a, u.Local)
+			if e != nil {
+				return s, e
+			}
+		}
+		if s.FullIPv4() && !containsIPv4(s.Targets, s.DNSAddress()) {
+			return s, errors.New("DNS server excluded from tunnel")
+		}
 		return s, nil
 	}
 	resolver := net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -35,10 +53,33 @@ func (WindowsPlatform) Resolve(ctx context.Context, s Settings) (Settings, error
 		if !ip.Is4() {
 			continue
 		}
-		if validateTargets(s.Targets, ip) != nil {
+		if !s.FullIPv4() && validateTargets(s.Targets, ip) != nil {
 			return s, errors.New("resolved endpoint overlaps routes")
 		}
 	}
 	s.Endpoint = net.JoinHostPort(ips[0].String(), port)
+	if s.FullIPv4() {
+		s.Targets, e = FullIPv4Routes(ips[0], u.Local)
+		if e != nil {
+			return s, e
+		}
+	}
+	if s.FullIPv4() && !containsIPv4(s.Targets, s.DNSAddress()) {
+		return s, errors.New("DNS server excluded from tunnel")
+	}
 	return s, nil
+}
+
+func containsIPv4(routes []string, ip string) bool {
+	a, e := netip.ParseAddr(ip)
+	if e != nil {
+		return false
+	}
+	for _, s := range routes {
+		p, e := netip.ParsePrefix(s)
+		if e == nil && p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }

@@ -32,6 +32,15 @@ static class SettingsAcceptance {
  public static async Task RunUI(){
   var client=new FakeSettings();var w=new SettingsWindow(client,(_,_)=>Task.FromResult(UrlProfileLoader.Parse("""{"version":1,"kind":"vpn","hostname":"loaded.example","name":"Loaded","quic":"loaded.example:443","https":"loaded.example:8443","key":"new-key","certificate":"new-cert"}""")));w.Show();await Task.Delay(200);
   if(w.HasChanges)throw new Exception("unchanged editor dirty");
+  if(((ComboBox)w.FindName("RoutingModeBox")).SelectedIndex!=1)throw new Exception("legacy routing upgraded silently");
+  ((ComboBox)w.FindName("RoutingModeBox")).SelectedIndex=0;((CheckBox)w.FindName("AutoUplinkBox")).IsChecked=true;
+  ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
+  if(client.View.Settings.RoutingMode!="all_ipv4"||client.View.Settings.UplinkMode!="auto")throw new Exception("full routing save failed");
+  ((ComboBox)w.FindName("RoutingModeBox")).SelectedIndex=1;((CheckBox)w.FindName("AutoUplinkBox")).IsChecked=false;
+  ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
+  client.View.Revision=1; // Remaining tests use their original revision baseline.
+  w.Close();w=new SettingsWindow(client,(_,_)=>Task.FromResult(UrlProfileLoader.Parse("""{"version":1,"kind":"vpn","hostname":"loaded.example","name":"Loaded","quic":"loaded.example:443","https":"loaded.example:8443","key":"new-key","certificate":"new-cert"}""")));w.Show();await Task.Delay(200);
+
   var name=(TextBox)w.FindName("NameBox");name.Text="edited";if(!w.HasChanges)throw new Exception("edit not dirty");
   ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
   if(client.View.Settings.Name!="edited"||client.View.Revision!=2||w.HasChanges)throw new Exception("save/reload failed");
