@@ -3,9 +3,6 @@ package windowsclient
 import (
 	"context"
 	"golang.org/x/sys/windows/svc"
-	"io"
-	"os"
-	"path/filepath"
 	"quiclab/internal/vpnclient"
 	"time"
 )
@@ -42,30 +39,27 @@ func (s *Service) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	defer l.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var raw []byte
+	var handler *Handler
+	var stop func(context.Context) error
 	if s.Engine {
-		f, err := os.Open(filepath.Join(s.DataDir, "engine.json"))
+		manager, err := NewSettingsManager(NewSettingsFileStore(store), newSettingsBackend)
 		if err != nil {
 			return false, 5
 		}
-		raw, err = io.ReadAll(io.LimitReader(f, (1<<20)+1))
-		f.Close()
-		if err != nil {
-			return false, 5
-		}
+		handler = NewSettingsHandler(manager)
+		stop = manager.Stop
+	} else {
+		controller := vpnclient.NewController(FixtureBackend{})
+		handler = NewHandler(controller, store)
+		stop = controller.Stop
 	}
-	backend, initial, err := selectServiceBackend(raw)
-	if err != nil {
-		return false, 5
-	}
-	controller := vpnclient.NewController(backend)
 	defer func() {
 		cleanup, done := context.WithTimeout(context.Background(), 10*time.Second)
 		defer done()
-		controller.Stop(cleanup)
+		stop(cleanup)
 	}()
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, l, s.OwnerSID, NewHandler(controller, serviceConfigStore(initial, store))) }()
+	go func() { done <- Serve(ctx, l, s.OwnerSID, handler) }()
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	for {
 		select {
@@ -79,7 +73,7 @@ func (s *Service) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 				status <- svc.Status{State: svc.StopPending}
 				cancel()
 				stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				e = controller.Stop(stopCtx)
+				e = stop(stopCtx)
 				stopCancel()
 				<-done
 				if e != nil {

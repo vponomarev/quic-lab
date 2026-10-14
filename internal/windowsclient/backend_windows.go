@@ -3,6 +3,9 @@
 package windowsclient
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/windowsengine"
 )
@@ -19,4 +22,19 @@ func selectServiceBackend(raw []byte) (vpnclient.Backend, *vpnclient.Config, err
 	b := windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
 	c := b.Config()
 	return b, &c, nil
+}
+
+// Construction has no network effects; credential syntax is checked before Apply stops VPN.
+func newSettingsBackend(s windowsengine.Settings) (vpnclient.Backend, vpnclient.Config, error) {
+	if e := s.Validate(); e != nil {
+		return nil, vpnclient.Config{}, e
+	}
+	if _, e := tls.X509KeyPair([]byte(s.Certificate), []byte(s.Key)); e != nil {
+		return nil, vpnclient.Config{}, errors.New("invalid client certificate or key")
+	}
+	if s.CA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(s.CA)) {
+		return nil, vpnclient.Config{}, errors.New("invalid trust root")
+	}
+	b := windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
+	return b, b.Config(), nil
 }

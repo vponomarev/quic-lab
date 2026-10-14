@@ -113,7 +113,16 @@ func (m *SettingsManager) resolve(c SettingsChange) (windowsengine.Settings, err
 	}
 	return s, nil
 }
-func (m *SettingsManager) Validate(c SettingsChange) error { _, e := m.resolve(c); return e }
+func (m *SettingsManager) Validate(c SettingsChange) error {
+	s, e := m.resolve(c)
+	if e != nil {
+		return e
+	}
+	if _, _, e = m.factory(s); e != nil {
+		return errors.New("invalid_config")
+	}
+	return nil
+}
 func (m *SettingsManager) Start(ctx context.Context) error {
 	if e := m.lock(ctx); e != nil {
 		return e

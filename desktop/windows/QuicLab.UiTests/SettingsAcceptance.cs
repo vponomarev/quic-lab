@@ -1,0 +1,45 @@
+using QuicLab.Windows;
+using System.Windows;
+using System.Windows.Controls;
+
+static class SettingsAcceptance {
+ public static void RunModel(){
+  var rows=Enumerable.Range(0,256).Select(i=>$"198.18.0.{i}/32").ToArray();
+  if(SettingsDraft.ValidateRoutes(rows,"192.0.2.1")!=null)throw new Exception("256 routes rejected");
+  if(SettingsDraft.ValidateRoutes(rows.Append("198.18.1.0/32").ToArray(),"192.0.2.1")==null)throw new Exception("257 accepted");
+  foreach(var bad in new[]{new[]{"198.18.0.1/24"},new[]{"198.18.0.0/24","198.18.0.1/32"},new[]{"192.0.2.1/32"},new[]{"0.0.0.0/0"},new[]{"::/0"}})
+   if(SettingsDraft.ValidateRoutes(bad,"192.0.2.1")==null)throw new Exception("bad route accepted");
+  Console.WriteLine("Settings draft: 256 limit, CIDR, overlap, endpoint PASS");
+ }
+
+
+ public static async Task RunLive(bool many=false){
+  var client=new PipeClient();var initial=await client.SendSettingsAsync("read_settings");if(!initial.Status.Ok||initial.View==null)throw new Exception("settings capability absent");
+  if(initial.Status.State!="stopped")throw new Exception("stop VPN before acceptance");
+  var original=initial.View.Settings;var cloned=System.Text.Json.JsonSerializer.Deserialize<EngineSettings>(System.Text.Json.JsonSerializer.Serialize(original,SettingsDraft.Json),SettingsDraft.Json)!;
+  if(!original.Targets.SequenceEqual(new[]{"1.1.1.0/30"}))throw new Exception("unexpected test routes");
+  try{
+   cloned.Targets=many?new[]{"1.1.1.0/30"}.Concat(Enumerable.Range(0,255).Select(i=>$"198.18.0.{i}/32")).ToArray():["1.1.1.0/31","1.1.1.2/31"];cloned.Name="Проверка редактора";
+   var c=new SettingsChange{ExpectedRevision=initial.View.Revision,Settings=cloned};
+   var r=await client.SendSettingsAsync("apply_settings",c);if(!r.Status.Ok)throw new Exception("save: "+r.Status.Error);
+   var stale=await client.SendSettingsAsync("apply_settings",c);if(stale.Status.Error!="revision_conflict")throw new Exception("stale editor accepted");
+   var restarted=new PipeClient();var view=await restarted.SendSettingsAsync("read_settings");if(view.View?.Settings.Targets.Length!=(many?256:2)||!view.View.HasKey||view.View.Settings.Key!="")throw new Exception("read/preserve/redaction");
+   var started=await restarted.SendAsync("start");if(!started.Ok||started.Runtime?.RouteCount!=(many?256:2))throw new Exception("edited profile start: "+started.Error);
+   using var ping=new System.Net.NetworkInformation.Ping();var echo=await ping.SendPingAsync("1.1.1.0",4000);if(echo.Status!=System.Net.NetworkInformation.IPStatus.Success)throw new Exception("edited routes ICMP");
+   Console.WriteLine($"Live settings: save/read, conflict, unchanged key, {(many?256:2)} routes, connect/ping PASS");
+  }finally{await client.SendAsync("stop");var view=await client.SendSettingsAsync("read_settings");if(view.View==null)throw new Exception("cannot restore profile");var restored=await client.SendSettingsAsync("apply_settings",new(){ExpectedRevision=view.View.Revision,Settings=original});if(!restored.Status.Ok)throw new Exception("restore: "+restored.Status.Error);}
+ }
+ public static async Task RunUI(){
+  var client=new FakeSettings();var w=new SettingsWindow(client);w.Show();await Task.Delay(200);
+  if(w.HasChanges)throw new Exception("unchanged editor dirty");
+  var name=(TextBox)w.FindName("NameBox");name.Text="edited";if(!w.HasChanges)throw new Exception("edit not dirty");
+  ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
+  if(client.View.Settings.Name!="edited"||client.View.Revision!=2||w.HasChanges)throw new Exception("save/reload failed");
+  if(Environment.GetEnvironmentVariable("QUIC_LAB_SETTINGS_PREVIEW") is string file){w.UpdateLayout();var bitmap=new System.Windows.Media.Imaging.RenderTargetBitmap((int)w.ActualWidth,(int)w.ActualHeight,96,96,System.Windows.Media.PixelFormats.Pbgra32);bitmap.Render(w);var enc=new System.Windows.Media.Imaging.PngBitmapEncoder();enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));using var stream=System.IO.File.Create(file);enc.Save(stream);}
+  w.Close();Console.WriteLine("Settings UI: load, dirty tracking, save/reload PASS");
+ }
+ sealed class FakeSettings:ISettingsClient {
+  public SettingsView View=new(){Revision=1,HasKey=true,Settings=new(){Name="Проверка QUIC",Endpoint="192.0.2.1:443",Hostname="test.example",Certificate="-----BEGIN CERTIFICATE-----",InterfaceIndex=5,Targets=["1.1.1.0/30"]}};
+  public Task<SettingsReply> SendSettingsAsync(string command,SettingsChange? change=null,CancellationToken cancellationToken=default){if(command=="apply_settings"&&change!=null){View.Settings=change.Settings;View.Revision++;}return Task.FromResult(new SettingsReply(new Reply(true,"stopped","",0,null,["settings-v1"],View.Revision),View,""));}
+ }
+}

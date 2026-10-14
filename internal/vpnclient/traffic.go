@@ -16,6 +16,7 @@ type Traffic struct {
 	RxRate     float64   `json:"rx_bytes_per_second"`
 }
 type RuntimeInfo struct {
+	Name       string   `json:"name,omitempty"`
 	Mode       string   `json:"mode"`
 	Transport  string   `json:"transport,omitempty"`
 	Endpoint   string   `json:"endpoint,omitempty"`

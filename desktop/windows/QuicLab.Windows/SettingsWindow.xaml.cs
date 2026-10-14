@@ -1,0 +1,42 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
+using System.Net.NetworkInformation;
+using System.Windows;
+using System.Windows.Controls;
+using Microsoft.Win32;
+namespace QuicLab.Windows;
+public partial class SettingsWindow : Window {
+ public sealed class RouteRow {public string Cidr {get;set;}="";}
+ public record AdapterChoice(uint Index,string Name);
+ readonly ISettingsClient client;
+ readonly ObservableCollection<RouteRow> routes=new();
+ readonly CancellationTokenSource lifetime=new();
+ ulong revision;bool loaded,busy;string original="";
+ public SettingsWindow(ISettingsClient client){InitializeComponent();this.client=client;RouteGrid.ItemsSource=routes;routes.CollectionChanged+=(_,_)=>RouteCount.Text=$"Подсетей: {routes.Count} / 256";Loaded+=async(_,_)=>await LoadSettings();Closing+=OnClosing;Closed+=(_,_)=>lifetime.Cancel();}
+ public bool HasChanges=>loaded&&SettingsDraft.Fingerprint(Capture(false))!=original;
+ void OnClosing(object? sender,CancelEventArgs e){if(busy){e.Cancel=true;return;}if(HasChanges&&MessageBox.Show(this,"Закрыть без сохранения изменений?","Настройки",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)e.Cancel=true;}
+ void Busy(bool value){busy=value;Tabs.IsEnabled=!value;SaveButton.IsEnabled=CheckButton.IsEnabled=loaded&&!value;Progress.Visibility=value?Visibility.Visible:Visibility.Collapsed;}
+ async Task LoadSettings(){Busy(true);try{var r=await client.SendSettingsAsync("read_settings",cancellationToken:lifetime.Token);if(!r.Status.Ok||r.View==null){Feedback.Text="Служба не поддерживает редактор. Обновите службу и приложение.";return;}var v=r.View;revision=v.Revision;var s=v.Settings;NameBox.Text=s.Name;TransportBox.SelectedIndex=s.Transport=="https"?1:0;var endpoint=s.Endpoint.LastIndexOf(':');HostBox.Text=endpoint<0?s.Endpoint:s.Endpoint[..endpoint];PortBox.Text=endpoint<0?"443":s.Endpoint[(endpoint+1)..];HostnameBox.Text=s.Hostname;CertificateBox.Text=s.Certificate;ServerNameBox.Text=s.ServerName;VerifyNameBox.Text=s.VerifyName;CABox.Text=s.CA;KeyBox.Password="";ReplaceKeyBox.IsChecked=false;KeyHint.Text=v.HasKey?"Ключ сохранён в службе. Без замены он останется прежним.":"Требуется приватный ключ.";
+ var adapters=new List<AdapterChoice>();foreach(var nic in NetworkInterface.GetAllNetworkInterfaces()){try{var ipv4=nic.GetIPProperties().GetIPv4Properties();if(ipv4!=null)adapters.Add(new((uint)ipv4.Index,$"{nic.Name} · {nic.OperationalStatus}"));}catch(NetworkInformationException){}}
+ if(!adapters.Any(a=>a.Index==s.InterfaceIndex))adapters.Add(new(s.InterfaceIndex,$"Адаптер {s.InterfaceIndex} (недоступен)"));InterfaceBox.ItemsSource=adapters;InterfaceBox.SelectedValue=s.InterfaceIndex;
+ routes.Clear();foreach(var route in s.Targets)routes.Add(new(){Cidr=route});loaded=true;original=SettingsDraft.Fingerprint(Capture(false));Feedback.Text=$"Сохранённая ревизия: {revision}";
+ }catch(OperationCanceledException){}catch(Exception){Feedback.Text="Не удалось прочитать настройки службы.";}finally{Busy(false);}}
+ SettingsChange Capture(bool reconnect){RouteGrid.CommitEdit(DataGridEditingUnit.Cell,true);RouteGrid.CommitEdit(DataGridEditingUnit.Row,true);return new(){ExpectedRevision=revision,Reconnect=reconnect,ReplaceKey=ReplaceKeyBox.IsChecked==true,Settings=new(){Name=NameBox.Text.Trim(),Transport=(TransportBox.SelectedItem as ComboBoxItem)?.Tag.ToString()??"quic",Endpoint=HostBox.Text.Trim()+":"+PortBox.Text.Trim(),Hostname=HostnameBox.Text.Trim(),Certificate=CertificateBox.Text.Trim(),Key=ReplaceKeyBox.IsChecked==true?KeyBox.Password:"",CA=CABox.Text.Trim(),ServerName=ServerNameBox.Text.Trim(),VerifyName=VerifyNameBox.Text.Trim(),InterfaceIndex=InterfaceBox.SelectedValue is uint id?id:0,Targets=routes.Select(r=>r.Cidr.Trim()).ToArray()}};}
+ string? LocalError(SettingsChange c){if(!ushort.TryParse(PortBox.Text,out var port)||port==0)return "Укажите порт от 1 до 65535.";if(c.Settings.Name.Length>128)return "Название слишком длинное.";if(c.ReplaceKey&&string.IsNullOrWhiteSpace(c.Settings.Key))return "Выбрана замена ключа: откройте файл ключа.";return SettingsDraft.ValidateRoutes(c.Settings.Targets,HostBox.Text.Trim());}
+ static string Explain(SettingsReply r)=>r.Status.Error switch {"revision_conflict"=>"Настройки уже изменены другим окном. Закройте редактор и откройте снова.","config_store_failed"=>"Запись не удалась. Прежние настройки сохранены; VPN может быть остановлен.","cleanup_required"=>"Очистка подключения не завершена. Настройки не применены; повторите отключение VPN.","stop_before_apply"=>"Состояние VPN изменилось. Повторите сохранение и подтвердите переподключение.","backend_start_failed"=>"Настройки сохранены, но подключение не удалось. Проверьте сервер и параметры.","invalid_config"=>"Проверьте параметры подключения, сертификат/ключ и подсети. "+r.FieldError,_=>"Операция не завершена. Обновите статус службы."};
+ async Task Save(bool apply){if(busy||!loaded)return;var c=Capture(false);if(LocalError(c) is string error){Feedback.Text=error;return;}Busy(true);try{
+ var check=await client.SendSettingsAsync("validate_settings",c,lifetime.Token);if(!check.Status.Ok){Feedback.Text=Explain(check);return;}
+ if(!apply){Feedback.Text="Настройки корректны. Изменения ещё не сохранены.";return;}
+ if(check.Status.State!="stopped"){if(MessageBox.Show(this,"Сохранить настройки и переподключить VPN? Текущее соединение будет прервано.","Применение настроек",MessageBoxButton.OKCancel,MessageBoxImage.Question)!=MessageBoxResult.OK)return;c.Reconnect=true;}
+ var r=await client.SendSettingsAsync("apply_settings",c,lifetime.Token);
+ if(r.Status.Ok){await LoadSettings();Feedback.Text=r.Status.State=="running"?"Настройки сохранены. VPN подключён.":"Настройки сохранены.";}
+ else{Feedback.Text=Explain(r);if(r.Status.SavedRevision>revision){revision=r.Status.SavedRevision;c.ExpectedRevision=revision;c.Reconnect=false;original=SettingsDraft.Fingerprint(c);}}
+ }catch(OperationCanceledException){}catch(Exception){Feedback.Text="Нет ответа службы. Результат сохранения неизвестен; закройте и снова откройте настройки.";}finally{Busy(false);}}
+ async void SaveClick(object sender,RoutedEventArgs e)=>await Save(true);
+ async void CheckClick(object sender,RoutedEventArgs e)=>await Save(false);
+ void CloseClick(object sender,RoutedEventArgs e)=>Close();
+ void AddRoutesClick(object sender,RoutedEventArgs e){var additions=RouteInput.Text.Split(new[]{'\r','\n',',',';'},StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries);if(routes.Count+additions.Length>256){Feedback.Text="Максимум 256 подсетей.";return;}foreach(var row in additions)routes.Add(new(){Cidr=row});RouteInput.Clear();}
+ void RemoveRoutesClick(object sender,RoutedEventArgs e){foreach(var row in RouteGrid.SelectedItems.Cast<RouteRow>().ToArray())routes.Remove(row);}
+ async void FileClick(object sender,RoutedEventArgs e){var dialog=new OpenFileDialog{Filter="PEM и ключи|*.pem;*.crt;*.key|Все файлы|*.*"};if(dialog.ShowDialog(this)!=true)return;try{await using var stream=new FileStream(dialog.FileName,FileMode.Open,FileAccess.Read,FileShare.Read);if(stream.Length>128*1024)throw new InvalidDataException();using var reader=new StreamReader(stream);string text=await reader.ReadToEndAsync(lifetime.Token);switch((sender as Button)?.Tag?.ToString()){case "key":KeyBox.Password=text.Trim();ReplaceKeyBox.IsChecked=true;break;case "ca":CABox.Text=text;break;default:CertificateBox.Text=text;break;}}catch(Exception){Feedback.Text="Не удалось прочитать файл (максимум 128 КиБ).";}}
+}

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -29,17 +29,20 @@ public partial class MainWindow : Window
         if (cancelPending) ToggleButton.Content = "Отмена…";
         else if (startPending || latest?.State == "starting") ToggleButton.Content = "Отменить";
         else ToggleButton.Content = latest?.State == "running" ? "Отключить" : latest?.State == "failed" ? "Сбросить ошибку" : "Подключить";
+        SettingsButton.IsEnabled = !busy && !cancelPending && connectedToService && latest?.Capabilities?.Contains("settings-v1")==true && client is ISettingsClient;
+        SettingsButton.ToolTip = SettingsButton.IsEnabled ? "Подключение и подсети" : "Для редактора требуется новая версия службы";
         RefreshButton.IsEnabled = ImportButton.IsEnabled = !busy && !cancelPending;
         ValidateButton.IsEnabled = !busy && !cancelPending && connectedToService && latest?.Runtime?.Mode == "fixture";
         ApplyButton.IsEnabled = ValidateButton.IsEnabled && latest?.State == "stopped";
     }
     void Render(Reply r)
     {
+        SettingsPanel.Visibility = r.Runtime?.Mode == "fixture" ? Visibility.Visible : Visibility.Collapsed;
         latest = r; connectedToService = true; bool running = r.State == "running", fixture = r.Runtime?.Mode == "fixture", vpn = r.Runtime?.Mode == "vpn";
         StateText.Text = r.State switch { "running" => fixture ? "Тест запущен" : vpn ? "Движок запущен" : "VPN не подтверждён", "stopped" => "Отключено", "starting" => "Подключение…", "stopping" => "Отключение…", _ => "Ошибка подключения" };
         StatusDot.Fill = new SolidColorBrush(running ? Color.FromRgb(0, 135, 127) : r.State == "failed" ? Color.FromRgb(183, 71, 64) : Color.FromRgb(139, 156, 165));
         ToggleButton.Content = running ? "Отключить" : r.State == "failed" ? "Сбросить ошибку" : "Подключить";
-        ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\nПодсетей через VPN: {r.Runtime.RouteCount}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
+        ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{(string.IsNullOrWhiteSpace(r.Runtime.Name) ? "" : r.Runtime.Name+" · ")}{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\nПодсетей через VPN: {r.Runtime.RouteCount}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
         ModeBanner.Visibility = Visibility.Visible; ModeText.Text = vpn ? "IPv4: " + (r.Runtime?.Targets is { Length: >0 } targets ? string.Join(", ",targets) : "список подсетей служба не сообщает") + "\nОстальной трафик и системный DNS не перенастраиваются. В preview нет kill switch: после аварии службы выбранный трафик может пойти напрямую." : fixture ? "Тестовый движок: сеть не изменяется, трафик не передаётся." : "Служба не сообщает тип движка. Работа VPN не подтверждена.";
         ConfigText.ToolTip = vpn ? "Профиль MVP задаётся администратором в engine.json. Импорт через окно доступен только тестовому движку." : null;
         RenderTraffic(r); UpdateButtons();
@@ -93,6 +96,7 @@ public partial class MainWindow : Window
         catch (Exception) { if (!closed) Unavailable("Не удалось подтвердить остановку. Обновите статус службы."); }
         finally { cancelPending = false; if (!closed) UpdateButtons(); }
     }
+    async void SettingsClick(object sender, RoutedEventArgs e) {if(client is ISettingsClient settings){new SettingsWindow(settings){Owner=this}.ShowDialog();await Command("status");}}
     void ApplicationsClick(object sender, RoutedEventArgs e) => new ApplicationSelectionWindow { Owner = this }.ShowDialog();
     async void RefreshClick(object sender, RoutedEventArgs e) => await Command("status");
     async void ValidateClick(object sender, RoutedEventArgs e) => await Command("validate_config");

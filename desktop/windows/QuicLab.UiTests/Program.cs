@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using QuicLab.Windows;
@@ -11,10 +11,12 @@ partial class UiTests
         {
             try
             {
+                if (args.Length == 1 && (args[0] == "--live-settings" || args[0] == "--live-settings-256")) {await SettingsAcceptance.RunLive(args[0].EndsWith("256"));exit=0;return;}
                 if (args.Length == 2 && args[0] == "--live") { await LiveAcceptance(args[1]); exit = 0; return; }
                 await ServiceRecoveryAcceptance();
                 await CompactLayoutAcceptance();
                 await ApplicationSelectionAcceptance();
+                SettingsAcceptance.RunModel();await SettingsAcceptance.RunUI();
                 var fake = new FakeClient(); var w = new MainWindow(fake); w.Show(); await Ready(w);
                 Check(w.Width <= 460, "compact window"); Check(!((Expander)w.FindName("SettingsPanel")).IsExpanded, "settings initially collapsed");
                 await Click(w, "ToggleButton"); Check(Text(w, "StateText") == "Движок запущен", "start state"); Check(Text(w, "TxTotalText") == "2 КиБ", "TX total"); Check(Text(w, "RxRateText") == "2 КиБ/с", "RX rate");

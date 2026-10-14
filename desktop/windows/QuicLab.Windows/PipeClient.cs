@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -13,14 +13,24 @@ public static class Frames
     public static async Task WriteAsync(Stream stream, object request, CancellationToken ct) { var data = JsonSerializer.SerializeToUtf8Bytes(request); if (data.Length > Maximum) throw new InvalidDataException("Message too large"); byte[] size = new byte[4]; BinaryPrimitives.WriteInt32LittleEndian(size, data.Length); await stream.WriteAsync(size, ct); await stream.WriteAsync(data, ct); await stream.FlushAsync(ct); }
     public static async Task<JsonDocument> ReadAsync(Stream stream, CancellationToken ct) { byte[] size = new byte[4]; await stream.ReadExactlyAsync(size, ct); int n = BinaryPrimitives.ReadInt32LittleEndian(size); if (n <= 0 || n > Maximum) throw new InvalidDataException("Invalid frame"); byte[] data = new byte[n]; await stream.ReadExactlyAsync(data, ct); return JsonDocument.Parse(data); }
 }
-public record Reply(bool Ok, string State, string Error, ulong Revision, RuntimeInfo? Runtime = null);
+public record Reply(bool Ok, string State, string Error, ulong Revision, RuntimeInfo? Runtime = null, string[]? Capabilities = null, ulong SavedRevision = 0);
 public interface IStatusClient { Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default); }
-public sealed class PipeClient : IStatusClient
+public sealed class PipeClient : IStatusClient, ISettingsClient
 {
     const string Service = "QuicLabWindowsPreview";
     readonly string pipeName; readonly uint? fixturePid;
     public PipeClient(string pipeName = "quic-lab-windows-preview-v1", uint? fixturePid = null) { this.pipeName = pipeName; this.fixturePid = fixturePid; }
-    public async Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default)
+    public async Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default) {
+        using var doc=await SendDocument(command,config,null,cancellationToken);return ParseStatus(doc.RootElement);
+    }
+    public async Task<SettingsReply> SendSettingsAsync(string command,SettingsChange? change=null,CancellationToken cancellationToken=default){
+        using var doc=await SendDocument(command,null,change,cancellationToken);var r=doc.RootElement;
+        var view=r.TryGetProperty("settings",out var v)?JsonSerializer.Deserialize<SettingsView>(v,SettingsDraft.Json):null;
+        string field="";if(r.TryGetProperty("field_error",out var f)){field=f.GetProperty("field").GetString()??"";if(f.TryGetProperty("row",out var row))field+=" · строка "+row.GetInt32();field+=" · "+f.GetProperty("code").GetString();}
+        return new(ParseStatus(r),view,field);
+    }
+    static Reply ParseStatus(JsonElement r){var status=r.GetProperty("status");return new(r.GetProperty("ok").GetBoolean(),status.GetProperty("state").GetString()??"unknown",r.TryGetProperty("error",out var error)?error.GetString()??"operation_failed":"",status.GetProperty("revision").GetUInt64(),status.TryGetProperty("runtime",out var runtime)?JsonSerializer.Deserialize<RuntimeInfo>(runtime,SettingsDraft.Json):null,r.TryGetProperty("capabilities",out var caps)?JsonSerializer.Deserialize<string[]>(caps):null,r.TryGetProperty("saved_revision",out var rev)?rev.GetUInt64():0);}
+    async Task<JsonDocument> SendDocument(string command, JsonElement? config,SettingsChange? change,CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken); deadline.CancelAfter(TimeSpan.FromSeconds(30)); var ct = deadline.Token;
         uint expected = fixturePid ?? ServicePid(); if (expected == 0) throw new UnauthorizedAccessException("No trusted service process");
@@ -29,10 +39,10 @@ public sealed class PipeClient : IStatusClient
         await pipe.ConnectAsync(3000, ct);
         if (!fixturePid.HasValue) { var owner = PipeOwner(pipe.SafePipeHandle); if (owner != "S-1-5-18" && owner != "S-1-5-32-544") throw new UnauthorizedAccessException("Service pipe has an unprivileged owner"); }
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var actual) || actual != expected || (!fixturePid.HasValue && ServicePid() != expected)) throw new UnauthorizedAccessException("Untrusted pipe server");
-        string id = Guid.NewGuid().ToString("N"); var request = new Dictionary<string, object?> { { "version", 1 }, { "id", id }, { "command", command } }; if (config.HasValue) request["config"] = config.Value;
-        await Frames.WriteAsync(pipe, request, ct); using var doc = await Frames.ReadAsync(pipe, ct); var r = doc.RootElement;
-        if (r.GetProperty("version").GetInt32() != 1 || r.GetProperty("id").GetString() != id) throw new InvalidDataException("Response mismatch");
-        var status = r.GetProperty("status"); return new(r.GetProperty("ok").GetBoolean(), status.GetProperty("state").GetString() ?? "unknown", r.TryGetProperty("error", out var error) ? error.GetString() ?? "operation_failed" : "", status.GetProperty("revision").GetUInt64(), status.TryGetProperty("runtime", out var runtime) ? JsonSerializer.Deserialize<RuntimeInfo>(runtime.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) : null);
+        string id = Guid.NewGuid().ToString("N"); var request = new Dictionary<string, object?> { { "version", 1 }, { "id", id }, { "command", command } }; if (config.HasValue) request["config"] = config.Value; if(change!=null)request["settings"]=JsonSerializer.SerializeToElement(change,SettingsDraft.Json);
+        await Frames.WriteAsync(pipe, request, ct); var doc = await Frames.ReadAsync(pipe, ct); var r = doc.RootElement;
+        if (r.GetProperty("version").GetInt32() != 1 || r.GetProperty("id").GetString() != id) {doc.Dispose();throw new InvalidDataException("Response mismatch");}
+        return doc;
     }
     static uint ServicePid() { IntPtr manager = OpenSCManager(null, null, 1); if (manager == IntPtr.Zero) throw new IOException("Service unavailable"); try { IntPtr service = OpenService(manager, Service, 4); if (service == IntPtr.Zero) throw new IOException("Service not installed"); try { if (!QueryServiceStatusEx(service, 0, out var status, Marshal.SizeOf<ServiceStatus>(), out _) || status.State != 4) throw new IOException("Service not running"); return status.Pid; } finally { CloseServiceHandle(service); } } finally { CloseServiceHandle(manager); } }
     [StructLayout(LayoutKind.Sequential)] struct ServiceStatus { public uint Type, State, Controls, Win32Exit, ServiceExit, Checkpoint, WaitHint, Pid, Flags; }

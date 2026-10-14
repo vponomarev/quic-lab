@@ -119,7 +119,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 }
 
 func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
-	info := vpnclient.RuntimeInfo{Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
+	info := vpnclient.RuntimeInfo{Name: e.s.Name, Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
 	if p, ok := e.g.(interface{ TrafficSnapshot() vpnclient.Traffic }); ok {
 		info.Traffic = p.TrafficSnapshot()
 	}
