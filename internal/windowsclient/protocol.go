@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"quiclab/internal/vpnclient"
+	"quiclab/internal/windowsengine"
 
 	"regexp"
 	"sync"
@@ -20,17 +21,22 @@ var ErrProtocol = errors.New("invalid_request")
 var requestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type Request struct {
-	Version int               `json:"version"`
-	ID      string            `json:"id"`
-	Command string            `json:"command"`
-	Config  *vpnclient.Config `json:"config,omitempty"`
+	Version  int               `json:"version"`
+	ID       string            `json:"id"`
+	Command  string            `json:"command"`
+	Config   *vpnclient.Config `json:"config,omitempty"`
+	Settings *SettingsChange   `json:"settings,omitempty"`
 }
 type Response struct {
-	Version int                `json:"version"`
-	ID      string             `json:"id"`
-	OK      bool               `json:"ok"`
-	Error   string             `json:"error,omitempty"`
-	Status  vpnclient.Snapshot `json:"status"`
+	Version       int                       `json:"version"`
+	ID            string                    `json:"id"`
+	OK            bool                      `json:"ok"`
+	Error         string                    `json:"error,omitempty"`
+	Status        vpnclient.Snapshot        `json:"status"`
+	Capabilities  []string                  `json:"capabilities,omitempty"`
+	Settings      *SettingsView             `json:"settings,omitempty"`
+	SavedRevision uint64                    `json:"saved_revision,omitempty"`
+	FieldError    *windowsengine.FieldError `json:"field_error,omitempty"`
 }
 
 func validRequest(r Request) bool {
@@ -38,10 +44,12 @@ func validRequest(r Request) bool {
 		return false
 	}
 	switch r.Command {
-	case "status", "start", "stop":
-		return r.Config == nil
+	case "status", "start", "stop", "read_settings":
+		return r.Config == nil && r.Settings == nil
+	case "validate_settings", "apply_settings":
+		return r.Config == nil && r.Settings != nil
 	case "validate_config", "apply_config":
-		return r.Config != nil
+		return r.Config != nil && r.Settings == nil
 	}
 	return false
 }
@@ -92,6 +100,7 @@ type ConfigStore interface {
 	Save(context.Context, vpnclient.Config) error
 }
 type Handler struct {
+	settings   *SettingsManager
 	controller *vpnclient.Controller
 	store      ConfigStore
 	mu         sync.Mutex
@@ -107,8 +116,13 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 		r.Error = "invalid_request"
 		return r
 	}
+	if h.settings != nil {
+		return h.handleSettings(ctx, q)
+	}
 	var err error
 	switch q.Command {
+	case "read_settings", "validate_settings", "apply_settings":
+		err = errors.New("unsupported_command")
 	case "status":
 	case "stop":
 		err = h.controller.Stop(ctx)
@@ -143,7 +157,7 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 	r.OK = err == nil
 	if err != nil {
 		switch err.Error() {
-		case "stop_before_apply", "config_store_failed", "config_required", "invalid_config", "already_running", "cleanup_required", "stop_pending", "backend_start_failed":
+		case "unsupported_command", "stop_before_apply", "config_store_failed", "config_required", "invalid_config", "already_running", "cleanup_required", "stop_pending", "backend_start_failed":
 			r.Error = err.Error()
 		default:
 			r.Error = "operation_failed"
