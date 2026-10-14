@@ -57,19 +57,19 @@ func VerifyProbeExit(body, expected string) error {
 func validateTargets(targets []string, endpoint netip.Addr) error {
 	var selected []netip.Prefix
 	reserved := []string{"0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "10.254.253.1/32"}
-	for _, target := range targets {
+	for row, target := range targets {
 		p, err := netip.ParsePrefix(target)
 		if err != nil || !p.Addr().Is4() || p.Bits() == 0 || p != p.Masked() || p.Contains(endpoint) {
-			return errors.New("invalid IPv4 subnet or endpoint overlap")
+			return &FieldError{Field: "targets", Row: row + 1, Code: "invalid_ipv4_or_endpoint_overlap"}
 		}
 		for _, block := range reserved {
 			if p.Overlaps(netip.MustParsePrefix(block)) {
-				return errors.New("subnet overlaps reserved address space")
+				return &FieldError{Field: "targets", Row: row + 1, Code: "reserved_address"}
 			}
 		}
 		for _, previous := range selected {
 			if p.Overlaps(previous) {
-				return errors.New("overlapping IPv4 subnets")
+				return &FieldError{Field: "targets", Row: row + 1, Code: "overlapping_subnet"}
 			}
 		}
 		selected = append(selected, p)

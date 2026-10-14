@@ -13,7 +13,10 @@ import (
 )
 
 // Settings supports explicit IPv4 subnets. Default routes and IPv6 are refused.
+const MaxTargets = 256
+
 type Settings struct {
+	Name           string   `json:"name,omitempty"`
 	Transport      string   `json:"transport"`
 	Endpoint       string   `json:"endpoint"`
 	Hostname       string   `json:"hostname"`
@@ -27,11 +30,14 @@ type Settings struct {
 }
 
 func (s Settings) Validate() error {
+	if len(s.Name) > 128 {
+		return &FieldError{Field: "name", Code: "too_long"}
+	}
 	host, port, e := net.SplitHostPort(s.Endpoint)
 	a, ae := netip.ParseAddr(host)
 	pn, pe := strconv.Atoi(port)
-	if e != nil || ae != nil || !a.Is4() || pe != nil || pn < 1 || pn > 65535 || s.Hostname == "" || s.Certificate == "" || s.Key == "" || s.InterfaceIndex == 0 || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https") || len(s.Targets) == 0 || len(s.Targets) > 16 {
-		return errors.New("invalid bounded engine settings")
+	if e != nil || ae != nil || !a.Is4() || pe != nil || pn < 1 || pn > 65535 || s.Hostname == "" || s.Certificate == "" || s.Key == "" || s.InterfaceIndex == 0 || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https") || len(s.Targets) == 0 || len(s.Targets) > MaxTargets {
+		return &FieldError{Field: "connection", Code: "invalid_connection_or_route_count"}
 	}
 	if err := validateTargets(s.Targets, a); err != nil {
 		return err
