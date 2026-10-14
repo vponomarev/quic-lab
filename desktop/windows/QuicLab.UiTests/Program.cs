@@ -12,6 +12,7 @@ partial class UiTests
             try
             {
                 if (args.Length == 2 && args[0] == "--live") { await LiveAcceptance(args[1]); exit = 0; return; }
+                await ApplicationSelectionAcceptance();
                 var fake = new FakeClient(); var w = new MainWindow(fake); w.Show(); await Ready(w);
                 Check(w.Width <= 460, "compact window"); Check(!((Expander)w.FindName("SettingsPanel")).IsExpanded, "settings initially collapsed");
                 await Click(w, "ToggleButton"); Check(Text(w, "StateText") == "Движок запущен", "start state"); Check(Text(w, "TxTotalText") == "2 КиБ", "TX total"); Check(Text(w, "RxRateText") == "2 КиБ/с", "RX rate");

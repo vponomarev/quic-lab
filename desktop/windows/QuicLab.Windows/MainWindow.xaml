@@ -19,6 +19,7 @@
    </Grid><TextBlock x:Name="TrafficHintText" Text="Счётчики ещё не получены" FontSize="11" Foreground="#647B86" Margin="0,12,0,0" TextWrapping="Wrap"/>
   </StackPanel></Border>
   <TextBlock x:Name="MessageText" Margin="2,12,2,8" FontSize="12" Foreground="#607783" TextWrapping="Wrap"/>
+  <Button x:Name="ApplicationsButton" Content="Приложения · подготовить список…" Click="ApplicationsClick" Padding="10,7" HorizontalAlignment="Left" Margin="0,4,0,8"/>
   <Expander x:Name="SettingsPanel" Header="Настройки подключения" Margin="0,5,0,0"><StackPanel Margin="0,12,0,0">
    <TextBlock Text="Конфигурация службы · JSON" Margin="0,0,0,6"/>
    <TextBlock Text="В MVP рабочий профиль задаётся администратором в engine.json. JSON ниже применяется только к тестовому движку. Импорт профилей в обычной форме появится следующим этапом." TextWrapping="Wrap" FontSize="11" Foreground="#607783" Margin="0,0,0,8"/>

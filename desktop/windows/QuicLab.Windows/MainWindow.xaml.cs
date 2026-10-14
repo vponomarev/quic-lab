@@ -92,6 +92,7 @@ public partial class MainWindow : Window
         catch (Exception) { if (!closed) Unavailable("Не удалось подтвердить остановку. Обновите статус службы."); }
         finally { cancelPending = false; if (!closed) UpdateButtons(); }
     }
+    void ApplicationsClick(object sender, RoutedEventArgs e) => new ApplicationSelectionWindow { Owner = this }.ShowDialog();
     async void RefreshClick(object sender, RoutedEventArgs e) => await Command("status");
     async void ValidateClick(object sender, RoutedEventArgs e) => await Command("validate_config");
     async void ApplyClick(object sender, RoutedEventArgs e) => await Command("apply_config");

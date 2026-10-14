@@ -1,0 +1,25 @@
+<Window x:Class="QuicLab.Windows.ApplicationSelectionWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="QUIC Lab · Приложения" Width="700" Height="620" MinWidth="480" MinHeight="480" Background="#F3F6F8" Foreground="#183544" WindowStartupLocation="CenterOwner">
+
+ <Grid x:Name="EditorRoot" Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+  <Border Background="#FFF2CF" Padding="10" CornerRadius="6" Margin="0,0,0,12"><TextBlock x:Name="WarningText" Text="Подготовка списка: правила пока не применяются к сети. Перехват приложений ещё не подключён." TextWrapping="Wrap"/></Border>
+
+  <StackPanel Grid.Row="1"><TextBlock Text="Режим VPN для приложений"/><ComboBox x:Name="ModeChoice" SelectedIndex="0" SelectionChanged="ModeChanged" Margin="0,5,0,10" Padding="7"><ComboBoxItem Content="Только выбранные приложения"/><ComboBoxItem Content="Все, кроме выбранных"/></ComboBox></StackPanel>
+
+  <Grid Grid.Row="2" Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="PathText" ToolTip="Полный путь к .exe" Padding="6"/><Button Grid.Column="1" Content="Обзор…" Click="BrowseClick" Padding="10,5" Margin="6,0"/><Button Grid.Column="2" x:Name="AddButton" Content="Добавить" Click="AddClick" Padding="10,5"/></Grid>
+
+  <StackPanel Grid.Row="3" Margin="0,0,0,10"><Button x:Name="RunningButton" Content="Выбрать из запущенных…" Click="RunningClick" HorizontalAlignment="Left" Padding="10,5"/><ComboBox x:Name="RunningChoice" Visibility="Collapsed" Margin="0,6,0,0" SelectionChanged="RunningChanged" ToolTip="Выберите путь, затем нажмите Добавить"/></StackPanel>
+
+  <ListBox Grid.Row="4" x:Name="SelectedList" SelectionMode="Extended" ScrollViewer.HorizontalScrollBarVisibility="Auto" Padding="4"/>
+
+  <StackPanel Grid.Row="5"><TextBlock Text="Выбирается конкретный .exe. Дочерние процессы и новые пути после обновления автоматически не добавляются." TextWrapping="Wrap" FontSize="11" Foreground="#607783" Margin="0,8"/>
+
+   <WrapPanel><Button Content="Удалить выбранные" Click="RemoveClick" Padding="10,6" Margin="0,0,8,0"/><Button x:Name="SaveButton" Content="Сохранить черновик" Click="SaveClick" Background="#00877F" Foreground="White" Padding="10,6"/></WrapPanel>
+
+   <TextBlock x:Name="ResultText" TextWrapping="Wrap" Margin="0,8,0,0"/>
+
+  </StackPanel>
+
+ </Grid>
+
+</Window>

@@ -42,10 +42,20 @@ Interfaces: Policy{Version,Mode,Only,Except}; Compile(Policy,protectedIDs) (*Com
 
 Primary sources: https://learn.microsoft.com/en-us/windows-hardware/drivers/network/using-bind-or-connect-redirection and https://reqrypt.org/windivert-doc.html . WinDivert NETWORK lacks process identity; socket/flow event visibility alone does not prove reliable per-app first-packet routing.
 
-## A1 verification � 2026-10-14
+## A1 verification — 2026-10-14
 
 Completed foundation only; no Windows filters, driver, routes or service settings changed.
 Linux `go test -race ./internal/approuting` passed. Windows amd64 `go vet` and CLI build passed; all seven native tests passed, including native AppID resolution and current-process inventory.
 Review regressions reproduced and fixed: duplicate/case-aliased JSON fields are rejected; uninitialized compiled policy blocks active traffic decisions.
 
 A2 remains open. An unmodified ProxiFyre backend is not yet suitable for the promised strict policy: its documentation describes substring path matching and direct fallback for unresolved ownership/fragmented IPv6. A separate Windows driver test environment or further signed-backend research is required before live implementation. No live per-application guarantees are claimed.
+
+## Progress — selection draft, 2026-10-14
+
+The independent A3 list editor was brought forward while A2 driver deployment remains unresolved. The Windows dashboard opens a separate application selection window: manual .exe picker, accessible running-process paths, independent include/exclude lists, local draft persistence. It explicitly states that rules are not applied to the network. The existing service is not sent these paths and no network configuration is changed.
+
+Paths in this UI draft are display/configuration values, not trusted WFP identities. Backend integration must resolve them again with the service-side resolver, reject protected identities, and enforce capability checks before permitting Apply. Running process IDs are not policy identifiers. Child processes are not implicitly selected. The draft is stored in the current user's LocalApplicationData/QUIC Lab/application-selection-draft.json; corrupt drafts cannot be silently overwritten from the editor.
+
+Verification: .NET independent-list/strict-import/persistence tests; native WPF add/mode-switch/save/reopen checks; existing dashboard state, statistics, polling, close/reopen and cancellation regression. No live traffic-routing claim follows from these checks.
+
+See [interception backend assessment](../specs/2026-10-14-windows-interception-assessment.md) for A2 findings and the remaining deployment decision.
