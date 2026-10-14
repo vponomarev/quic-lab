@@ -29,11 +29,13 @@ func newSettingsBackend(s windowsengine.Settings) (vpnclient.Backend, vpnclient.
 	if e := s.Validate(); e != nil {
 		return nil, vpnclient.Config{}, e
 	}
-	if _, e := tls.X509KeyPair([]byte(s.Certificate), []byte(s.Key)); e != nil {
-		return nil, vpnclient.Config{}, errors.New("invalid client certificate or key")
-	}
-	if s.CA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(s.CA)) {
-		return nil, vpnclient.Config{}, errors.New("invalid trust root")
+	if s.Transport == "quic" || s.Transport == "https" {
+		if _, e := tls.X509KeyPair([]byte(s.Certificate), []byte(s.Key)); e != nil {
+			return nil, vpnclient.Config{}, errors.New("invalid client certificate or key")
+		}
+		if s.CA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(s.CA)) {
+			return nil, vpnclient.Config{}, errors.New("invalid trust root")
+		}
 	}
 	b := windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
 	return b, b.Config(), nil

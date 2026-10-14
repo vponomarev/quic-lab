@@ -5,16 +5,18 @@
   <TabControl x:Name="Tabs">
    <TabItem Header="Подключение"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
     <TextBlock Text="Название"/><TextBox x:Name="NameBox" MaxLength="128"/>
-    <TextBlock Text="Транспорт"/><ComboBox x:Name="TransportBox" SelectedIndex="0" Margin="0,3,0,10" Padding="5"><ComboBoxItem Content="QUIC" Tag="quic"/><ComboBoxItem Content="HTTPS" Tag="https"/></ComboBox>
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,10,0"><TextBlock Text="Адрес сервера (IPv4)"/><TextBox x:Name="HostBox"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="Порт"/><TextBox x:Name="PortBox"/></StackPanel></Grid>
-    <TextBlock Text="Имя сервера"/><TextBox x:Name="HostnameBox"/>
+    <TextBlock Text="Транспорт"/><ComboBox x:Name="TransportBox" SelectedIndex="0" SelectionChanged="TransportChanged" Margin="0,3,0,10" Padding="5"><ComboBoxItem Content="QUIC" Tag="quic"/><ComboBoxItem Content="HTTPS" Tag="https"/><ComboBoxItem Content="AmneziaWG" Tag="awg"/><ComboBoxItem Content="VLESS" Tag="vless"/></ComboBox>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,10,0"><TextBlock Text="Адрес сервера (IPv4 или имя)"/><TextBox x:Name="HostBox"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="Порт"/><TextBox x:Name="PortBox"/></StackPanel></Grid>
+    <StackPanel x:Name="QuicFields"><TextBlock Text="Имя сервера"/><TextBox x:Name="HostnameBox"/>
     <TextBlock Text="Сертификат клиента (PEM)"/><TextBox x:Name="CertificateBox" Height="68" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/><Button Content="Открыть сертификат…" Tag="certificate" Click="FileClick" HorizontalAlignment="Left"/>
-    <CheckBox x:Name="ReplaceKeyBox" Content="Заменить приватный ключ" Margin="0,12,0,3"/><TextBlock x:Name="KeyHint" FontSize="11" Foreground="#607783"/><PasswordBox x:Name="KeyBox" Padding="6" Margin="0,4,0,6"/><Button Content="Открыть ключ…" Tag="key" Click="FileClick" HorizontalAlignment="Left"/>
+    </StackPanel>
+    <StackPanel x:Name="ImportFields" Visibility="Collapsed" Margin="0,8,0,0"><TextBlock Text="Импорт AWG .conf или VLESS ссылки" FontWeight="SemiBold"/><TextBlock Text="Вставьте профиль в поле ниже или откройте файл. После проверки адрес заполнится автоматически. Ключи хранятся в службе и не читаются обратно." TextWrapping="Wrap" FontSize="11" Margin="0,5,0,8"/><Button Content="Проверить и разобрать профиль" Click="PreviewImportClick" HorizontalAlignment="Left"/><TextBlock x:Name="ImportHint" TextWrapping="Wrap" Margin="0,6,0,0"/></StackPanel>
+    <CheckBox x:Name="ReplaceKeyBox" Content="Заменить ключ / импортированный профиль" Margin="0,12,0,3"/><TextBlock x:Name="KeyHint" FontSize="11" Foreground="#607783"/><PasswordBox x:Name="KeyBox" Padding="6" Margin="0,4,0,6"/><Button Content="Открыть ключ / профиль…" Tag="key" Click="FileClick" HorizontalAlignment="Left"/>
     <Expander Header="Дополнительные настройки" Margin="0,14,0,0"><StackPanel Margin="0,8,0,0">
      <TextBlock Text="Физический сетевой адаптер"/><ComboBox x:Name="InterfaceBox" DisplayMemberPath="Name" SelectedValuePath="Index" Margin="0,4,0,10" Padding="5"/>
-     <TextBlock Text="TLS SNI"/><TextBox x:Name="ServerNameBox"/><TextBlock Text="Имя для проверки сертификата"/><TextBox x:Name="VerifyNameBox"/>
-     <TextBlock Text="CA (необязательно, пусто — системное доверие)"/><TextBox x:Name="CABox" Height="68" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/><Button Content="Открыть CA…" Tag="ca" Click="FileClick" HorizontalAlignment="Left"/>
-    </StackPanel></Expander>
+     <StackPanel x:Name="TlsFields"><TextBlock Text="TLS SNI"/><TextBox x:Name="ServerNameBox"/><TextBlock Text="Имя для проверки сертификата"/><TextBox x:Name="VerifyNameBox"/>
+     </StackPanel><StackPanel x:Name="CaFields"><TextBlock Text="CA (необязательно, пусто — системное доверие)"/><TextBox x:Name="CABox" Height="68" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/><Button Content="Открыть CA…" Tag="ca" Click="FileClick" HorizontalAlignment="Left"/>
+    </StackPanel></StackPanel></Expander>
    </StackPanel></ScrollViewer></TabItem>
    <TabItem Header="Подсети"><DockPanel Margin="12">
     <StackPanel DockPanel.Dock="Top"><TextBlock Text="Через VPN — только указанные IPv4-подсети (до 256)." TextWrapping="Wrap"/><TextBlock Text="Системный DNS не меняется. IPv6 и маршрут 0.0.0.0/0 пока не поддерживаются." FontSize="11" Foreground="#607783" TextWrapping="Wrap" Margin="0,5,0,10"/></StackPanel>

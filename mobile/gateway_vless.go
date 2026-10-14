@@ -62,10 +62,15 @@ func decodeGatewayVLESS(raw, endpoint string) (vless.Config, error) {
 // Called with g.mu held. Startup creates an engine, but health is established
 // only by a verified HTTPS response through that engine.
 func (g *Gateway) startVLESSLocked(binder SocketBinder) error {
+	return g.startVLESSLockedWithRoots(binder, nil)
+}
+
+func (g *Gateway) startVLESSLockedWithRoots(binder SocketBinder, roots []byte) error {
 	c, err := decodeGatewayVLESS(g.cfg.VLESSConfig, g.cfg.Endpoint)
 	if err != nil {
 		return err
 	}
+	c.RootPEM = append([]byte(nil), roots...)
 	f, err := newVLESSSocketFactory(g.cfg.Endpoint, binder)
 	if err != nil {
 		return err

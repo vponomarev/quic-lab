@@ -21,26 +21,38 @@ var ErrProtocol = errors.New("invalid_request")
 var requestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type Request struct {
-	Version  int               `json:"version"`
-	ID       string            `json:"id"`
-	Command  string            `json:"command"`
-	Config   *vpnclient.Config `json:"config,omitempty"`
-	Settings *SettingsChange   `json:"settings,omitempty"`
+	Import   *TransportImportRequest `json:"import,omitempty"`
+	Version  int                     `json:"version"`
+	ID       string                  `json:"id"`
+	Command  string                  `json:"command"`
+	Config   *vpnclient.Config       `json:"config,omitempty"`
+	Settings *SettingsChange         `json:"settings,omitempty"`
+}
+type TransportImportRequest struct {
+	Transport string `json:"transport"`
+	Content   string `json:"content"`
 }
 type Response struct {
-	Version       int                       `json:"version"`
-	ID            string                    `json:"id"`
-	OK            bool                      `json:"ok"`
-	Error         string                    `json:"error,omitempty"`
-	Status        vpnclient.Snapshot        `json:"status"`
-	Capabilities  []string                  `json:"capabilities,omitempty"`
-	Settings      *SettingsView             `json:"settings,omitempty"`
-	SavedRevision uint64                    `json:"saved_revision,omitempty"`
-	FieldError    *windowsengine.FieldError `json:"field_error,omitempty"`
+	Import        *windowsengine.TransportImport `json:"import,omitempty"`
+	Version       int                            `json:"version"`
+	ID            string                         `json:"id"`
+	OK            bool                           `json:"ok"`
+	Error         string                         `json:"error,omitempty"`
+	Status        vpnclient.Snapshot             `json:"status"`
+	Capabilities  []string                       `json:"capabilities,omitempty"`
+	Settings      *SettingsView                  `json:"settings,omitempty"`
+	SavedRevision uint64                         `json:"saved_revision,omitempty"`
+	FieldError    *windowsengine.FieldError      `json:"field_error,omitempty"`
 }
 
 func validRequest(r Request) bool {
 	if r.Version != 1 || !requestID.MatchString(r.ID) {
+		return false
+	}
+	if r.Command == "preview_import" {
+		return r.Config == nil && r.Settings == nil && r.Import != nil && len(r.Import.Content) <= 32768
+	}
+	if r.Import != nil {
 		return false
 	}
 	switch r.Command {
@@ -121,7 +133,7 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 	}
 	var err error
 	switch q.Command {
-	case "read_settings", "validate_settings", "apply_settings":
+	case "read_settings", "validate_settings", "apply_settings", "preview_import":
 		err = errors.New("unsupported_command")
 	case "status":
 	case "stop":

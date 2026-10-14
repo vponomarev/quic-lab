@@ -193,3 +193,6 @@ func NormalizeSpiderX(value string) (string, error) {
 	}
 	return value, nil
 }
+
+// ValidateConfig checks profile and trust syntax without starting a core or opening sockets.
+func ValidateConfig(c Config) error { _, err := buildConfig(c); return err }

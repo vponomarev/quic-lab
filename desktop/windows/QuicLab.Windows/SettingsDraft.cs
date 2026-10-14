@@ -37,3 +37,6 @@ public static class SettingsDraft {
  }
  static bool IPv4(string text,out uint value){value=0;var parts=text.Split('.');if(parts.Length!=4)return false;foreach(var part in parts){if(!byte.TryParse(part,out var b)||part!=b.ToString())return false;value=(value<<8)|b;}return true;}
 }
+
+public sealed class TransportImport {public string Name{get;set;}="";public string Endpoint{get;set;}="";[JsonPropertyName("suggested_targets")]public string[]? SuggestedTargets{get;set;}public string Notice{get;set;}="";}
+public interface ITransportImportClient {Task<TransportImport> PreviewImport(string transport,string content,CancellationToken ct=default);}

@@ -15,7 +15,7 @@ public static class Frames
 }
 public record Reply(bool Ok, string State, string Error, ulong Revision, RuntimeInfo? Runtime = null, string[]? Capabilities = null, ulong SavedRevision = 0);
 public interface IStatusClient { Task<Reply> SendAsync(string command, JsonElement? config = null, CancellationToken cancellationToken = default); }
-public sealed class PipeClient : IStatusClient, ISettingsClient
+public sealed class PipeClient : IStatusClient, ISettingsClient, ITransportImportClient
 {
     const string Service = "QuicLabWindowsPreview";
     readonly string pipeName; readonly uint? fixturePid;
@@ -29,8 +29,9 @@ public sealed class PipeClient : IStatusClient, ISettingsClient
         string field="";if(r.TryGetProperty("field_error",out var f)){field=f.GetProperty("field").GetString()??"";if(f.TryGetProperty("row",out var row))field+=" · строка "+row.GetInt32();field+=" · "+f.GetProperty("code").GetString();}
         return new(ParseStatus(r),view,field);
     }
+    public async Task<TransportImport> PreviewImport(string transport,string content,CancellationToken ct=default){using var doc=await SendDocument("preview_import",null,null,ct,new{transport,content});if(!doc.RootElement.GetProperty("ok").GetBoolean())throw new InvalidDataException("Неподдерживаемые параметры профиля.");return JsonSerializer.Deserialize<TransportImport>(doc.RootElement.GetProperty("import"),SettingsDraft.Json)??throw new InvalidDataException();}
     static Reply ParseStatus(JsonElement r){var status=r.GetProperty("status");return new(r.GetProperty("ok").GetBoolean(),status.GetProperty("state").GetString()??"unknown",r.TryGetProperty("error",out var error)?error.GetString()??"operation_failed":"",status.GetProperty("revision").GetUInt64(),status.TryGetProperty("runtime",out var runtime)?JsonSerializer.Deserialize<RuntimeInfo>(runtime,SettingsDraft.Json):null,r.TryGetProperty("capabilities",out var caps)?JsonSerializer.Deserialize<string[]>(caps):null,r.TryGetProperty("saved_revision",out var rev)?rev.GetUInt64():0);}
-    async Task<JsonDocument> SendDocument(string command, JsonElement? config,SettingsChange? change,CancellationToken cancellationToken)
+    async Task<JsonDocument> SendDocument(string command, JsonElement? config,SettingsChange? change,CancellationToken cancellationToken,object? import=null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken); deadline.CancelAfter(TimeSpan.FromSeconds(30)); var ct = deadline.Token;
         uint expected = fixturePid ?? ServicePid(); if (expected == 0) throw new UnauthorizedAccessException("No trusted service process");
@@ -39,7 +40,7 @@ public sealed class PipeClient : IStatusClient, ISettingsClient
         await pipe.ConnectAsync(3000, ct);
         if (!fixturePid.HasValue) { var owner = PipeOwner(pipe.SafePipeHandle); if (owner != "S-1-5-18" && owner != "S-1-5-32-544") throw new UnauthorizedAccessException("Service pipe has an unprivileged owner"); }
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var actual) || actual != expected || (!fixturePid.HasValue && ServicePid() != expected)) throw new UnauthorizedAccessException("Untrusted pipe server");
-        string id = Guid.NewGuid().ToString("N"); var request = new Dictionary<string, object?> { { "version", 1 }, { "id", id }, { "command", command } }; if (config.HasValue) request["config"] = config.Value; if(change!=null)request["settings"]=JsonSerializer.SerializeToElement(change,SettingsDraft.Json);
+        string id = Guid.NewGuid().ToString("N"); var request = new Dictionary<string, object?> { { "version", 1 }, { "id", id }, { "command", command } }; if (config.HasValue) request["config"] = config.Value; if(import!=null)request["import"]=import; if(change!=null)request["settings"]=JsonSerializer.SerializeToElement(change,SettingsDraft.Json);
         await Frames.WriteAsync(pipe, request, ct); var doc = await Frames.ReadAsync(pipe, ct); var r = doc.RootElement;
         if (r.GetProperty("version").GetInt32() != 1 || r.GetProperty("id").GetString() != id) {doc.Dispose();throw new InvalidDataException("Response mismatch");}
         return doc;

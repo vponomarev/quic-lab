@@ -12,6 +12,14 @@ func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
 	var err error
 	switch q.Command {
 	case "status":
+	case "preview_import":
+		var meta windowsengine.TransportImport
+		meta, err = windowsengine.ImportTransport(q.Import.Transport, q.Import.Content)
+		if err == nil {
+			r.Import = &meta
+		} else {
+			err = errors.New("invalid_config")
+		}
 	case "read_settings":
 		v := h.settings.Read()
 		r.Settings = &v

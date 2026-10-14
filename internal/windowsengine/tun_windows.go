@@ -163,6 +163,7 @@ func (g *NativeGateway) Stop() {
 
 type interfaceBinder uint32
 
+func (i interfaceBinder) InterfaceIndex() uint32 { return uint32(i) }
 func (i interfaceBinder) Bind(fd int64) error {
 	if i == 0 {
 		return errors.New("physical interface required")

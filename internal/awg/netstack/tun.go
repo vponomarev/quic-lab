@@ -41,6 +41,9 @@ import (
 )
 
 type netTun struct {
+	icmpMu         sync.Mutex
+	icmpPending    map[uint16]*icmpPending
+	localIPv4      netip.Addr
 	done           chan struct{}
 	closeOnce      sync.Once
 	ep             *channel.Endpoint
@@ -96,6 +99,7 @@ func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int) (tun.Device,
 		}
 		if ip.Is4() {
 			dev.hasV4 = true
+			dev.localIPv4 = ip
 		} else if ip.Is6() {
 			dev.hasV6 = true
 		}
@@ -147,6 +151,9 @@ func (tun *netTun) Write(buf [][]byte, offset int) (int, error) {
 			continue
 		}
 
+		if tun.receiveICMP(packet) {
+			continue
+		}
 		pkb := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(packet)})
 		switch packet[0] >> 4 {
 		case 4:

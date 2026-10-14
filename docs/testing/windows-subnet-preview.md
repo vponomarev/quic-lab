@@ -2,6 +2,8 @@
 
 This is a separate Windows preview, not a new Android/server release.
 
+This page describes the published preview. The newer locally installed editor, 256-route limit and AWG/VLESS support are documented in [Windows settings and transports](windows-settings-transports.md).
+
 ## Included
 
 Windows x64 GUI, service, Wintun; QUIC and HTTPS; up to 16 canonical, nonoverlapping IPv4 CIDRs; connect/stop/cancel; payload TX/RX totals and current rates. Service remains running when the UI closes. VPN is initially off and does not auto-connect on boot. The service itself starts automatically so normal UI use needs no UAC.

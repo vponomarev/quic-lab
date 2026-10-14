@@ -19,7 +19,7 @@ static class SettingsAcceptance {
   var original=initial.View.Settings;var cloned=System.Text.Json.JsonSerializer.Deserialize<EngineSettings>(System.Text.Json.JsonSerializer.Serialize(original,SettingsDraft.Json),SettingsDraft.Json)!;
   if(!original.Targets.SequenceEqual(new[]{"1.1.1.0/30"}))throw new Exception("unexpected test routes");
   try{
-   cloned.Targets=many?new[]{"1.1.1.0/30"}.Concat(Enumerable.Range(0,255).Select(i=>$"198.18.0.{i}/32")).ToArray():["1.1.1.0/31","1.1.1.2/31"];cloned.Name="Ïðîâåðêà ðåäàêòîðà";
+   cloned.Targets=many?new[]{"1.1.1.0/30"}.Concat(Enumerable.Range(0,255).Select(i=>$"198.18.0.{i}/32")).ToArray():["1.1.1.0/31","1.1.1.2/31"];cloned.Name="ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¾Ñ€Ð°";
    var c=new SettingsChange{ExpectedRevision=initial.View.Revision,Settings=cloned};
    var r=await client.SendSettingsAsync("apply_settings",c);if(!r.Status.Ok)throw new Exception("save: "+r.Status.Error);
    var stale=await client.SendSettingsAsync("apply_settings",c);if(stale.Status.Error!="revision_conflict")throw new Exception("stale editor accepted");
@@ -36,10 +36,23 @@ static class SettingsAcceptance {
   ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
   if(client.View.Settings.Name!="edited"||client.View.Revision!=2||w.HasChanges)throw new Exception("save/reload failed");
   if(Environment.GetEnvironmentVariable("QUIC_LAB_SETTINGS_PREVIEW") is string file){w.UpdateLayout();var bitmap=new System.Windows.Media.Imaging.RenderTargetBitmap((int)w.ActualWidth,(int)w.ActualHeight,96,96,System.Windows.Media.PixelFormats.Pbgra32);bitmap.Render(w);var enc=new System.Windows.Media.Imaging.PngBitmapEncoder();enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));using var stream=System.IO.File.Create(file);enc.Save(stream);}
-  w.Close();Console.WriteLine("Settings UI: load, dirty tracking, save/reload PASS");
+  var ca=(TextBox)w.FindName("CABox");ca.Text="old QUIC trust";((ComboBox)w.FindName("TransportBox")).SelectedIndex=3;
+  if(ca.Text!=""||((FrameworkElement)w.FindName("CaFields")).Visibility!=Visibility.Visible)throw new Exception("transport change retained hidden trust or hid VLESS CA");
+  ((ComboBox)w.FindName("TransportBox")).SelectedIndex=0;ca.Text="";
+  w.Close();
+  var conflicting=new FakeSettings{Conflict=true};var stale=new SettingsWindow(conflicting);stale.Show();await Task.Delay(200);
+  var staleName=(TextBox)stale.FindName("NameBox");string originalName=staleName.Text;staleName.Text="stale edit";
+  for(int i=0;i<2;i++){((Button)stale.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);}
+  bool protectedDraft=stale.HasChanges&&conflicting.Expected.SequenceEqual(new ulong[]{1,1});
+  staleName.Text=originalName;
+  if(!stale.HasChanges)stale.Close();else stale.Hide();
+  if(!protectedDraft)throw new Exception("apply conflict adopted a newer revision or marked stale draft clean");
+  Console.WriteLine("Settings conflict: stale draft cannot overwrite newer revision PASS");
+  Console.WriteLine("Settings UI: load, dirty tracking, save/reload PASS");
  }
  sealed class FakeSettings:ISettingsClient {
-  public SettingsView View=new(){Revision=1,HasKey=true,Settings=new(){Name="Ïðîâåðêà QUIC",Endpoint="192.0.2.1:443",Hostname="test.example",Certificate="-----BEGIN CERTIFICATE-----",InterfaceIndex=5,Targets=["1.1.1.0/30"]}};
-  public Task<SettingsReply> SendSettingsAsync(string command,SettingsChange? change=null,CancellationToken cancellationToken=default){if(command=="apply_settings"&&change!=null){View.Settings=change.Settings;View.Revision++;}return Task.FromResult(new SettingsReply(new Reply(true,"stopped","",0,null,["settings-v1"],View.Revision),View,""));}
+  public bool Conflict;public List<ulong> Expected=new();
+  public SettingsView View=new(){Revision=1,HasKey=true,Settings=new(){Name="ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° QUIC",Endpoint="192.0.2.1:443",Hostname="test.example",Certificate="-----BEGIN CERTIFICATE-----",InterfaceIndex=5,Targets=["1.1.1.0/30"]}};
+  public Task<SettingsReply> SendSettingsAsync(string command,SettingsChange? change=null,CancellationToken cancellationToken=default){if(command=="apply_settings"&&change!=null){Expected.Add(change.ExpectedRevision);if(Conflict)return Task.FromResult(new SettingsReply(new Reply(false,"stopped","revision_conflict",0,null,["settings-v1"],2),null,""));View.Settings=change.Settings;View.Revision++;}return Task.FromResult(new SettingsReply(new Reply(true,"stopped","",0,null,["settings-v1"],View.Revision),View,""));}
  }
 }

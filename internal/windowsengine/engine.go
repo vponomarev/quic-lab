@@ -2,7 +2,6 @@ package windowsengine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
@@ -34,10 +33,22 @@ func (s Settings) Validate() error {
 		return &FieldError{Field: "name", Code: "too_long"}
 	}
 	host, port, e := net.SplitHostPort(s.Endpoint)
-	a, ae := netip.ParseAddr(host)
+	a, _ := netip.ParseAddr(host)
 	pn, pe := strconv.Atoi(port)
-	if e != nil || ae != nil || !a.Is4() || pe != nil || pn < 1 || pn > 65535 || s.Hostname == "" || s.Certificate == "" || s.Key == "" || s.InterfaceIndex == 0 || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https") || len(s.Targets) == 0 || len(s.Targets) > MaxTargets {
+	if e != nil || !validEndpointHost(host) || pe != nil || pn < 1 || pn > 65535 || s.Key == "" || s.InterfaceIndex == 0 || s.InterfaceIndex > 0xffffff || (s.Transport != "quic" && s.Transport != "https" && s.Transport != "awg" && s.Transport != "vless") || len(s.Targets) == 0 || len(s.Targets) > MaxTargets {
 		return &FieldError{Field: "connection", Code: "invalid_connection_or_route_count"}
+	}
+	if s.Transport == "quic" || s.Transport == "https" {
+		if s.Hostname == "" || s.Certificate == "" {
+			return &FieldError{Field: "connection", Code: "certificate_required"}
+		}
+	} else {
+		if _, e := ImportTransport(s.Transport, s.Key); e != nil {
+			return &FieldError{Field: "credentials", Code: "unsupported_or_invalid_profile"}
+		}
+	}
+	if err := s.validateTransportOptions(); err != nil {
+		return err
 	}
 	if err := validateTargets(s.Targets, a); err != nil {
 		return err
@@ -45,7 +56,6 @@ func (s Settings) Validate() error {
 
 	return nil
 }
-func (s Settings) GatewayJSON() string { b, _ := json.Marshal(s); return string(b) }
 
 type Link interface {
 	Configure(context.Context, Settings) error
@@ -84,13 +94,23 @@ func (e *Engine) Start(ctx context.Context, c vpnclient.Config) error {
 	if !reflect.DeepEqual(c, e.Config()) || e.link != nil {
 		return errors.New("configuration mismatch or already running")
 	}
-	l, err := e.p.Open(ctx, e.s)
+	effective := e.s
+	if resolver, ok := e.p.(interface {
+		Resolve(context.Context, Settings) (Settings, error)
+	}); ok {
+		var err error
+		effective, err = resolver.Resolve(ctx, e.s)
+		if err != nil {
+			return err
+		}
+	}
+	l, err := e.p.Open(ctx, effective)
 	if err != nil {
 		return err
 	}
 	e.link = l
 	e.started = true
-	if err = e.g.Start(ctx, e.s); err != nil {
+	if err = e.g.Start(ctx, effective); err != nil {
 		return err
 	}
 	if err = ctx.Err(); err != nil {
@@ -102,7 +122,7 @@ func (e *Engine) Start(ctx context.Context, c vpnclient.Config) error {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	return l.Configure(ctx, e.s)
+	return l.Configure(ctx, effective)
 }
 func (e *Engine) Stop(ctx context.Context) error {
 	if e.started {

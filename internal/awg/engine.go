@@ -10,6 +10,7 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"quiclab/internal/awg/netstack"
+	"quiclab/internal/icmprelay"
 	"quiclab/internal/trafficbudget"
 )
 
@@ -40,24 +41,37 @@ func (b *protectedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		return nil, 0, e
 	}
 	if b.binder != nil {
-		peek, ok := b.Bind.(conn.PeekLookAtSocketFd)
-		if !ok {
-			b.Bind.Close()
-			return nil, 0, errors.New("socket protection unavailable")
-		}
-		fd, e := peek.PeekLookAtSocketFd4()
-		if e == nil {
-			e = b.binder.Bind(int64(fd))
-		}
-		if e != nil {
-			b.Bind.Close()
-			return nil, 0, e
-		}
-		// IPv6 transport is unused, but protect its socket too when present.
-		if fd, e := peek.PeekLookAtSocketFd6(); e == nil {
-			if e = b.binder.Bind(int64(fd)); e != nil {
+		bound, supported := b.Bind.(conn.BindSocketToInterface)
+		selected, hasIndex := b.binder.(interface{ InterfaceIndex() uint32 })
+		if supported && hasIndex {
+			if e = bound.BindSocketToInterface4(selected.InterfaceIndex(), false); e != nil {
 				b.Bind.Close()
 				return nil, 0, e
+			}
+			if e = bound.BindSocketToInterface6(0, true); e != nil {
+				b.Bind.Close()
+				return nil, 0, e
+			}
+		} else {
+			peek, ok := b.Bind.(conn.PeekLookAtSocketFd)
+			if !ok {
+				b.Bind.Close()
+				return nil, 0, errors.New("socket protection unavailable")
+			}
+			fd, e := peek.PeekLookAtSocketFd4()
+			if e == nil {
+				e = b.binder.Bind(int64(fd))
+			}
+			if e != nil {
+				b.Bind.Close()
+				return nil, 0, e
+			}
+			// IPv6 transport is unused, but protect its socket too when present.
+			if fd, e := peek.PeekLookAtSocketFd6(); e == nil {
+				if e = b.binder.Bind(int64(fd)); e != nil {
+					b.Bind.Close()
+					return nil, 0, e
+				}
 			}
 		}
 	}
@@ -97,7 +111,7 @@ type Engine struct {
 }
 
 func Start(c *Config, endpoint string, binder Binder) (*Engine, error) {
-	return startWithBind(c, endpoint, binder, conn.NewStdNetBind())
+	return startWithBind(c, endpoint, binder, newPlatformBind())
 }
 func startWithBind(c *Config, endpoint string, binder Binder, sockets conn.Bind) (*Engine, error) {
 	addr, e := netip.ParseAddrPort(endpoint)
@@ -217,4 +231,20 @@ func (b *protectedBind) Close() error {
 		b.unregister = nil
 	}
 	return b.Bind.Close()
+}
+
+// EchoPacket keeps ICMP inside the peer tunnel, including low-TTL probes.
+func (e *Engine) EchoPacket(ctx context.Context, p []byte) ([]byte, error) {
+	target, _, ok := icmprelay.Parse(p)
+	if !ok {
+		return nil, errors.New("invalid echo")
+	}
+	allowed := false
+	for _, prefix := range e.allowed {
+		allowed = allowed || prefix.Contains(target)
+	}
+	if !allowed {
+		return nil, errors.New("destination outside peer AllowedIPs")
+	}
+	return e.network.ExchangeICMP(ctx, p)
 }
