@@ -11,6 +11,7 @@ import (
 	"quiclab/internal/vpnmodel"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFrameLimitsAndStrictRequest(t *testing.T) {
@@ -169,5 +170,44 @@ func TestProvisionedConfigOverridesOldCache(t *testing.T) {
 	}
 	if serviceConfigStore(nil, saved) != saved {
 		t.Fatal("fixture store replaced")
+	}
+}
+
+type waitingBackend struct{ entered chan struct{} }
+
+func (b *waitingBackend) Start(ctx context.Context, _ vpnclient.Config) error {
+	close(b.entered)
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (*waitingBackend) Stop(context.Context) error { return nil }
+func TestStopRequestInterruptsStartRequest(t *testing.T) {
+	cfg := config()
+	b := &waitingBackend{make(chan struct{})}
+	h := NewHandler(vpnclient.NewController(b), &memoryStore{c: &cfg})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan Response, 1)
+	go func() { done <- h.Handle(ctx, Request{Version: 1, ID: "start", Command: "start"}) }()
+	select {
+	case <-b.entered:
+	case <-ctx.Done():
+		t.Fatal("start not entered")
+	}
+	status := h.Handle(ctx, Request{Version: 1, ID: "status", Command: "status"})
+	if status.Status.State != vpnclient.Starting {
+		t.Fatal(status)
+	}
+	stopped := h.Handle(ctx, Request{Version: 1, ID: "stop", Command: "stop"})
+	if !stopped.OK || stopped.Status.State != vpnclient.Stopped {
+		t.Fatal(stopped)
+	}
+	select {
+	case r := <-done:
+		if r.OK {
+			t.Fatal("cancelled start accepted")
+		}
+	case <-ctx.Done():
+		t.Fatal("start did not finish")
 	}
 }

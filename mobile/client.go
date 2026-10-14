@@ -139,6 +139,12 @@ func clientTLS(serverName, fingerprint string) (*tls.Config, error) {
 // Start opens exactly one connection and one stream. It never automatically reconnects.
 // endpoint must be an IP:port (IPv6 in brackets). DNS resolution belongs to Android Network.
 func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int, binder SocketBinder) error {
+	return c.startWithContext(context.Background(), endpoint, serverName, fingerprint, intervalMS, binder)
+}
+func (c *Client) startWithContext(parent context.Context, endpoint, serverName, fingerprint string, intervalMS int, binder SocketBinder) error {
+	if err := parent.Err(); err != nil {
+		return err
+	}
 	c.op.Lock()
 	defer c.op.Unlock()
 	if c.conn != nil {
@@ -166,15 +172,27 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
 	conn, err := t.q.Dial(ctx, addr, cfg, &quic.Config{EnableDatagrams: c.gatewayTLS != nil, MaxIdleTimeout: 90 * time.Second, KeepAlivePeriod: 2 * time.Second})
 	if err != nil {
 		cancel()
 		t.close()
 		return err
 	}
+	// Abort both handshake and echo negotiation when startup is cancelled.
+	interrupted := make(chan struct{})
+	stopClose := context.AfterFunc(ctx, func() { conn.CloseWithError(1, "startup cancelled"); close(interrupted) })
+	var handoff sync.Once
+	finishStartup := func() {
+		handoff.Do(func() {
+			if !stopClose() {
+				<-interrupted
+			}
+		})
+	}
+	defer finishStartup()
 	stream, err := conn.OpenStreamSync(ctx)
-	cancel()
 	if err != nil {
 		conn.CloseWithError(1, "stream failed")
 		t.close()
@@ -196,6 +214,12 @@ func (c *Client) Start(endpoint, serverName, fingerprint string, intervalMS int,
 			return err
 		}
 		stream.SetDeadline(time.Time{})
+	}
+	finishStartup()
+	if err := ctx.Err(); err != nil {
+		conn.CloseWithError(1, "startup cancelled")
+		t.close()
+		return err
 	}
 	ctx, c.cancel = context.WithCancel(context.Background())
 	c.conn = conn

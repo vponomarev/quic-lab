@@ -63,3 +63,13 @@ Evidence on Windows 10 Pro 19045:
 - RED→GREEN observed for delayed-poll stale speed, stale persisted profile and incompatible pre-save configuration. Static review had no Critical findings; its three Important findings were fixed. Imported files are now read on one handle with a streaming size bound.
 
 Local build: `desktop/windows/QuicLab.Windows/bin/Release/net10.0-windows/QuicLab.Windows.exe` (requires .NET 10 Desktop Runtime or a later self-contained package). This is a development artifact; installer, final import UI, tray behavior, full routing, protocol parity and beta acceptance remain in the plan.
+
+## Startup cancellation checkpoint — 2026-10-14
+
+The dashboard now shows Connecting and an enabled Cancel button while Start is pending. Cancellation uses an independent authenticated pipe connection: immediate Stop, settlement of the original Start, then a final idempotent Stop. This prevents Stop-before-Start ordering from being reported as a completed cancellation. A late Start reply does not overwrite the final stopped state. If the Start reply is lost or times out, the UI explicitly reports an unknown result rather than promising cancellation; subsequent status polling remains authoritative. Operation-ID cancellation/tombstones are not implemented in protocol v1.
+
+The Windows-only Go gateway entry takes the controller lifetime context through QUIC/HTTPS startup, including handshake and Echo negotiation. Public Android/gomobile signatures remain unchanged. QUIC startup unregisters and joins its cancellation callback before publishing the connected event, preventing a delayed event sink from turning a successful startup into a closed transport.
+
+Tests: unresponsive local QUIC/HTTPS peers, QUIC Echo peer held open independently of client cancellation; blocking connected sink regression; Handler Start/status/Stop concurrency; WPF delayed Start, overtaking Stop, late reply and lost-reply uncertainty. Behavioral RED→GREEN observed for the connected callback and WPF cases. Initial full mobile race run hit TestBothPathsTemporarilyUnavailable echo timeout; that test subsequently passed three targeted repeats and the final full affected-package race suite. Windows service/engine builds and targeted Windows vet passed. No live Wintun, production server, phone or SCM mutation occurred. The explicit installed-service foreign-account test remains outside this no-UAC checkpoint.
+
+Final verification: native Windows suite PASS (one explicitly privileged foreign-account test skipped), WPF/real Go fixture IPC and traffic contracts PASS, WPF Release build zero warnings/errors. Android arm64 and amd64 Go cross-builds PASS; no new AAR/APK was built or installed.

@@ -103,6 +103,13 @@ func (g *Gateway) emit(kind string, v map[string]any) {
 	g.sink.OnEvent(string(b))
 }
 func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
+	return g.startWithContext(context.Background(), configJSON, binder)
+}
+
+func (g *Gateway) startWithContext(parent context.Context, configJSON string, binder SocketBinder) error {
+	if err := parent.Err(); err != nil {
+		return err
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.cancel != nil {
@@ -181,15 +188,18 @@ func (g *Gateway) Start(configJSON string, binder SocketBinder) error {
 	if g.cfg.MaxAvailability {
 		return g.startBond(binder)
 	}
-	if e = g.connect(binder); e != nil {
+	if e = g.connectContext(parent, binder); e != nil {
 		return e
 	}
 	return nil
 }
 func (g *Gateway) connect(binder SocketBinder) error {
+	return g.connectContext(context.Background(), binder)
+}
+func (g *Gateway) connectContext(parent context.Context, binder SocketBinder) error {
 	// This attempt owns a new lifetime: Reconnect canceled the old transport.
 	// Capabilities must share the new lifetime, not inherit the canceled one.
-	g.ctx, g.cancel = context.WithCancel(context.Background())
+	g.ctx, g.cancel = context.WithCancel(parent)
 	if err := g.checkCapabilities(binder); err != nil {
 		g.cancel()
 		g.cancel = nil
@@ -200,7 +210,7 @@ func (g *Gateway) connect(binder SocketBinder) error {
 		g.q.probes = &g.probes
 		g.q.gatewayTLS = g.tls.Clone()
 		g.q.gatewayTLS.NextProtos = []string{gateway.ALPN}
-		if e := g.q.Start(g.cfg.Endpoint, g.cfg.Hostname, "", 100, binder); e != nil {
+		if e := g.q.startWithContext(g.ctx, g.cfg.Endpoint, g.cfg.Hostname, "", 100, binder); e != nil {
 			g.cancel()
 			g.cancel = nil
 			g.q = nil

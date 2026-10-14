@@ -127,7 +127,7 @@ type NativeGateway struct {
 func (g *NativeGateway) Start(ctx context.Context, s Settings) error {
 	g.meter.Reset(time.Now().UTC().Format(time.RFC3339Nano))
 	g.g = mobile.NewGateway(g)
-	return g.g.Start(s.GatewayJSON(), interfaceBinder(s.InterfaceIndex))
+	return g.g.StartWindowsContext(ctx, s.GatewayJSON(), interfaceBinder(s.InterfaceIndex))
 }
 func (g *NativeGateway) Attach(l Link) error {
 	t, ok := l.(*tunLink)
