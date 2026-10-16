@@ -18,7 +18,7 @@ class VlessSubscriptionsActivity:Activity(){
   body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,24,24,24)}
   setContentView(ScrollView(this).apply{addView(body)})
   body.addView(TextView(this).apply{text="Подписки VLESS";textSize=23f})
-  body.addView(TextView(this).apply{text="HTTPS-ссылка на список VLESS (текст или Base64). Обновление вручную, после просмотра изменений. Поддерживаются TCP TLS/REALITY. Исчезнувшие записи сохраняются; удалённые вручную могут вернуться при обновлении."})
+  body.addView(TextView(this).apply{text="HTTPS-ссылка на VLESS (текст, Base64 или JSON Xray). Обновление вручную, после просмотра изменений. Поддерживаются TCP TLS/REALITY. Исчезнувшие записи сохраняются; удалённые вручную могут вернуться при обновлении."})
   status=TextView(this);body.addView(status)
   button("Добавить подписку"){
    val fields=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
@@ -35,9 +35,28 @@ class VlessSubscriptionsActivity:Activity(){
   }
   button("Назад"){finish()}
  }
- private fun refresh(name:String,url:String){run("Загружаем подписку…",{MdmConfiguration.assertEditable(this);VlessSubscriptions.prepare(this,name,url,VlessSubscriptions.fetch(url))}){p->
-  AlertDialog.Builder(this).setTitle("Изменения подписки").setMessage(p.summary+"\n\nVPN при применении может переподключиться.").setNegativeButton("Отмена",null).setPositiveButton("Применить"){_,_->run("Применяем…",{LocalConfigurationApply.apply(this,p)}){render();status.text="Подписка обновлена"}}.show()
- }}
+ private fun refresh(name:String,url:String){
+  if(MdmConfiguration.managed(this)){status.text="Настройками управляет MDM. Приостановите MDM в настройках приложения.";return}
+  run("Загружаем подписку…",{VlessSubscriptions.fetch(url)}){parsed->
+   val previous=VlessSubscriptions.selected(this,url)
+   val checked=BooleanArray(parsed.entries.size){parsed.entries[it].key in previous}
+   val labels=parsed.entries.map{it.name+"\n"+it.endpoint}.toTypedArray()
+   val dialog=AlertDialog.Builder(this).setTitle("Выберите подключения (${parsed.entries.size})")
+    .setMultiChoiceItems(labels,checked){_,i,on->checked[i]=on}
+    .setNegativeButton("Отмена",null).setPositiveButton("Продолжить",null).create()
+   dialog.setOnShowListener{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+    val chosen=parsed.entries.filterIndexed{i,_->checked[i]}
+    if(chosen.isEmpty()){Toast.makeText(this,"Выберите хотя бы одно подключение",Toast.LENGTH_SHORT).show();return@setOnClickListener}
+    dialog.dismiss()
+    run("Готовим изменения…",{VlessSubscriptions.prepare(this,name,url,parsed.copy(entries=chosen))}){p->
+     AlertDialog.Builder(this).setTitle("Изменения подписки")
+      .setMessage(p.summary+"\nИмпортируются только выбранные независимые подключения. DNS, маршрутизация и балансировка Xray не переносятся. Общий лимит — 32 подключения.\nVPN при применении может переподключиться.")
+      .setNegativeButton("Отмена",null).setPositiveButton("Применить"){_,_->run("Применяем…",{LocalConfigurationApply.apply(this,p)}){render();status.text="Подписка обновлена"}}.show()
+    }
+   }}
+   dialog.show()
+  }
+ }
  private fun <T> run(label:String,work:()->T,done:(T)->Unit){if(busy)return;busy=true;status.text=label;worker.execute{val result=runCatching(work);runOnUiThread{busy=false;if(isDestroyed||isFinishing)return@runOnUiThread;result.fold(done){status.text="Не удалось обновить подписку. Проверьте HTTPS-ссылку, доступность сервера, TCP TLS/REALITY, лимит 32 подключений и права MDM. Настройки не изменены."}}}}
  override fun onDestroy(){worker.shutdownNow();super.onDestroy()}
 }

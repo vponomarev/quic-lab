@@ -13,3 +13,11 @@ Independent code review found three issues (mixed subscription prefix, fixed TUN
 ## Real provider verification (Note9)
 
 User-provided private subscription tested in Android UI and temporary on-device instrumentation; URL and contents not retained in repository. Device fetched HTTP 200, ~126 KB, Xray JSON array of 41 configurations. Current text/Base64 VLESS subscription parser rejects this format. UI fails earlier because active MDM configuration authority forbids local edits (local_edit_allowed=false). No profiles or rights changed; no provider VPN connection attempted. Parsing/selection support for JSON arrays remains required; the existing 32-profile limit also requires deliberate selection rather than importing this whole set. Temporary probe removed after the test.
+
+## JSON subscription follow-up: 0.9.5-pre.2 (67)
+
+Implemented Xray JSON arrays, independent supported outbounds, canonical URI storage, selection dialog and remembered choices. Duplicate keys checked before normalization. Provider rotates SNI and REALITY shortId: stable identity now endpoint/security/flow. Endpoint changes remain new records; conflicting same-endpoint credentials are rejected.
+
+Note9: 14 regression instrumentation tests passed, assembleDebug/assembleDebugAndroidTest/lintDebug passed. Opt-in VlessSubscriptionLiveTest passed: HTTPS 200 through first available supported VLESS endpoint, real encrypted configuration application, re-fetch/application without duplicate, original current profile preserved. Provider produced 25 unique supported entries in the final UI run; unsupported count varied 15–16 between responses. UI refresh showed remembered checkbox, preview added0/updated1, and successful apply. Full provider routing/balancing is intentionally not imported; no claim of checking every endpoint or full device TCP/UDP through every provider server.
+
+User authorized pausing MDM. Original AmneziaWG was running again at end (UI: connected, Wi-Fi). MDM resume failed twice with generic MDM HTTPS exchange error; it remains paused, binding/rights retained. This is not counted as a passing restoration check. APK in artifacts/quic-lab-0.9.5-pre.2.apk; not deployed to production update feed. Private subscription URL and payload not stored in repository.
