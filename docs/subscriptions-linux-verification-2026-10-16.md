@@ -9,3 +9,7 @@ Linux test host root@192.168.5.214, source /root/quic-linux-client-20261016. go 
 First Linux version: CLI, selected IPv4 subnets only, QUIC/HTTPS. See linux-client-preview.md for explicit limits. systemd template supplied but its installation/restart behavior was not live-tested. External host routing, full tunnel and physical interface handover not tested/supported here.
 
 Independent code review found three issues (mixed subscription prefix, fixed TUN IP, transport-loss cleanup), all corrected; follow-up review found no further important issues. Artifacts: quic-lab-0.9.5-pre.1.apk; quic-lab-linux-amd64-preview.tar.gz; subscriptions-linux-SHA256SUMS.txt in artifacts/. No production server update or stable release published.
+
+## Real provider verification (Note9)
+
+User-provided private subscription tested in Android UI and temporary on-device instrumentation; URL and contents not retained in repository. Device fetched HTTP 200, ~126 KB, Xray JSON array of 41 configurations. Current text/Base64 VLESS subscription parser rejects this format. UI fails earlier because active MDM configuration authority forbids local edits (local_edit_allowed=false). No profiles or rights changed; no provider VPN connection attempted. Parsing/selection support for JSON arrays remains required; the existing 32-profile limit also requires deliberate selection rather than importing this whole set. Temporary probe removed after the test.
