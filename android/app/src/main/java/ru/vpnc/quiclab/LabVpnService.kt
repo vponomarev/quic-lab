@@ -450,6 +450,7 @@ class LabVpnService : VpnService() {
         @Synchronized
         fun record(e: JSONObject) {
             Diagnostics.event("vpn", e)
+            VlessGroupEvents.record(e)
             val kind = e.optString("event")
             if (kind == "connected" && e.optString("transport") == "vless") vlessStatus = VlessConnectionStatus()
             vlessStatus?.let { it.accept(e, android.os.SystemClock.elapsedRealtime()); status = it.label(android.os.SystemClock.elapsedRealtime()) }

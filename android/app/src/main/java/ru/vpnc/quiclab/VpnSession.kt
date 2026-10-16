@@ -63,6 +63,31 @@ internal class VpnSession(
     private val isAWG = config.optString("transport") == "awg"
     private val isVLESS = config.optString("transport") == "vless"
     private var sourceEndpoint = config.optString("endpoint")
+    private val groupURIs=config.optJSONArray("vless_uris")
+    private val vlessGroup=if(isVLESS && groupURIs!=null)VlessGroupPolicy(groupURIs.length()) else null
+    @Volatile private var vlessGeneration=""
+    private fun groupEvent(reason:String){
+        val group=vlessGroup?:return
+        output(JSONObject().put("event","vless_group").put("index",group.current+1).put("count",groupURIs!!.length()).put("reason",reason).put("time",System.currentTimeMillis()))
+    }
+    private fun groupCandidate(index:Int):String=Mobile.importVLESSConfig(groupURIs!!.getString(index))
+    private fun rotateVless(index:Int){
+        if(closed || !alive || !automatic)return
+        val network=activeNetwork?:return
+        if(activeKind==CELLULAR && !cellAllowed())return
+        try{
+            val candidate=groupCandidate(index)
+            val endpoint=JSONObject(candidate).getJSONObject("config").getString("Endpoint")
+            val resolved=resolveEndpoint(endpoint,network)
+            if(closed)return
+            finishExitEcho("Смена сервера группы VLESS")
+            requireNotNull(client).switchVLESSProfile(candidate,resolved.address,binder(network))
+            vlessGroup?.select(index)
+            sourceEndpoint=endpoint
+            lastEchoAt=now();lastReplyAt=lastEchoAt;lastSwitchAt=now();nextExitCheckAt=0
+            groupEvent("switched")
+        }catch(_:Exception){vlessGroup?.deferRetry(index,now());groupEvent("candidate_failed")}
+    }
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val networks = mutableMapOf<Int, Network>()
     private val validated = mutableSetOf<Network>()
@@ -297,6 +322,19 @@ internal class VpnSession(
                                     if (closed || token != epoch) return
                                     val e = JSONObject(eventJSON)
                                     routeExitEcho(e)
+                                    if(vlessGroup!=null){
+                                        val kind=e.optString("event")
+                                        if(kind=="connected")vlessGeneration="vless-"+e.optLong("session")
+                                        if(kind=="echo" || kind=="probe_unavailable"){
+                                            val generation=e.optString("connection_id")
+                                            submit {
+                                                if(token==epoch && generation==vlessGeneration && automatic){
+                                                    if(kind=="echo"){vlessGroup.healthy();groupEvent("healthy")}
+                                                    else {groupEvent("probe_failed");vlessGroup.failed(now())?.let{rotateVless(it)}}
+                                                }
+                                            }
+                                        }
+                                    }
                                     if (e.optString("event") in listOf("echo", "health")) {
                                         if (isAWG) awgPingSeen = true
                                         lastEchoAt = now()
@@ -340,7 +378,20 @@ internal class VpnSession(
                     refreshRTT()
                     selected(network, kind)
                     sourceEndpoint = endpoint
-                    val resolved = resolveEndpoint(endpoint, network)
+                    if(vlessGroup!=null){
+                        var found=false
+                        for(i in 0 until groupURIs!!.length()){
+                            if(closed)return@submit
+                            try{
+                                val candidate=groupCandidate(i)
+                                val source=JSONObject(candidate).getJSONObject("config").getString("Endpoint")
+                                resolveEndpoint(source,network)
+                                sourceEndpoint=source;config.put("vless_config",candidate);vlessGroup.select(i);found=true;break
+                            }catch(_:Exception){}
+                        }
+                        check(found){"Не удалось разрешить адреса группы VLESS"}
+                    }
+                    val resolved = resolveEndpoint(sourceEndpoint, network)
                     config
                         .put("endpoint", resolved.address)
                         .put("hostname", name.ifBlank { resolved.hostname })
@@ -351,6 +402,7 @@ internal class VpnSession(
                     if (attached != null) attached.invoke(current) else current.attach(tunFD.toLong())
                     nextExitCheckAt = 0L
                     alive = true
+                    if(vlessGroup!=null)groupEvent("started")
                     reconnectRequired = false
                     lastReplyAt = now()
                     if (service == null) intervalMS = if (isVLESS) 5000 else if (isAWG) 1000 else interval
@@ -440,6 +492,7 @@ internal class VpnSession(
             event("active_network", label(kind))
             return
         }
+        if(network!=activeNetwork)vlessGroup?.resetNetwork()
         event("migration_started", "$reason → ${label(kind)}")
         if (reconnectRequired || isVLESS) {
             if (isVLESS) current.setEndpoint(resolveEndpoint(sourceEndpoint, network).address)
@@ -550,7 +603,12 @@ internal class VpnSession(
             return
         }
         if (!automatic) return
-        if (!isAWG && (client?.isConnected() != true || time - lastReplyAt > maxOf(15000, intervalMS * 4))) {
+        if(vlessGroup?.exhausted(time)==true && networks.any{(kind,n)->n!=activeNetwork && (kind!=CELLULAR || cellAllowed()) && (retryAt[n]?:0L)<=time}){
+            recover("Все серверы группы недоступны в текущей сети");return
+        }
+        vlessGroup?.retry(time)?.let{rotateVless(it)}
+        if(vlessGroup!=null && client?.isConnected()!=true){reconnectRequired=true;failedNetwork=activeNetwork;recover("Движок группы остановлен");return}
+        if (vlessGroup==null && !isAWG && (client?.isConnected() != true || time - lastReplyAt > maxOf(15000, intervalMS * 4))) {
             reconnectRequired = true
             failedNetwork = activeNetwork
             recover("Нет рабочего транспортного соединения")
@@ -568,7 +626,7 @@ internal class VpnSession(
                     retryAt.remove(it)
                 }
         }
-        if ((!isAWG || awgPingSeen) && policy.isStalled(time - lastEchoAt, smoothedRTT, intervalMS)) {
+        if (vlessGroup==null && (!isAWG || awgPingSeen) && policy.isStalled(time - lastEchoAt, smoothedRTT, intervalMS)) {
             recover("Нет ответов сервера: ${time - lastEchoAt} мс")
         } else if (failedNetwork != null) {
             recover("Текущий путь недоступен")

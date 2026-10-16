@@ -147,7 +147,7 @@ internal class MdmController(
     if(!permitted.active || permitted.cleanupPending || permitted.localGeneration!=state.localGeneration)return false
     val ids=(0 until sent.length()).map{sent.getJSONObject(it).getString("id")}.toSet()
     store.edit{j->val pending=j.optJSONArray("events")?:org.json.JSONArray();val keep=org.json.JSONArray();for(i in 0 until pending.length())if(pending.getJSONObject(i).optString("id") !in ids)keep.put(pending.getJSONObject(i));j.put("events",keep)}
-    store.edit{it.put("server_research_scope_v1",response.researchScopeSupported)}
+    store.edit{it.put("server_research_scope_v1",response.researchScopeSupported).put("server_vless_group_v1",response.vlessGroupSupported)}
     consume(permitted,response)
    }
   }

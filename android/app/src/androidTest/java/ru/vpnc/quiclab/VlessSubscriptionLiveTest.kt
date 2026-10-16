@@ -14,6 +14,81 @@ import org.junit.Test
 
 /** Opt-in live provider check. URL comes only from instrumentation arguments. */
 class VlessSubscriptionLiveTest {
+ @Test fun groupRotatesBlockedCandidate(){
+  val args=InstrumentationRegistry.getArguments()
+  assumeTrue(args.getString("subscription_group_live")=="true")
+  val c=InstrumentationRegistry.getInstrumentation().targetContext
+  assertFalse("Stop VPN before probe",LabVpnService.active)
+  val parsed=VlessSubscriptions.fetch(args.getString("subscription_url")?:error("Private URL required"))
+  val original=VpnProfiles.current(c).id
+  val groupSelection=parsed.copy(entries=parsed.entries.take(3))
+  LocalConfigurationApply.apply(c,VlessSubscriptions.prepare(c,"Liberty group test",args.getString("subscription_url")!!,groupSelection,true))
+  val count=VpnProfiles.list(c).size
+  Mobile.validateMDMConfiguration(ConfigurationTransfer.snapshot(c,true).toString())
+  LocalConfigurationApply.apply(c,VlessSubscriptions.prepare(c,"Liberty group test",args.getString("subscription_url")!!,groupSelection,true))
+  assertEquals(count,VpnProfiles.list(c).size);assertEquals(original,VpnProfiles.current(c).id)
+  println("GROUP_LIVE group_refresh_snapshot_current=PASS")
+  val blocked="vless://11111111-1111-4111-8111-111111111111@192.0.2.1:443?security=tls&type=tcp&sni=example.com"
+  val uris=org.json.JSONArray().put(blocked)
+  parsed.entries.take(3).forEach{uris.put(it.uri)}
+  val config=JSONObject().put("transport","vless").put("endpoint","192.0.2.1:443")
+   .put("vless_config",Mobile.importVLESSConfig(blocked)).put("vless_uris",uris)
+  val ready=java.util.concurrent.CountDownLatch(1)
+  val healthy=java.util.concurrent.CountDownLatch(1)
+  val switched=java.util.concurrent.atomic.AtomicBoolean(false)
+  val cm=c.getSystemService(ConnectivityManager::class.java)
+  val session=VpnSession(cm,null,config,-1,availability={_,kind,available->if(kind==VpnSession.WIFI && available)ready.countDown()},output={e->
+   if(e.optString("event")=="vless_group"){
+    println("GROUP_LIVE index=${e.optInt("index")} reason=${e.optString("reason")}")
+    if(e.optString("reason")=="switched" && e.optInt("index")>1)switched.set(true)
+    if(e.optString("reason")=="healthy" && e.optInt("index")>1)healthy.countDown()
+   }
+  },attached={})
+  try{
+   assertTrue("WiFi unavailable",ready.await(10,java.util.concurrent.TimeUnit.SECONDS))
+   session.startOrMigrate(VpnSession.WIFI,"192.0.2.1:443","","",5000)
+   assertTrue("No healthy candidate after failover",healthy.await(150,java.util.concurrent.TimeUnit.SECONDS))
+   assertTrue(switched.get())
+  }finally{session.close()}
+ }
+ @Test fun groupTunTcpUdp(){
+  val args=InstrumentationRegistry.getArguments()
+  assumeTrue(args.getString("subscription_group_tun")=="true")
+  val inst=InstrumentationRegistry.getInstrumentation();val c=inst.targetContext
+  assertFalse(LabVpnService.active);assertNull(VpnService.prepare(c))
+  val parsed=VlessSubscriptions.fetch(args.getString("subscription_url")?:error("Private URL required"))
+  val original=VpnProfiles.current(c).id;val multiple=VpnProfiles.multiple(c)
+  val before=VpnProfiles.list(c).map{it.id}.toSet()
+  fun shell(cmd:String)=inst.uiAutomation.executeShellCommand(cmd).use{ParcelFileDescriptor.AutoCloseInputStream(it).readBytes().toString(Charsets.UTF_8)}
+  fun waitFor(label:String,timeout:Long,check:()->Boolean){val end=android.os.SystemClock.elapsedRealtime()+timeout;while(android.os.SystemClock.elapsedRealtime()<end&&!check())Thread.sleep(200);assertTrue(label,check())}
+  fun probe(kind:String,host:String,port:Int){
+   val pkg="ru.vpnc.quicprobe";val id="group"+System.nanoTime()
+   try{
+    shell("am force-stop $pkg")
+    shell("am start -W -n $pkg/ru.vpnc.quicprobe.ProbeActivity --es id $id --es kind $kind --es host $host --ei port $port")
+    var text=""
+    waitFor("Companion response",25000){text=shell("run-as $pkg cat files/$id.json");text.trim().startsWith("{")}
+    val result=JSONObject(text);assertTrue("Companion traffic outside VPN",result.optBoolean("vpn"));assertTrue("Companion "+kind+" failed",result.optBoolean("ok"))
+   }finally{shell("am force-stop $pkg");shell("run-as $pkg rm -f files/$id.json")}
+  }
+  try{
+   val blocked="vless://11111111-1111-4111-8111-111111111111@192.0.2.1:443?security=tls&type=tcp&sni=example.com#Group-TUN-test"
+   VlessImport.save(c,blocked)
+   val bundle=VpnIdentity.load(c);val uris=org.json.JSONArray().put(blocked);parsed.entries.take(3).forEach{uris.put(it.uri)}
+   bundle.put("vless_uris",uris);VpnIdentity.writeBundle(c,VpnProfiles.current(c).id,bundle)
+   VpnProfiles.setMultiple(c,false)
+   VpnProfiles.preferences(c).edit().putInt("mode",1).putBoolean("global_apps",false).putStringSet("apps",setOf("ru.vpnc.quicprobe")).commit()
+   c.startActivity(android.content.Intent(c,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+   val started=System.currentTimeMillis()
+   c.startForegroundService(android.content.Intent(c,LabVpnService::class.java))
+   waitFor("Group not healthy after failover",150000){val events=VlessGroupEvents.snapshot();(0 until events.length()).any{val e=events.getJSONObject(it);e.optLong("time")>=started&&e.optString("reason")=="healthy"&&e.optInt("index")>1}}
+   probe("https","api.ipify.org",443);probe("dns","1.1.1.1",53)
+   println("GROUP_TUN rotation_https_dns=PASS")
+  }finally{
+   c.startService(android.content.Intent(c,LabVpnService::class.java).setAction("stop"));waitFor("VPN did not stop",10000){!LabVpnService.active};Thread.sleep(1000)
+   VpnProfiles.select(c,original);VpnProfiles.list(c).filter{it.id !in before}.forEach{VpnProfiles.delete(c,it.id)};VpnProfiles.setMultiple(c,multiple)
+  }
+ }
  @Test fun restoreMDMAfterProbe(){
   assumeTrue(InstrumentationRegistry.getArguments().getString("restore_mdm")=="true")
   val c=InstrumentationRegistry.getInstrumentation().targetContext

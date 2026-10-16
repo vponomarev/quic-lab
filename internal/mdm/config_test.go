@@ -83,3 +83,16 @@ func TestConfigurationReserve(t *testing.T) {
 		t.Fatal("unknown reserve")
 	}
 }
+
+func TestVLESSGroupIdentity(t *testing.T) {
+	uri := "vless://11111111-1111-4111-8111-111111111111@example.org:443?security=tls&type=tcp&sni=example.org"
+	base := strings.Replace(validDocument, `"settings":`, `"identity":{"vless_uri":"`+uri+`","vless_uris":["`+uri+`"]},"settings":`, 1)
+	if err := ValidateDocument([]byte(base)); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{strings.Replace(base, `"vless_uris":["`+uri+`"]`, `"vless_uris":[]`, 1), strings.Replace(base, `"vless_uris":["`+uri+`"]`, `"vless_uris":["invalid"]`, 1)} {
+		if ValidateDocument([]byte(bad)) == nil {
+			t.Fatal("invalid group accepted")
+		}
+	}
+}

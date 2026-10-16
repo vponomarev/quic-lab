@@ -160,6 +160,7 @@ internal object MdmConfiguration {
     val bundle=JSONObject().put("subject",p.getString("name"))
     for(k in listOf("certificate","key","awg_config"))if(identity.has(k))bundle.put(k,identity.getString(k))
     if(identity.has("vless_uri"))bundle.put("vless_config",mobile.Mobile.importVLESSConfig(identity.getString("vless_uri")))
+    identity.optJSONArray("vless_uris")?.let{uris->bundle.put("vless_uris",JSONArray(uris.toString()))}
     keys.put(id,bundle)
    }else if(!p.optBoolean("removeIdentity") && oldKeys.has(id))keys.put(id,JSONObject(oldKeys.getJSONObject(id).toString()))
   }

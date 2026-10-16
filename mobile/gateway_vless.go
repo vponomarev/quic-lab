@@ -137,7 +137,7 @@ func (g *Gateway) vlessHeartbeat(ctx context.Context, d vless.Client, id string)
 			g.emit("echo", map[string]any{"rtt_ms": float64(time.Since(started)) / float64(time.Millisecond), "connection_id": id, "probe": "https"})
 			g.emit("exit_ip", map[string]any{"ip": ip, "provider": "api.ipify.org"})
 		} else {
-			g.emit("probe_unavailable", map[string]any{"detail": "VLESS verified HTTPS tunnel probe unavailable"})
+			g.emit("probe_unavailable", map[string]any{"detail": "VLESS verified HTTPS tunnel probe unavailable", "connection_id": id})
 		}
 		g.mu.Unlock()
 		if !g.waitVLESSProbe(ctx, started) {
@@ -180,4 +180,39 @@ func (g *Gateway) vlessTCPStatus(ctx context.Context, engine vless.Client, facto
 		g.emit("vless_tcp", map[string]any{"tcp_state": factory.connectionState()})
 		g.mu.Unlock()
 	}
+}
+
+// SwitchVLESSProfile changes only the remote VLESS engine, retaining the TUN.
+// Invalid candidates never disturb the current engine; stopped gateways stay stopped.
+func (g *Gateway) SwitchVLESSProfile(raw, endpoint string, binder SocketBinder) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.cfg.Transport != "vless" || g.vless == nil || g.ctx == nil || g.ctx.Err() != nil {
+		return errors.New("VLESS gateway is not running")
+	}
+	c, err := decodeGatewayVLESS(raw, endpoint)
+	if err != nil {
+		return err
+	}
+	f, err := newVLESSSocketFactory(endpoint, binder)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	engine, err := vless.New(ctx, c, f)
+	if err != nil {
+		cancel()
+		return errors.New("VLESS candidate startup failed")
+	}
+	g.research.reset()
+	g.closeVLESSLocked()
+	g.cfg.VLESSConfig = raw
+	g.cfg.Endpoint = endpoint
+	g.ctx, g.cancel, g.vless = ctx, cancel, engine
+	g.session++
+	id := fmt.Sprintf("vless-%d", g.session)
+	g.emit("connected", map[string]any{"transport": "vless", "session": g.session, "detail": "VLESS group candidate ready; waiting for verified probe"})
+	go g.vlessHeartbeat(ctx, engine, id)
+	go g.vlessTCPStatus(ctx, engine, f)
+	return nil
 }

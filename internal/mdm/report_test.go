@@ -153,3 +153,61 @@ func TestPendingIdentitySurvivesEditorRead(t *testing.T) {
 		t.Fatal("pending credentials lost")
 	}
 }
+
+func TestVLESSGroupReportBoundsAndPermission(t *testing.T) {
+	s, b, r := reportFixture(t)
+	r.VLESSGroupEvents = []VLESSGroupEvent{{Index: 1, Count: 2, Reason: "switched", Time: testNow.UnixMilli()}}
+	if err := s.Report(b.ID, b.Epoch, r, testNow); err != nil {
+		t.Fatal(err)
+	}
+	r.Sequence++
+	r.VLESSGroupEvents[0].Index = 3
+	if err := s.Report(b.ID, b.Epoch, r, testNow); !errors.Is(err, ErrInvalid) {
+		t.Fatal(err)
+	}
+	r.VLESSGroupEvents[0].Index = 1
+	r.VLESSGroupEvents[0].Reason = "untrusted"
+	if err := s.Report(b.ID, b.Epoch, r, testNow); !errors.Is(err, ErrInvalid) {
+		t.Fatal(err)
+	}
+	r.VLESSGroupEvents[0].Reason = "healthy"
+	rights := Rights{Config: true}
+	if _, err := s.Sync(b.ID, SyncRequest{Version: 1, Epoch: b.Epoch, GrantedRights: &rights}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	r.VPNState = ""
+	if err := s.Report(b.ID, b.Epoch, r, testNow); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal(err)
+	}
+}
+
+func TestVLESSGroupRequiresCapability(t *testing.T) {
+	s, b, r := reportFixture(t)
+	if err := s.Report(b.ID, b.Epoch, r, testNow); err != nil {
+		t.Fatal(err)
+	}
+	uri := "vless://11111111-1111-4111-8111-111111111111@example.org:443?security=tls&type=tcp&sni=example.org"
+	raw := []byte(strings.Replace(validDocument, `"settings":`, `"identity":{"vless_uri":"`+uri+`","vless_uris":["`+uri+`"]},"settings":`, 1))
+	if _, err := s.SetDesired(b.ID, 0, "current", raw); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("old client accepted group", err)
+	}
+	if _, err := s.SetDesiredChecked(b.ID, 0, 3, "old", "current", raw); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("old checked client accepted group", err)
+	}
+	r.Sequence++
+	r.Capabilities = append(r.Capabilities, "vless_group_v1")
+	if err := s.Report(b.ID, b.Epoch, r, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetDesiredChecked(b.ID, 0, 3, "new", "current", raw); err != nil {
+		t.Fatal(err)
+	}
+	r.Sequence++
+	r.Capabilities = []string{"web-control-v1"}
+	if err := s.Report(b.ID, b.Epoch, r, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetDesiredChecked(b.ID, 1, 3, "downgraded", "current", []byte(validDocument)); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("inherited group sent to old client", err)
+	}
+}

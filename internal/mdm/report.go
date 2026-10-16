@@ -19,7 +19,14 @@ type ResearchScopeStatus struct {
 	Effective string `json:"effective"`
 	Reason    string `json:"reason,omitempty"`
 }
+type VLESSGroupEvent struct {
+	Index  int    `json:"index"`
+	Count  int    `json:"count"`
+	Reason string `json:"reason"`
+	Time   int64  `json:"time"`
+}
 type DeviceReport struct {
+	VLESSGroupEvents  []VLESSGroupEvent    `json:"vlessGroupEvents,omitempty"`
 	ResearchDeviceIDs []string             `json:"researchDeviceIds,omitempty"`
 	ResearchScope     *ResearchScopeStatus `json:"researchScopeStatus,omitempty"`
 	Version           int                  `json:"version"`
@@ -60,6 +67,15 @@ func supported(b bindingState) bool {
 	return false
 }
 func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) error {
+	if len(r.VLESSGroupEvents) > 32 {
+		return ErrInvalid
+	}
+	for _, e := range r.VLESSGroupEvents {
+		if e.Count < 1 || e.Count > 32 || e.Index < 1 || e.Index > e.Count || e.Time <= 0 || !oneOf(e.Reason, "started", "healthy", "probe_failed", "switched", "candidate_failed") {
+			return ErrInvalid
+		}
+	}
+
 	if len(r.ResearchDeviceIDs) > 256 {
 		return ErrInvalid
 	}
@@ -125,7 +141,7 @@ func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) er
 	if !b.Binding.Active {
 		return ErrPaused
 	}
-	if (len(r.Configuration) > 0 || r.Inventory != nil) && !b.Binding.GrantedRights.Config || r.VPNState != "" && !b.Binding.GrantedRights.VPN {
+	if (len(r.Configuration) > 0 || r.Inventory != nil) && !b.Binding.GrantedRights.Config || (r.VPNState != "" || len(r.VLESSGroupEvents) > 0) && !b.Binding.GrantedRights.VPN {
 		return ErrUnauthorized
 	}
 	if b.Desired == nil && r.AppliedRevision != 0 || b.Desired != nil && r.AppliedRevision > b.Desired.Revision {
@@ -212,7 +228,7 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	if !b.Binding.GrantedRights.Config || !supported(b) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
-	if !allowsResearchScope(b, document) {
+	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	raw, _ := json.Marshal([]any{revision, generation, mode, json.RawMessage(document)})
@@ -258,6 +274,9 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 		if ValidateDocument(document) != nil {
 			return ConfigRevision{}, ErrInvalid
 		}
+	}
+	if !allowsVLESSGroup(b, document) {
+		return ConfigRevision{}, ErrUnauthorized
 	}
 	r := ConfigRevision{Revision: revision + 1, Mode: mode, Document: append(json.RawMessage(nil), document...), ExpectedGeneration: generation}
 	now := time.Now().UTC()
@@ -350,6 +369,26 @@ func (s *Store) ResearchDirectAllowed(user, device string) bool {
 			if id == device && (!b.Binding.Active || !b.Binding.GrantedRights.Research || !b.Binding.GrantedRights.ResearchDirect) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func allowsVLESSGroup(b bindingState, raw json.RawMessage) bool {
+	var d ConfigurationDocument
+	if json.Unmarshal(raw, &d) != nil {
+		return false
+	}
+	for _, p := range d.Profiles {
+		if p.Identity != nil && p.Identity.VLESSGroup != nil {
+			if b.Report != nil {
+				for _, capability := range b.Report.Capabilities {
+					if capability == "vless_group_v1" {
+						return true
+					}
+				}
+			}
+			return false
 		}
 	}
 	return true

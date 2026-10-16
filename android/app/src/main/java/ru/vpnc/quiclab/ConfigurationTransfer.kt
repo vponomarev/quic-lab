@@ -33,6 +33,7 @@ internal object ConfigurationTransfer {
      for((a,b) in mapOf("Fingerprint" to "fp","Flow" to "flow","RealityPublicKey" to "pbk","ShortID" to "sid","SpiderX" to "spx"))v.optString(a).takeIf{it.isNotEmpty()}?.let{uri.appendQueryParameter(b,it)}
      identity.put("vless_uri",uri.build().toString())
     }
+    stored.optJSONArray("vless_uris")?.let{identity.put("vless_uris",JSONArray(it.toString())).put("vless_uri",it.getString(0))}
     if(identity.length()>0)p.put("identity",identity)
    }
   }

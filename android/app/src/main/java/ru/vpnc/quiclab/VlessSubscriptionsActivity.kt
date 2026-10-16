@@ -43,14 +43,15 @@ class VlessSubscriptionsActivity:Activity(){
    val labels=parsed.entries.map{it.name+"\n"+it.endpoint}.toTypedArray()
    val dialog=AlertDialog.Builder(this).setTitle("Выберите подключения (${parsed.entries.size})")
     .setMultiChoiceItems(labels,checked){_,i,on->checked[i]=on}
-    .setNegativeButton("Отмена",null).setPositiveButton("Продолжить",null).create()
-   dialog.setOnShowListener{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+    .setNegativeButton("Отмена",null).setNeutralButton("Группой",null).setPositiveButton("Отдельно",null).create()
+   dialog.setOnShowListener{
+   for((button,asGroup) in listOf(AlertDialog.BUTTON_POSITIVE to false,AlertDialog.BUTTON_NEUTRAL to true))dialog.getButton(button).setOnClickListener{
     val chosen=parsed.entries.filterIndexed{i,_->checked[i]}
     if(chosen.isEmpty()){Toast.makeText(this,"Выберите хотя бы одно подключение",Toast.LENGTH_SHORT).show();return@setOnClickListener}
     dialog.dismiss()
-    run("Готовим изменения…",{VlessSubscriptions.prepare(this,name,url,parsed.copy(entries=chosen))}){p->
+    run("Готовим изменения…",{VlessSubscriptions.prepare(this,name,url,parsed.copy(entries=chosen),asGroup)}){p->
      AlertDialog.Builder(this).setTitle("Изменения подписки")
-      .setMessage(p.summary+"\nИмпортируются только выбранные независимые подключения. DNS, маршрутизация и балансировка Xray не переносятся. Общий лимит — 32 подключения.\nVPN при применении может переподключиться.")
+      .setMessage(p.summary+"\nВыбранные серверы импортируются отдельными подключениями или одной группой с автоматической ротацией. DNS, маршрутизация и балансировка Xray не переносятся. Общий лимит — 32 подключения.\nVPN при применении может переподключиться.")
       .setNegativeButton("Отмена",null).setPositiveButton("Применить"){_,_->run("Применяем…",{LocalConfigurationApply.apply(this,p)}){render();status.text="Подписка обновлена"}}.show()
     }
    }}

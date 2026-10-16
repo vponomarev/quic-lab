@@ -37,7 +37,7 @@ internal data class MdmConfigRevision(val revision:Long,val mode:String,val docu
 internal data class MdmCommand(val id:String,val bindingId:String,val epoch:Long,val issuedAt:Instant,
  val expiresAt:Instant,val kind:String)
 internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRevision?,val commands:List<MdmCommand>,
- val serverTime:Instant,val telemetryEnabled:Boolean=false,val researchScopeSupported:Boolean=false) {
+ val serverTime:Instant,val telemetryEnabled:Boolean=false,val researchScopeSupported:Boolean=false,val vlessGroupSupported:Boolean=false) {
  companion object {
   fun parse(raw:String):MdmSyncResponse {
    val j=JSONObject(raw);require(j.getInt("version")==1)
@@ -50,7 +50,7 @@ internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRe
     val c=commands.getJSONObject(i);val kind=c.getString("kind");require(kind=="vpn_start"||kind=="vpn_stop")
     MdmCommand(c.getString("id"),c.getString("bindingId"),c.getLong("epoch"),
      Instant.parse(c.getString("issuedAt")),Instant.parse(c.getString("expiresAt")),kind)
-   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="research_scope_v1"}}==true)
+   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="research_scope_v1"}}==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_group_v1"}}==true)
   }
  }
 }

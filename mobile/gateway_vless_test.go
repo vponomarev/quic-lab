@@ -152,3 +152,27 @@ func TestGatewayVLESSMigrationFailureClosesGeneration(t *testing.T) {
 		t.Fatal("failed reconnect retained previous generation")
 	}
 }
+
+func TestVLESSGroupSwitchValidationAndLifecycle(t *testing.T) {
+	g := NewGateway(nil)
+	if err := g.Start(vlessGatewayJSON(t), gatewayVLESSBinder{}); err != nil {
+		t.Fatal(err)
+	}
+	defer g.Stop()
+	old := g.vless
+	if g.SwitchVLESSProfile("bad", "192.0.2.2:443", gatewayVLESSBinder{}) == nil || g.vless != old {
+		t.Fatal("invalid switch disturbed engine")
+	}
+	var cfg gatewayConfig
+	json.Unmarshal([]byte(vlessGatewayJSON(t)), &cfg)
+	if err := g.SwitchVLESSProfile(cfg.VLESSConfig, "192.0.2.2:443", gatewayVLESSBinder{}); err != nil {
+		t.Fatal(err)
+	}
+	if g.vless == old || g.cfg.Endpoint != "192.0.2.2:443" {
+		t.Fatal("no switch")
+	}
+	g.Stop()
+	if g.SwitchVLESSProfile(cfg.VLESSConfig, "192.0.2.3:443", gatewayVLESSBinder{}) == nil {
+		t.Fatal("switch resurrected stopped gateway")
+	}
+}

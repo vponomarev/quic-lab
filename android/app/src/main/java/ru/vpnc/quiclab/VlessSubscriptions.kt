@@ -127,20 +127,37 @@ internal object VlessSubscriptions {
   require(profiles.length()<=32){"Не более 32 подключений; состав подписки не применён"}
   return result
  }
+ fun mergeGroup(before:JSONObject,group:String,name:String,parsed:Parsed):JSONObject {
+  require(parsed.entries.size in 1..32){"Выберите от 1 до 32 серверов группы"}
+  val result=JSONObject(before.toString());val profiles=result.getJSONArray("profiles")
+  val id=UUID.nameUUIDFromBytes(("vless-group:"+group).toByteArray()).toString()
+  val old=(0 until profiles.length()).map{profiles.getJSONObject(it)}.firstOrNull{it.getString("id")==id}
+  val p=old?:JSONObject().put("id",id).put("name",("VLESS · "+name+" · группа").take(100))
+   .put("settings",JSONObject().put("transport","vless").put("dns","1.1.1.1").put("routes","0.0.0.0/0").put("mode",0).put("global_apps",true).put("demux_enabled",false))
+  p.getJSONObject("settings").put("endpoint",parsed.entries.first().endpoint).put("vless_endpoint",parsed.entries.first().endpoint)
+  val previous=old?.optJSONObject("identity")?.optJSONArray("vless_uris")
+  val retained=if(previous==null)emptyList()else (0 until previous.length()).map{previous.getString(it)}.filter{raw->parse(raw.toByteArray()).entries.single().key !in parsed.availableKeys}
+  val members=parsed.entries.map{it.uri}+retained
+  require(members.size<=32){"Не более 32 серверов, включая временно отсутствующие"}
+  p.put("identity",JSONObject().put("vless_uri",members.first()).put("vless_uris",JSONArray(members)))
+  if(old==null)profiles.put(p)
+  require(profiles.length()<=32)
+  return result
+ }
  fun selected(c:Context,rawURL:String):Set<String> {
   val group=UUID.nameUUIDFromBytes(rawURL.toByteArray()).toString()
   val keys=list(c).optJSONObject(group)?.optJSONArray("selected")?:return emptySet()
   return (0 until keys.length()).map{keys.getString(it)}.toSet()
  }
  fun list(c:Context):JSONObject=MdmConfigurationStore(c).runtime()?.optJSONObject("subscriptions")?:JSONObject()
- fun prepare(c:Context,name:String,rawURL:String,parsed:Parsed):TransferPreview=synchronized(MdmConfiguration.lock){
+ fun prepare(c:Context,name:String,rawURL:String,parsed:Parsed,asGroup:Boolean=false):TransferPreview=synchronized(MdmConfiguration.lock){
   MdmConfiguration.assertEditable(c);require(name.isNotBlank()&&name.length<=100);url(rawURL)
   val group=UUID.nameUUIDFromBytes(rawURL.toByteArray()).toString()
-  val before=ConfigurationTransfer.snapshot(c,true).toString();val candidate=merge(JSONObject(before),group,parsed)
+  val before=ConfigurationTransfer.snapshot(c,true).toString();val candidate=if(asGroup)mergeGroup(JSONObject(before),group,name,parsed)else merge(JSONObject(before),group,parsed)
   Mobile.validateMDMConfiguration(candidate.toString())
-  val meta=JSONObject(list(c).toString()).put(group,JSONObject().put("name",name).put("url",rawURL).put("updatedAt",System.currentTimeMillis()).put("selected",JSONArray(retainedSelection(selected(c,rawURL),parsed).toList())))
+  val meta=JSONObject(list(c).toString()).put(group,JSONObject().put("name",name).put("url",rawURL).put("asGroup",asGroup).put("updatedAt",System.currentTimeMillis()).put("selected",JSONArray(retainedSelection(selected(c,rawURL),parsed).toList())))
   val added=candidate.getJSONArray("profiles").length()-JSONObject(before).getJSONArray("profiles").length()
   TransferPreview(candidate.toString(),before,MdmConfiguration.token(c),listOf("Подписка"),emptyList(),
-   "Добавлено: $added; обновлено: ${parsed.entries.size-added}; пропущено неподдерживаемых: ${parsed.skipped}.\n"+parsed.entries.joinToString("\n"){it.name}+"\nОтсутствующие в ответе подключения сохраняются. Локальные правила и выбранное подключение сохраняются.",subscriptions=meta.toString())
+   "${if(asGroup) "Единая группа: ${parsed.entries.size} серверов. " else ""}Добавлено: $added; обновлено: ${(if(asGroup)1 else parsed.entries.size)-added}; пропущено неподдерживаемых: ${parsed.skipped}.\n"+parsed.entries.joinToString("\n"){it.name}+"\nОтсутствующие в ответе подключения сохраняются. Локальные правила и выбранное подключение сохраняются.",subscriptions=meta.toString())
  }
 }

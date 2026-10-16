@@ -26,6 +26,30 @@ class VlessSubscriptionsTest {
   assertEquals(1,b.getJSONArray("profiles").length());assertEquals(profile.getString("id"),b.getJSONArray("profiles").getJSONObject(0).getString("id"))
   assertEquals(1,b.getJSONArray("profiles").getJSONObject(0).getJSONObject("settings").getInt("mode"));assertEquals("default",b.getString("currentProfileId"))
  }
+ @Test fun groupRefreshPreservesIdentityAndRouting(){
+  val doc=JSONObject("""{"profiles":[],"currentProfileId":"default"}""")
+  val parsed=VlessSubscriptions.parse((uri+"\n"+uri.replace("vpn.example.org","second.example.org")).toByteArray())
+  val a=VlessSubscriptions.mergeGroup(doc,"group","Fixture",parsed)
+  val profile=a.getJSONArray("profiles").getJSONObject(0)
+  profile.getJSONObject("settings").put("mode",1).put("apps",org.json.JSONArray().put("org.telegram.messenger"))
+  assertEquals(2,profile.getJSONObject("identity").getJSONArray("vless_uris").length())
+  val b=VlessSubscriptions.mergeGroup(a,"group","Fixture",parsed.copy(entries=parsed.entries.reversed()))
+  val updated=b.getJSONArray("profiles").getJSONObject(0)
+  assertEquals(1,b.getJSONArray("profiles").length());assertEquals(profile.getString("id"),updated.getString("id"))
+  assertEquals(1,updated.getJSONObject("settings").getInt("mode"));assertEquals("default",b.getString("currentProfileId"))
+  assertEquals(parsed.entries.last().uri,updated.getJSONObject("identity").getString("vless_uri"))
+ }
+ @Test fun groupKeepsTemporarilyMissingSelectedMember(){
+  val full=VlessSubscriptions.parse((uri+"\n"+uri.replace("vpn.example.org","second.example.org")).toByteArray())
+  val a=VlessSubscriptions.mergeGroup(JSONObject("""{"profiles":[],"currentProfileId":"default"}"""),"g","Group",full)
+  val missing=VlessSubscriptions.parse(uri.toByteArray())
+  val b=VlessSubscriptions.mergeGroup(a,"g","Group",missing)
+  assertEquals(2,b.getJSONArray("profiles").getJSONObject(0).getJSONObject("identity").getJSONArray("vless_uris").length())
+  val c=VlessSubscriptions.mergeGroup(b,"g","Group",full)
+  assertEquals(2,c.getJSONArray("profiles").getJSONObject(0).getJSONObject("identity").getJSONArray("vless_uris").length())
+  val deselected=VlessSubscriptions.mergeGroup(c,"g","Group",full.copy(entries=full.entries.take(1)))
+  assertEquals(1,deselected.getJSONArray("profiles").getJSONObject(0).getJSONObject("identity").getJSONArray("vless_uris").length())
+ }
  @Test fun mixedProtocols(){val p=VlessSubscriptions.parse(("trojan://unsupported@example.org:443\n"+uri).toByteArray());assertEquals(1,p.entries.size);assertEquals(1,p.skipped)}
  @Test fun xrayArrayAndEmptyTCPSettings(){
   val outbound=JSONObject("""{"protocol":"vless","tag":"proxy","settings":{"vnext":[{"address":"vpn.example.org","port":443,"users":[{"id":"11111111-1111-4111-8111-111111111111","encryption":"none"}]}]},"streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"serverName":"vpn.example.org"},"tcpSettings":{}}}""")

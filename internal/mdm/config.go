@@ -46,10 +46,11 @@ type ConfigurationProfile struct {
 	RemoveIdentity bool                   `json:"removeIdentity,omitempty"`
 }
 type ConfigurationIdentity struct {
-	Certificate string `json:"certificate,omitempty"`
-	Key         string `json:"key,omitempty"`
-	AWG         string `json:"awg_config,omitempty"`
-	VLESS       string `json:"vless_uri,omitempty"`
+	Certificate string   `json:"certificate,omitempty"`
+	Key         string   `json:"key,omitempty"`
+	AWG         string   `json:"awg_config,omitempty"`
+	VLESS       string   `json:"vless_uri,omitempty"`
+	VLESSGroup  []string `json:"vless_uris,omitempty"`
 }
 type ConfigurationDNS struct {
 	Mode      string `json:"mode"`
@@ -169,6 +170,21 @@ func ValidateDocument(raw json.RawMessage) error {
 			if i.AWG != "" {
 				if _, e := awg.Parse(i.AWG); e != nil {
 					return ErrInvalid
+				}
+			}
+			if i.VLESSGroup != nil {
+				if len(i.VLESSGroup) < 1 || len(i.VLESSGroup) > 32 || i.VLESS != i.VLESSGroup[0] {
+					return ErrInvalid
+				}
+				seen := map[string]bool{}
+				for _, uri := range i.VLESSGroup {
+					if seen[uri] || !strings.HasPrefix(uri, "vless://") {
+						return ErrInvalid
+					}
+					seen[uri] = true
+					if _, err := vless.ParseImport(uri); err != nil {
+						return ErrInvalid
+					}
 				}
 			}
 			if i.VLESS != "" {
