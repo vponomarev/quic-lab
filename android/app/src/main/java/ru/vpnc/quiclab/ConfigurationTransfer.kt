@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import mobile.Mobile
 
-internal data class TransferPreview(val candidate:String,val before:String,val token:Pair<Long,Long>,val sections:List<String>,val missing:List<String>,val summary:String,val rollbackRuntime:String?=null,val missingApps:List<String> = emptyList())
+internal data class TransferPreview(val candidate:String,val before:String,val token:Pair<Long,Long>,val sections:List<String>,val missing:List<String>,val summary:String,val rollbackRuntime:String?=null,val missingApps:List<String> = emptyList(),val subscriptions:String?=null)
 internal object ConfigurationTransfer {
  fun decode(bytes:ByteArray,password:String):String {
   require(bytes.size<=2*1024*1024){"Файл слишком большой"}

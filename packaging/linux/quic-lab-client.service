@@ -1,0 +1,20 @@
+[Unit]
+Description=QUIC Lab Linux client preview
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/quic-lab-client -config /etc/quic-lab/client.json
+Restart=on-failure
+RestartSec=10
+User=root
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+PrivateTmp=true
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+{
+  "transport": "quic",
+  "endpoint": "192.0.2.10:443",
+  "hostname": "vpn.example.org",
+  "certificate": "PASTE CLIENT CERTIFICATE PEM",
+  "key": "PASTE CLIENT PRIVATE KEY PEM",
+  "ca": "PASTE SERVER CA PEM",
+  "targets": [
+    "1.1.1.0/30"
+  ]
+}

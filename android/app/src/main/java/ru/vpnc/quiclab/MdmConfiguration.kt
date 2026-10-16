@@ -114,7 +114,7 @@ internal object MdmConfiguration {
    prefs.put(name,encode(values(c,name)))
    if(VpnIdentity.exists(c,p.id))identities.put(p.id,VpnIdentity.load(c,p.id))
   }
-  return JSONObject().put("preferences",prefs).put("identities",identities).put("serverOverlay",true)
+  return JSONObject().put("preferences",prefs).put("identities",identities).put("serverOverlay",true).also{r->store(c).runtime()?.optJSONObject("subscriptions")?.let{r.put("subscriptions",it)}}
  }
  /** The caller must stop the VPN first. Live transition orchestration is separate. */
  fun apply(c:Context,desired:MdmConfigRevision,generation:Long):Boolean=synchronized(lock){
@@ -169,7 +169,7 @@ internal object MdmConfiguration {
    .put("global_apps",doc.getJSONArray("globalApps")).put("dns_mode",dns.getString("mode")).put("multiple_dns",dns.getString("profileId")))
   prefs.put("vpn_budget",JSONObject().put("limit_bytes",doc.getJSONObject("budget").getLong("limitBytes")).put("cell_mib",doc.getJSONObject("budget").getLong("limitBytes")/(1024*1024)))
   prefs.put("diagnostics_settings",JSONObject(doc.getJSONObject("diagnostics").toString()))
-  return JSONObject().put("preferences",prefs).put("identities",keys).put("serverOverlay",false)
+  return JSONObject().put("preferences",prefs).put("identities",keys).put("serverOverlay",false).also{r->previous.optJSONObject("subscriptions")?.let{r.put("subscriptions",it)}}
  }
  fun detach(c:Context)=synchronized(lock){
   if(!hasLayer(c))return@synchronized

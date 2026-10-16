@@ -15,6 +15,7 @@ internal object LocalConfigurationApply {
    check(ConfigurationTransfer.missingApplications(c,doc).isEmpty()){"Установите отсутствующие приложения или исправьте конфиг перед применением"}
    val previous=MdmConfiguration.snapshotRuntime(c)
    val runtime=p.rollbackRuntime?.let{JSONObject(it)}?:MdmConfiguration.compile(doc,previous)
+   p.subscriptions?.let{runtime.put("subscriptions",JSONObject(it))}
    // Explicitly matched profiles retain private update/diagnostic metadata.
    val beforeProfiles=JSONObject(p.before).getJSONArray("profiles")
    val before=(0 until beforeProfiles.length()).associate{beforeProfiles.getJSONObject(it).let{it.getString("id") to it}}

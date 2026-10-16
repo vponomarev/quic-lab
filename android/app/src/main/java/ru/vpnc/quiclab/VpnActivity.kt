@@ -74,6 +74,7 @@ class VpnActivity:Activity() {
  }
  private fun connections(){
   ui.add(content,ui.button("Добавить подключение",true){addConnection()})
+  ui.add(content,ui.button("Подписки VLESS"){startActivity(Intent(this,VlessSubscriptionsActivity::class.java))})
   ui.add(content,ui.button("Одновременные подключения"){startActivity(Intent(this,MultipleVpnActivity::class.java))})
   content.addView(ui.text("Откройте профиль для просмотра. Для запуска выберите его отдельной кнопкой."))
   val selected=VpnProfiles.current(this).id
