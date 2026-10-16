@@ -25,6 +25,18 @@ internal object MdmConfiguration {
   check(!s.cleanupPending && !(s.active && s.rights.config)){"Настройками управляет MDM. Приостановите управление для редактирования."}
   if(expected!=null)check(expected==token(c)){"Настройки изменились. Откройте редактор заново."}
  }
+ private fun selectionGranted(c:Context,id:String):Boolean {
+  val s=state(c);val binding=s.binding?:return false
+  return !s.cleanupPending && store(c).revision(binding.id)>0 && MdmProfileSelection.allows(store(c).runtime(),id)
+ }
+ fun canSelectProfile(c:Context,id:String)=synchronized(lock){!managed(c) || selectionGranted(c,id)}
+ internal fun selectProfile(c:Context,id:String):Boolean=synchronized(lock){
+  if(!managed(c))return@synchronized false
+  check(selectionGranted(c,id)){"MDM не разрешает выбор этого подключения"}
+  store(c).selectManagedProfile(id)
+  ConfigurationPreferences.notify(c,"vpn_profiles",setOf("current"))
+  true
+ }
  fun preferences(c:Context,name:String):SharedPreferences=ConfigurationPreferences(c,name)
  internal fun values(c:Context,name:String):Map<String,*> {
   val r=store(c).runtime()?:return c.getSharedPreferences(name,0).all
@@ -102,7 +114,7 @@ internal object MdmConfiguration {
    .put("reserve",JSONObject().also{r->val p=VpnReserveSettings.preferences(c);for(k in listOf("wifi_on","wifi_off","cell_on","cell_off","metered_wifi"))r.put(k,p.getBoolean(k,k.startsWith("wifi_")))})
    .put("budget",JSONObject().put("limitBytes",VpnBudgetSettings.limitBytes(c)))
    .put("diagnostics",JSONObject().put("enabled",DiagnosticsPolicy.enabled(c)).put("detailed",DiagnosticsPolicy.detailed(c)))
-   .also{doc->val scope=MdmStore(c).read().researchScope;if(scope.mode!="vpn_only" || scope.packages.isNotEmpty())doc.put("researchScope",scope.json())}
+   .also{doc->store(c).runtime()?.optJSONObject("profileSelection")?.let{doc.put("profileSelection",JSONObject(it.toString()))};val scope=MdmStore(c).read().researchScope;if(scope.mode!="vpn_only" || scope.packages.isNotEmpty())doc.put("researchScope",scope.json())}
  }
  internal fun snapshotRuntime(c:Context):JSONObject {
   val prefs=JSONObject();val identities=JSONObject()
@@ -170,7 +182,7 @@ internal object MdmConfiguration {
    .put("global_apps",doc.getJSONArray("globalApps")).put("dns_mode",dns.getString("mode")).put("multiple_dns",dns.getString("profileId")))
   prefs.put("vpn_budget",JSONObject().put("limit_bytes",doc.getJSONObject("budget").getLong("limitBytes")).put("cell_mib",doc.getJSONObject("budget").getLong("limitBytes")/(1024*1024)))
   prefs.put("diagnostics_settings",JSONObject(doc.getJSONObject("diagnostics").toString()))
-  return JSONObject().put("preferences",prefs).put("identities",keys).put("serverOverlay",false).also{r->previous.optJSONObject("subscriptions")?.let{r.put("subscriptions",it)}}
+  return JSONObject().put("preferences",prefs).put("identities",keys).put("serverOverlay",false).also{r->MdmProfileSelection.carry(doc,previous,r);previous.optJSONObject("subscriptions")?.let{r.put("subscriptions",it)}}
  }
  fun detach(c:Context)=synchronized(lock){
   if(!hasLayer(c))return@synchronized

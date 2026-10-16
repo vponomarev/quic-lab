@@ -187,7 +187,7 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 		}
 	}
 	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1"}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
-	if b.Desired != nil && b.Desired.Revision > req.AppliedRevision {
+	if b.Desired != nil && b.Desired.Revision > req.AppliedRevision && allowsProfileSelection(b, b.Desired.Document) {
 		r := *b.Desired
 		r.Document = append(json.RawMessage(nil), r.Document...)
 		out.DesiredConfig = &r

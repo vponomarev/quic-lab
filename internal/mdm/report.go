@@ -393,3 +393,21 @@ func allowsVLESSGroup(b bindingState, raw json.RawMessage) bool {
 	}
 	return true
 }
+
+func allowsProfileSelection(b bindingState, raw json.RawMessage) bool {
+	var d ConfigurationDocument
+	if json.Unmarshal(raw, &d) != nil {
+		return false
+	}
+	if d.ProfileSelection == nil {
+		return true
+	}
+	if b.Report != nil {
+		for _, capability := range b.Report.Capabilities {
+			if capability == "profile_selection_v1" {
+				return true
+			}
+		}
+	}
+	return false
+}

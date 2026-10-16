@@ -14,8 +14,17 @@ function renderConfig(){const host=$('#configuration');host.replaceChildren();if
 const layout=el('div');layout.className='config-layout';host.append(layout);function panel(title,kind){const box=el('section');box.className='config-panel '+kind;box.append(el('h2',title));layout.append(box);return box;}const main=panel('Подключение и DNS','main'),network=panel('Сети и LTE','network'),analysis=panel('Диагностика и анализ','analysis');
 if(!temporary)field(main,'Режим конфигурации',mode,v=>mode=v,'text',[['current','Текущая — сохранить изменения после отключения MDM'],['external','Внешняя — вернуть личные настройки после отключения MDM']]);
 const grid=el('div');grid.className='grid';main.append(grid);const profiles=doc.profiles.map(p=>[p.id,p.name]);
-field(grid,'Основное подключение',doc.currentProfileId,v=>doc.currentProfileId=v,'text',profiles);
+field(grid,'Основное подключение',doc.currentProfileId,v=>{doc.currentProfileId=v;if(doc.profileSelection)doc.profileSelection.serverRevision=(doc.profileSelection.serverRevision||0)+1;},'text',profiles);
 field(grid,'Несколько выходов',doc.multiple,v=>doc.multiple=v,'checkbox');
+if(!temporary && state?.report?.capabilities?.includes('profile_selection_v1')){
+ const section=el('fieldset');section.append(el('legend','Выбор подключения на телефоне'));main.append(section);
+ const policy=doc.profileSelection||{enabled:false,profileIds:doc.profiles.map(p=>p.id),serverRevision:0};
+ field(section,'Разрешить пользователю выбирать подключение',policy.enabled,v=>{doc.profileSelection=policy;policy.enabled=v;if(v)doc.multiple=false;renderConfig();},'checkbox');
+ if(policy.enabled)for(const p of doc.profiles)field(section,p.name,policy.profileIds.includes(p.id),on=>{policy.profileIds=policy.profileIds.filter(id=>id!==p.id);if(on)policy.profileIds.push(p.id);doc.profileSelection=policy;},'checkbox');
+ const force=el('button','Применить основной профиль с сервера');force.onclick=()=>{doc.profileSelection=policy;policy.serverRevision=(policy.serverRevision||0)+1;changed();};section.append(force);
+ section.append(el('p','Выбор доступен при одном активном подключении. Изменение настроек профилей остаётся под управлением MDM.'));
+}
+
 field(grid,'DNS',doc.dns.mode,v=>doc.dns.mode=v,'text',[['system','Системный'],['tunnel','Через туннель']]);
 field(grid,'Выход для DNS',doc.dns.profileId,v=>doc.dns.profileId=v,'text',profiles);
 field(network,'Общий лимит LTE, МиБ (0 — без лимита)',doc.budget.limitBytes/1048576,v=>doc.budget.limitBytes=Math.round(v*1048576),'number');
@@ -47,7 +56,7 @@ const advanced=el('details');advanced.append(el('summary','Пулы и пров�
 for(const transport of ['quic','https']){field(advancedFields,transport.toUpperCase()+' — режим',s[transport+'_mode']||'auto',v=>s[transport+'_mode']=v,'text',[['auto','Автоматически'],['reserve','Только резерв'],['disabled','Не использовать']]);field(advancedFields,transport.toUpperCase()+' — размер пула',s[transport+'_pool_size']||1,v=>s[transport+'_pool_size']=v,'number');field(advancedFields,transport.toUpperCase()+' — проверять резерв',s[transport+'_check_reserve']||false,v=>s[transport+'_check_reserve']=v,'checkbox');}
 const keys=el('details');keys.append(el('summary','Заменить данные доступа'));keys.append(el('p','Пустые поля сохраняют существующие ключи. Вставьте новые данные только для явной замены.'));box.append(keys);
 for(const[k,label]of Object.entries({vless_uri:'VLESS ссылка',awg_config:'AWG конфигурация',certificate:'Клиентский сертификат PEM',key:'Закрытый ключ PEM'})){const l=el('label',label),t=el('textarea');t.autocomplete='off';t.value=p.identity?.[k]||'';t.onchange=()=>{p.identity=p.identity||{};if(t.value.trim())p.identity[k]=t.value.trim();else delete p.identity[k];if(!Object.keys(p.identity).length)delete p.identity;changed();};l.append(t);keys.append(l);}
-const remove=el('button','Удалить подключение');remove.className='danger';remove.onclick=()=>{if(doc.profiles.length===1){message('Нужно сохранить хотя бы одно подключение.',true);return;}if(!confirm('Удалить подключение '+p.name+'?'))return;doc.profiles=doc.profiles.filter(x=>x.id!==p.id);doc.enabledProfileIds=doc.enabledProfileIds.filter(x=>x!==p.id);if(doc.currentProfileId===p.id)doc.currentProfileId=doc.profiles[0].id;if(doc.dns.profileId===p.id)doc.dns.profileId=doc.currentProfileId;changed();renderConfig();renderApps();};box.append(remove);
+const remove=el('button','Удалить подключение');remove.className='danger';remove.onclick=()=>{if(doc.profiles.length===1){message('Нужно сохранить хотя бы одно подключение.',true);return;}if(!confirm('Удалить подключение '+p.name+'?'))return;doc.profiles=doc.profiles.filter(x=>x.id!==p.id);if(doc.profileSelection)doc.profileSelection.profileIds=doc.profileSelection.profileIds.filter(id=>id!==p.id);doc.enabledProfileIds=doc.enabledProfileIds.filter(x=>x!==p.id);if(doc.currentProfileId===p.id)doc.currentProfileId=doc.profiles[0].id;if(doc.dns.profileId===p.id)doc.dns.profileId=doc.currentProfileId;changed();renderConfig();renderApps();};box.append(remove);
 }
 const add=el('button','Добавить подключение');add.onclick=()=>{if(doc.profiles.length>=32){message('Максимум 32 подключения.',true);return;}doc.profiles.push({id:uuid(),name:'Новое подключение',settings:{transport:'quic',mode:0}});changed();renderConfig();renderApps();};host.append(add);
 }

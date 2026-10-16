@@ -21,17 +21,23 @@ import (
 // ConfigurationDocument is a complete desired application configuration, not a
 // map of SharedPreferences or Android permissions. Credentials are never logged.
 type ConfigurationDocument struct {
-	ResearchScope     *ConfigurationResearchScope `json:"researchScope,omitempty"`
-	Reserve           map[string]bool             `json:"reserve,omitempty"`
-	Schema            int                         `json:"schema"`
-	Profiles          []ConfigurationProfile      `json:"profiles"`
-	CurrentProfileID  string                      `json:"currentProfileId"`
-	EnabledProfileIDs []string                    `json:"enabledProfileIds"`
-	Multiple          bool                        `json:"multiple"`
-	GlobalApps        []string                    `json:"globalApps"`
-	DNS               ConfigurationDNS            `json:"dns"`
-	Budget            ConfigurationBudget         `json:"budget"`
-	Diagnostics       ConfigurationDiagnostics    `json:"diagnostics"`
+	ProfileSelection  *ConfigurationProfileSelection `json:"profileSelection,omitempty"`
+	ResearchScope     *ConfigurationResearchScope    `json:"researchScope,omitempty"`
+	Reserve           map[string]bool                `json:"reserve,omitempty"`
+	Schema            int                            `json:"schema"`
+	Profiles          []ConfigurationProfile         `json:"profiles"`
+	CurrentProfileID  string                         `json:"currentProfileId"`
+	EnabledProfileIDs []string                       `json:"enabledProfileIds"`
+	Multiple          bool                           `json:"multiple"`
+	GlobalApps        []string                       `json:"globalApps"`
+	DNS               ConfigurationDNS               `json:"dns"`
+	Budget            ConfigurationBudget            `json:"budget"`
+	Diagnostics       ConfigurationDiagnostics       `json:"diagnostics"`
+}
+type ConfigurationProfileSelection struct {
+	Enabled        bool     `json:"enabled"`
+	ProfileIDs     []string `json:"profileIds"`
+	ServerRevision int64    `json:"serverRevision"`
 }
 type ConfigurationResearchScope struct {
 	Mode     string   `json:"mode"`
@@ -195,6 +201,18 @@ func ValidateDocument(raw json.RawMessage) error {
 					return ErrInvalid
 				}
 			}
+		}
+	}
+	if policy := d.ProfileSelection; policy != nil {
+		if policy.ServerRevision < 0 || policy.ServerRevision > 9007199254740991 || len(policy.ProfileIDs) > 32 || policy.Enabled && (d.Multiple || len(policy.ProfileIDs) == 0) {
+			return ErrInvalid
+		}
+		seen := map[string]bool{}
+		for _, id := range policy.ProfileIDs {
+			if !ids[id] || seen[id] {
+				return ErrInvalid
+			}
+			seen[id] = true
 		}
 	}
 	if !ids[d.CurrentProfileID] || !ids[d.DNS.ProfileID] || !oneOf(d.DNS.Mode, "system", "tunnel") || d.Budget.LimitBytes < 0 {

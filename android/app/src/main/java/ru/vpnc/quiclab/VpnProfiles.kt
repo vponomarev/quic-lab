@@ -43,7 +43,7 @@ internal object VpnProfiles {
         check(preferences(c,p.id).edit().putBoolean("global_apps",true).commit())
         write(c,profiles+p,p.id);return p
     } }
-    fun select(c:Context,id:String){ return synchronized(MdmConfiguration.lock) {editable();require(list(c).any{it.id==id});check(meta(c).edit().putString("current",id).commit())} }
+    fun select(c:Context,id:String){ return synchronized(MdmConfiguration.lock) {editable();require(list(c).any{it.id==id});if(!MdmConfiguration.selectProfile(c,id))check(meta(c).edit().putString("current",id).commit())} }
     fun rename(c:Context,title:String,id:String=current(c).id){ return synchronized(MdmConfiguration.lock) {editable();require(list(c).any{it.id==id});val n=name(title);write(c,list(c).map{if(it.id==id)it.copy(name=n)else it},current(c).id)} }
     fun delete(c:Context,id:String=current(c).id){ return synchronized(MdmConfiguration.lock) {
         editable();val profiles=list(c);require(profiles.size>1){"Нельзя удалить последний профиль"}
