@@ -35,3 +35,10 @@ After tests the previous AmneziaWG profile was selected and its VPN foreground s
 User power-cycled the VM. SSH and Web UI recovered; all four services active and no failed systemd units. Deployed exact commit 9a96840 server build with BuildVersion 0.9.5-pre.3 and the tested APK (68). Previous main binary, APK and both capability configurations saved in root-only /opt/quic-lab/rollback/vless-group-pre3-20261017. Only the main service was restarted. Public APK download SHA256 matches the value above; both admin/server capability configurations advertise version 68. Served MDM editor contains group events support.
 
 Note12 still reported 0.9.4 with no vless_group_v1 capability at deployment. Its MDM profile has NOT been changed. Remaining action: user updates through the app and enables MDM; after a fresh capable report, create the second group preserving the newly reported current settings. No remote start command sent.
+
+
+## Note12 MDM delivery — 2026-10-17 (Moscow)
+
+After user updated and enabled MDM, fresh device report advertised 0.9.5-pre.3 and vless_group_v1. Fetched the private subscription in memory and validated candidates with the same Go VLESS parser; 25 supported unique candidates, 15 unsupported skipped. Posted a checked MDM update through authenticated Web API with CSRF, revision/generation preconditions. Added Liberty group as a second profile, retaining original primary, full original profile and global application list; no VPN-start command issued.
+
+Device acknowledged appliedRevision 5 at 2026-10-16T21:44:52.619839003Z and reported both profiles. Primary and global app list verified unchanged. VPN reported stopped. Group is available for user selection; real failover under Note12's blocking conditions has not yet been observed. Private preparation snapshot retained root-only on server; no subscription credentials included in repository.
