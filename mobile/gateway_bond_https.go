@@ -11,6 +11,7 @@ import (
 	"quiclab/internal/bond"
 	"quiclab/internal/bondhttps"
 	"quiclab/internal/gateway"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -27,15 +28,37 @@ func (g *Gateway) addBondHTTPS(ctx context.Context, endpoint string, info bond.P
 			return e
 		}
 	}
-	tc := g.tls.Clone()
-	tc.NextProtos = []string{"http/1.1"}
-	tr := &http.Transport{TLSClientConfig: tc, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		c, e := dialer.DialContext(ctx, "tcp4", endpoint)
+	return g.addBondHTTPSWithDial(ctx, endpoint, info, binder, create, func(ctx context.Context, network, address string) (net.Conn, error) {
+		c, e := dialer.DialContext(ctx, "tcp4", address)
 		if e != nil {
 			return nil, e
 		}
 		return meterBoundConn(c, binder), nil
-	}}
+	}, nil)
+}
+
+type bondStreamDialer = func(context.Context, string, string) (net.Conn, error)
+
+// Ownership of cleanup transfers to the path only after successful admission.
+func (g *Gateway) addBondHTTPSWithDial(ctx context.Context, endpoint string, info bond.PathInfo, binder SocketBinder, create bool, dial bondStreamDialer, cleanup func()) error {
+	var once sync.Once
+	closeUnderlay := func() {
+		once.Do(func() {
+			if cleanup != nil {
+				cleanup()
+			}
+		})
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			closeUnderlay()
+		}
+	}()
+	tc := g.tls.Clone()
+	tc.NextProtos = []string{"http/1.1"}
+	tr := &http.Transport{TLSClientConfig: tc, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, "tcp4", endpoint) }}
+	closePath := func() { tr.CloseIdleConnections(); closeUnderlay() }
 	_, port, e := net.SplitHostPort(endpoint)
 	if e != nil {
 		return e
@@ -84,7 +107,7 @@ func (g *Gateway) addBondHTTPS(ctx context.Context, endpoint string, info bond.P
 		}
 		g.bondToken = reply.Token
 	}
-	path := bondhttps.NewPath(c, tr.CloseIdleConnections)
+	path := bondhttps.NewPath(c, closePath)
 	if e = g.bond.Session.AddNamedPath(info, path); e != nil {
 		path.Close()
 		return e
@@ -93,5 +116,6 @@ func (g *Gateway) addBondHTTPS(ctx context.Context, endpoint string, info bond.P
 		g.bondBinders = map[string]SocketBinder{}
 	}
 	g.bondBinders[info.ID] = binder
+	admitted = true
 	return nil
 }

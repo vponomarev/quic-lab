@@ -32,6 +32,27 @@ func (c gatewayConfig) tlsNames() (string, string, error) {
 
 // Fetch public control metadata before attempting any authenticated data session.
 func (g *Gateway) checkCapabilities(binder SocketBinder) error {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	if binder != nil {
+		dialer.Control = func(_, _ string, raw syscall.RawConn) error {
+			var bindErr error
+			err := raw.Control(func(fd uintptr) { bindErr = binder.Bind(int64(fd)) })
+			if err != nil {
+				return err
+			}
+			return bindErr
+		}
+	}
+	return g.checkCapabilitiesWithDial(func(ctx context.Context, network, address string) (net.Conn, error) {
+		c, err := dialer.DialContext(ctx, "tcp4", address)
+		if err != nil {
+			return nil, err
+		}
+		return meterBoundConn(c, binder), nil
+	})
+}
+
+func (g *Gateway) checkCapabilitiesWithDial(dial bondStreamDialer) error {
 	if g.cfg.ControlURL == "" {
 		return nil
 	} // Legacy profiles predate the control plane.
@@ -45,17 +66,6 @@ func (g *Gateway) checkCapabilities(binder SocketBinder) error {
 	}
 	ctx, cancel := context.WithTimeout(root, 5*time.Second)
 	defer cancel()
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	if binder != nil {
-		dialer.Control = func(_, _ string, raw syscall.RawConn) error {
-			var bindErr error
-			err := raw.Control(func(fd uintptr) { bindErr = binder.Bind(int64(fd)) })
-			if err != nil {
-				return err
-			}
-			return bindErr
-		}
-	}
 	roots, err := x509.SystemCertPool()
 	if err != nil {
 		roots = x509.NewCertPool()
@@ -65,13 +75,7 @@ func (g *Gateway) checkCapabilities(binder SocketBinder) error {
 	}
 	// Control uses ordinary URL-host PKI, independent of the VPN SNI/identity.
 	tc := &tls.Config{ServerName: u.Hostname(), RootCAs: roots, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}
-	tr := &http.Transport{TLSClientConfig: tc, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		c, err := dialer.DialContext(ctx, "tcp4", address)
-		if err != nil {
-			return nil, err
-		}
-		return meterBoundConn(c, binder), nil
-	}}
+	tr := &http.Transport{TLSClientConfig: tc, DialContext: func(ctx context.Context, _, address string) (net.Conn, error) { return dial(ctx, "tcp4", address) }}
 	defer tr.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
