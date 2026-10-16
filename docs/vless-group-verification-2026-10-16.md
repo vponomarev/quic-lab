@@ -28,3 +28,10 @@ Local APK: artifacts/quic-lab-0.9.5-pre.3.apk.
 SHA256: 3dcdd293ce021573c51b5ae112a09a4ba404951e28f1a940e841f0d26e978799.
 
 After tests the previous AmneziaWG profile was selected and its VPN foreground service restarted. Successful connection to the unavailable production server is not claimed. Note9 MDM remains paused from the authorized tests; binding and permissions retained.
+
+
+## Production restored and updated — 2026-10-17 (Moscow)
+
+User power-cycled the VM. SSH and Web UI recovered; all four services active and no failed systemd units. Deployed exact commit 9a96840 server build with BuildVersion 0.9.5-pre.3 and the tested APK (68). Previous main binary, APK and both capability configurations saved in root-only /opt/quic-lab/rollback/vless-group-pre3-20261017. Only the main service was restarted. Public APK download SHA256 matches the value above; both admin/server capability configurations advertise version 68. Served MDM editor contains group events support.
+
+Note12 still reported 0.9.4 with no vless_group_v1 capability at deployment. Its MDM profile has NOT been changed. Remaining action: user updates through the app and enables MDM; after a fresh capable report, create the second group preserving the newly reported current settings. No remote start command sent.
