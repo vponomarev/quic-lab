@@ -324,11 +324,24 @@ func (s *Session) preferred(now time.Time) string {
 		return s.preferredPath
 	}
 	wn, cn := "", ""
+	// Multiple carriers can share one physical network. Health takes precedence
+	// over the last RTT, otherwise a silent fast carrier monopolizes retries.
+	better := func(name, current string) bool {
+		if current == "" {
+			return true
+		}
+		p, q := s.paths[name], s.paths[current]
+		live := func(x *pathState) bool { return now.After(x.penalizedUntil) && now.Sub(x.lastReply) < 2*time.Second }
+		if live(p) != live(q) {
+			return live(p)
+		}
+		return p.rtt < q.rtt || p.rtt == q.rtt && name < current
+	}
 	for name, p := range s.paths {
-		if p.info.Network == "wifi" && (wn == "" || p.rtt < s.paths[wn].rtt || p.rtt == s.paths[wn].rtt && name < wn) {
+		if p.info.Network == "wifi" && better(name, wn) {
 			wn = name
 		}
-		if p.info.Network == "cell" && (cn == "" || p.rtt < s.paths[cn].rtt || p.rtt == s.paths[cn].rtt && name < cn) {
+		if p.info.Network == "cell" && better(name, cn) {
 			cn = name
 		}
 	}

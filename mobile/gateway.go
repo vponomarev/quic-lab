@@ -25,27 +25,29 @@ import (
 )
 
 type gatewayConfig struct {
-	VLESSConfig        string `json:"vless_config"`
-	ServerName         string `json:"server_name,omitempty"`
-	VerifyName         string `json:"verify_name,omitempty"`
-	ControlURL         string `json:"control_url,omitempty"`
-	AndroidVersionCode int    `json:"android_version_code,omitempty"`
-	DataVersion        int    `json:"data_version,omitempty"`
-	BondCopyBudget     uint64 `json:"bond_copy_budget"`
-	BondCellBudget     uint64 `json:"bond_cell_budget"`
-	MaxAvailability    bool   `json:"max_availability"`
-	InitialPath        string `json:"initial_path"`
-	AWGProbeEndpoint   string `json:"awg_probe_endpoint"`
-	TransitUDP         bool   `json:"transit_udp"`
-	TransitEndpoint    string `json:"transit_endpoint"`
-	DNS                string `json:"dns"`
-	AWGConfig          string `json:"awg_config"`
-	Transport          string `json:"transport"`
-	Endpoint           string `json:"endpoint"`
-	Hostname           string `json:"hostname"`
-	Certificate        string `json:"certificate"`
-	Key                string `json:"key"`
-	CA                 string `json:"ca"`
+	UnderlayVLESSConfig string `json:"underlay_vless_config,omitempty"`
+	UnderlayEndpoint    string `json:"underlay_endpoint,omitempty"`
+	VLESSConfig         string `json:"vless_config"`
+	ServerName          string `json:"server_name,omitempty"`
+	VerifyName          string `json:"verify_name,omitempty"`
+	ControlURL          string `json:"control_url,omitempty"`
+	AndroidVersionCode  int    `json:"android_version_code,omitempty"`
+	DataVersion         int    `json:"data_version,omitempty"`
+	BondCopyBudget      uint64 `json:"bond_copy_budget"`
+	BondCellBudget      uint64 `json:"bond_cell_budget"`
+	MaxAvailability     bool   `json:"max_availability"`
+	InitialPath         string `json:"initial_path"`
+	AWGProbeEndpoint    string `json:"awg_probe_endpoint"`
+	TransitUDP          bool   `json:"transit_udp"`
+	TransitEndpoint     string `json:"transit_endpoint"`
+	DNS                 string `json:"dns"`
+	AWGConfig           string `json:"awg_config"`
+	Transport           string `json:"transport"`
+	Endpoint            string `json:"endpoint"`
+	Hostname            string `json:"hostname"`
+	Certificate         string `json:"certificate"`
+	Key                 string `json:"key"`
+	CA                  string `json:"ca"`
 }
 
 // Gateway owns the proxy transport, separate from the existing echo experiment.

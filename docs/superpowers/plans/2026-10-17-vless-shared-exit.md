@@ -10,7 +10,7 @@
 
 **Spec:** ../specs/2026-10-17-vless-shared-exit-design.md
 
-Status: draft for review alongside specification. No implementation started. Execution method: inline in the existing isolated phase1-vpn checkout; independent review after functional checks. Do not touch unrelated untracked files or the active Note12 profile.
+Status: approved; implementation in progress. Transport adapter and initial pool/fault fixtures implemented; Android/MDM and device acceptance pending. Execution method: inline in the existing isolated phase1-vpn checkout; independent review after functional checks. Do not touch unrelated untracked files or the active Note12 profile.
 
 ## Global Constraints
 
@@ -36,11 +36,11 @@ Status: draft for review alongside specification. No implementation started. Exe
 
 **Interfaces:** Internal type bondStreamDialer = func(context.Context,string,string)(net.Conn,error). Extract Gateway.addBondHTTPSWithDial(ctx context.Context, endpoint string, info bond.PathInfo, binder SocketBinder, create bool, dial bondStreamDialer, cleanup func()) error. Existing addBondHTTPS remains a direct-dial wrapper. The VLESS adapter supplies Client.DialContext and closes only its own client on path cleanup.
 
-- [ ] Write tests: direct wrapper compatibility, VLESS carries inner mTLS successfully with direct gateway dial forbidden, wrong inner identity rejected, redirect rejected, canceled handshake cleans engine/sockets exactly once.
-- [ ] Run focused Linux tests and observe failure before implementation.
-- [ ] Extract shared HTTPS handshake without changing BondHello/Welcome or session ownership; meter only outer sockets. Route gateway capability preflight through the same supplied dialer, reusing current validation.
-- [ ] Run `go test -race ./mobile ./internal/bondhttps -run 'Test.*(Bond|VLESS)' -count=1`; all pass.
-- [ ] Commit adapter and tests.
+- [x] Write tests: direct wrapper compatibility, VLESS carries inner mTLS successfully with direct gateway dial forbidden, wrong inner identity rejected, redirect rejected, canceled handshake cleans engine/sockets exactly once.
+- [x] Run focused Linux tests and observe failure before implementation.
+- [x] Extract shared HTTPS handshake without changing BondHello/Welcome or session ownership; meter only outer sockets. Route gateway capability preflight through the same supplied dialer, reusing current validation.
+- [x] Run `go test -race ./mobile ./internal/bondhttps -run 'Test.*(Bond|VLESS)' -count=1`; all pass.
+- [x] Commit adapter and tests.
 
 ### Task 2: Common session with VLESS path pool
 

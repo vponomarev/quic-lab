@@ -240,3 +240,13 @@ func TestBondRelayCanceledHandshakeCleansOnce(t *testing.T) {
 		t.Fatal("handshake ignored cancellation")
 	}
 }
+
+func TestBondRelayInvalidUnderlayNeverFallsBack(t *testing.T) {
+	g := NewGateway(nil)
+	g.cfg = gatewayConfig{Transport: "https", Endpoint: "127.0.0.1:1", UnderlayVLESSConfig: "{}", UnderlayEndpoint: "127.0.0.1:2"}
+	g.tls = &tls.Config{}
+	err := g.addBondNamedPath(context.Background(), bond.PathInfo{ID: "relay", Network: "wifi"}, gatewayVLESSBinder{}, true)
+	if err == nil || err.Error() != "invalid VLESS stored profile" {
+		t.Fatal("underlay validation bypassed", err)
+	}
+}

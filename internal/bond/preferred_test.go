@@ -32,3 +32,21 @@ func TestRuntimePreferenceSurvivesFasterCandidate(t *testing.T) {
 		t.Fatalf("penalized preferred path blocked rescue: %s", got)
 	}
 }
+
+func TestPreferredSameNetworkAvoidsSilentFastPath(t *testing.T) {
+	for _, network := range []string{"wifi", "cell"} {
+		for _, stale := range []bool{false, true} {
+			now := time.Now()
+			bad := &pathState{info: PathInfo{Network: network}, rtt: time.Millisecond, lastReply: now, healthySince: now.Add(-time.Minute)}
+			if stale {
+				bad.lastReply = now.Add(-3 * time.Second)
+			} else {
+				bad.penalizedUntil = now.Add(time.Second)
+			}
+			s := &Session{preferredPath: "primary", paths: map[string]*pathState{"primary": bad, "reserve": {info: PathInfo{Network: network}, rtt: 20 * time.Millisecond, lastReply: now, healthySince: now.Add(-time.Minute)}}}
+			if got := s.preferred(now); got != "reserve" {
+				t.Fatalf("network=%s stale=%v selected %s", network, stale, got)
+			}
+		}
+	}
+}

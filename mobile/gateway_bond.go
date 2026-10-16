@@ -89,6 +89,23 @@ func (g *Gateway) addBondNamedPath(ctx context.Context, info bond.PathInfo, bind
 			return errors.New("bond path must use the run budget and physical network")
 		}
 	}
+	if g.cfg.UnderlayVLESSConfig != "" {
+		if g.cfg.Transport != "https" {
+			return errors.New("VLESS relay requires HTTPS carrier")
+		}
+		dial, cleanup, err := newBondVLESSDialer(g.cfg.UnderlayVLESSConfig, g.cfg.UnderlayEndpoint, binder)
+		if err != nil {
+			return err
+		}
+		if err = g.checkCapabilitiesWithDial(dial); err != nil {
+			cleanup()
+			return err
+		}
+		return g.addBondHTTPSWithDial(ctx, g.cfg.Endpoint, info, binder, create, dial, cleanup)
+	}
+	if g.cfg.UnderlayEndpoint != "" {
+		return errors.New("underlay endpoint without VLESS profile")
+	}
 	if g.cfg.Transport == "https" {
 		return g.addBondHTTPS(ctx, g.cfg.Endpoint, info, binder, create)
 	}
@@ -392,7 +409,11 @@ func (b *runtimeGateway) Dial(ctx context.Context, cfg gatewayConfig, info bond.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	host, _, err := net.SplitHostPort(cfg.Endpoint)
+	physicalEndpoint := cfg.Endpoint
+	if cfg.UnderlayVLESSConfig != "" {
+		physicalEndpoint = cfg.UnderlayEndpoint
+	}
+	host, _, err := net.SplitHostPort(physicalEndpoint)
 	if err != nil || net.ParseIP(host).To4() == nil {
 		return errors.New("numeric IPv4 endpoint required")
 	}
@@ -449,7 +470,10 @@ func (b *runtimeGateway) Dial(ctx context.Context, cfg gatewayConfig, info bond.
 	}
 	dial := &Gateway{ctx: ctx, cfg: cfg, tls: tc, bond: g.bond, bondToken: g.bondToken, budget: g.budget}
 	dial.cfg.BondCellBudget = 0
-	if err = dial.checkCapabilities(binder); err == nil {
+	if cfg.UnderlayVLESSConfig == "" {
+		err = dial.checkCapabilities(binder)
+	}
+	if err == nil {
 		err = dial.addBondNamedPath(ctx, info, binder, create)
 	}
 	if err != nil {
