@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,9 +16,12 @@ import (
 // VLESSProbe is a bounded diagnostic handle, not a TUN backend or a subscription
 // importer. Android supplies an endpoint resolved on the same Network as binder.
 type VLESSProbe struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	client vless.Client
+	ctx       context.Context
+	cancel    context.CancelFunc
+	client    vless.Client
+	observer  *probeSocketObserver
+	exitIPURL string
+	exitIPTLS *tls.Config // Test fixture trust only; production uses system roots.
 }
 
 func NewVLESSProbe(raw string, binder SocketBinder, budget *TrafficBudget, network string) (*VLESSProbe, error) {
@@ -45,12 +49,13 @@ func NewVLESSProbe(raw string, binder SocketBinder, budget *TrafficBudget, netwo
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	client, err := vless.New(ctx, cfg, factory)
+	observer := &probeSocketObserver{factory: factory}
+	client, err := vless.New(ctx, cfg, observer)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	return &VLESSProbe{ctx: ctx, cancel: cancel, client: client}, nil
+	return &VLESSProbe{ctx: ctx, cancel: cancel, client: client, observer: observer, exitIPURL: "https://api.ipify.org?format=json"}, nil
 }
 func (p *VLESSProbe) Close() error { p.cancel(); return p.client.Close() }
 

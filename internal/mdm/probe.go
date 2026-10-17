@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net"
+	"net/netip"
 	"time"
 )
 
@@ -19,6 +20,16 @@ type ProbeRequest struct {
 	RunID       string `json:"runId,omitempty"`
 }
 type ProbeRow struct {
+	DNSOutcome     string `json:"dnsOutcome,omitempty"`
+	TCPOutcome     string `json:"tcpOutcome,omitempty"`
+	ProxyOutcome   string `json:"proxyOutcome,omitempty"`
+	HTTPSOutcome   string `json:"httpsOutcome,omitempty"`
+	HTTPSStage     string `json:"httpsStage,omitempty"`
+	ExitIPOutcome  string `json:"exitIpOutcome,omitempty"`
+	ExitIPStage    string `json:"exitIpStage,omitempty"`
+	ExitIP         string `json:"exitIp,omitempty"`
+	ExitIPProvider string `json:"exitIpProvider,omitempty"`
+
 	ServerName    string     `json:"serverName,omitempty"`
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
@@ -126,6 +137,21 @@ func validProbe(p ProbeSnapshot) bool {
 			return false
 		}
 		seen[r.ID] = true
+		for _, outcome := range []string{r.DNSOutcome, r.TCPOutcome, r.HTTPSOutcome, r.ExitIPOutcome} {
+			if !oneOf(outcome, "", "success", "dns", "timeout", "transport", "target_tls", "unexpected_response", "budget", "network_changed", "canceled", "configuration_changed", "interrupted", "unknown", "pending", "not_attempted") {
+				return false
+			}
+		}
+		if !oneOf(r.ProxyOutcome, "", "confirmed", "unconfirmed") || !oneOf(r.HTTPSStage, "", "proxy_or_target_tls", "http_response", "http_body") || !oneOf(r.ExitIPStage, "", "proxy_or_target_tls", "http_response", "http_body") || !oneOf(r.ExitIPProvider, "", "ipify") {
+			return false
+		}
+		if r.ExitIP != "" {
+			ip, e := netip.ParseAddr(r.ExitIP)
+			if e != nil || !ip.Is4() || !ip.IsGlobalUnicast() || ip.IsPrivate() || r.ExitIPOutcome != "success" {
+				return false
+			}
+		}
+
 		if _, _, e := net.SplitHostPort(r.Endpoint); e != nil {
 			return false
 		}

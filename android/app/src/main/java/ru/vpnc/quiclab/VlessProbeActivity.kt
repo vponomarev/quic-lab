@@ -27,9 +27,16 @@ class VlessProbeActivity:Activity(){
   table.removeAllViews();val rows=r?.optJSONArray("rows")?:return
   var items=(0 until rows.length()).map{rows.getJSONObject(it)}.filter{row->val outcome=row.optString("outcome");val pending=outcome in listOf("queued","running","canceled","interrupted","network_changed","configuration_changed");when(filter.selectedItemPosition){1->outcome=="success";2->outcome!="success"&&!pending;3->pending;else->true}}
   if(sort.selectedItemPosition==1)items=items.sortedBy{it.optLong("echoRttMs",Long.MAX_VALUE)}
-  for(row in items){val line=TextView(this);line.setPadding(10,10,10,10);line.setBackgroundColor(if(row.optString("outcome")=="success")0xffe7f5ee.toInt()else 0xfff0f3f5.toInt());val role=when(row.optString("role")){"primary"->" · основной";"reserve"->" · резерв";else->""};line.text=row.optString("name")+role+"\n"+row.optString("endpoint")+"\nSNI прокси: "+row.optString("serverName").ifBlank{"—"}+"\nHTTPS: "+probeLabel(row.optString("outcome"))+" · Выход: "+probeLabel(row.optString("relayOutcome","not_applicable"))+"\nПроверка: "+row.optLong("totalMs")+" мс · RTT: "+(if(row.has("echoRttMs"))row.optLong("echoRttMs").toString()+" мс · "+row.optInt("echoSucceeded")+"/3"else "—")+"\n"+date(row.optString("measuredAt"));table.addView(line,LinearLayout.LayoutParams(-1,-2).apply{bottomMargin=5})}
+  for(row in items){val line=TextView(this);line.setPadding(10,10,10,10);line.setBackgroundColor(if(row.optString("outcome")=="success")0xffe7f5ee.toInt()else 0xfff0f3f5.toInt());val role=when(row.optString("role")){"primary"->" · основной";"reserve"->" · резерв";else->""};line.text=row.optString("name")+role+"\n"+row.optString("endpoint")+"\nSNI прокси: "+row.optString("serverName").ifBlank{"—"}+"\n"+probeStageSummary(row)+"\nHTTPS: "+probeLabel(row.optString("outcome"))+" · Выход: "+probeLabel(row.optString("relayOutcome","not_applicable"))+"\nПроверка: "+row.optLong("totalMs")+" мс · RTT: "+(if(row.has("echoRttMs"))row.optLong("echoRttMs").toString()+" мс · "+row.optInt("echoSucceeded")+"/3"else "—")+"\n"+date(row.optString("measuredAt"));table.addView(line,LinearLayout.LayoutParams(-1,-2).apply{bottomMargin=5})}
  }
  override fun onResume(){super.onResume();VlessProbeCoordinator.foreground=true;handler.post(refresh)}
  override fun onPause(){handler.removeCallbacks(refresh);if(!isChangingConfigurations)VlessProbeCoordinator.foreground=false;super.onPause()}
  override fun onDestroy(){worker.shutdown();super.onDestroy()}
+}
+
+internal fun probeStageSummary(row:JSONObject):String {
+ if(!row.has("dnsOutcome"))return "Этапы: нет данных — повторите проверку"
+ fun status(key:String)=when(val v=row.optString(key)){""->"—";"confirmed"->"подтверждено HTTPS";"unconfirmed"->"не подтверждено";"not_attempted"->"не проверялось";"unknown"->"нет данных";"pending"->"ожидание";else->probeLabel(v)}
+ fun phase(key:String)=when(row.optString(key)){"proxy_or_target_tls"->" · прокси / TLS цели";"http_response"->" · ожидание HTTP";"http_body"->" · HTTP-ответ";else->""}
+ return "DNS: "+status("dnsOutcome")+" · TCP: "+status("tcpOutcome")+"\nTLS/REALITY прокси: "+status("proxyOutcome")+"\nHTTPS цели: "+status("httpsOutcome")+phase("httpsStage")+"\nIP выхода прокси (ipify): "+row.optString("exitIp").ifBlank{"—"}+" · "+status("exitIpOutcome")+phase("exitIpStage")
 }

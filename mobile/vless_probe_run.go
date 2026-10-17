@@ -13,10 +13,21 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"sync"
 	"time"
 )
 
 type probeRunResult struct {
+	DNSOutcome     string `json:"dnsOutcome,omitempty"`
+	TCPOutcome     string `json:"tcpOutcome,omitempty"`
+	ProxyOutcome   string `json:"proxyOutcome,omitempty"`
+	HTTPSOutcome   string `json:"httpsOutcome,omitempty"`
+	HTTPSStage     string `json:"httpsStage,omitempty"`
+	ExitIPOutcome  string `json:"exitIpOutcome,omitempty"`
+	ExitIPStage    string `json:"exitIpStage,omitempty"`
+	ExitIP         string `json:"exitIp,omitempty"`
+	ExitIPProvider string `json:"exitIpProvider,omitempty"`
+
 	Outcome       string `json:"outcome"`
 	TotalMS       int64  `json:"totalMs"`
 	EchoRTTMS     *int64 `json:"echoRttMs,omitempty"`
@@ -55,8 +66,28 @@ func (p *VLESSProbe) run(raw string, tc *tls.Config) (string, error) {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(p.ctx, 20*time.Second)
 	defer cancel()
-	result := probeRunResult{Outcome: "success", RelayOutcome: "not_applicable"}
+	result := probeRunResult{Outcome: "success", RelayOutcome: "not_applicable", DNSOutcome: "success", ProxyOutcome: "unconfirmed"}
+	var parallel sync.WaitGroup
+	var ip probeIPResult
+	parallel.Add(1)
+	go func() { defer parallel.Done(); ip = p.probeExitIP(ctx, p.exitIPTLS) }()
+	trace := &probeHTTPTrace{stage: "proxy_or_target_tls"}
 	finish := func() (string, error) {
+		parallel.Wait()
+		result.HTTPSOutcome = result.Outcome
+		if result.Outcome == "relay_failed" {
+			result.HTTPSOutcome = "success"
+		}
+		result.HTTPSStage, _ = trace.snapshot()
+		_, confirmed := trace.snapshot()
+		if confirmed || ip.confirmed {
+			result.ProxyOutcome = "confirmed"
+		}
+		result.TCPOutcome = "unknown"
+		if p.observer != nil {
+			result.TCPOutcome = p.observer.outcome()
+		}
+		result.ExitIPOutcome, result.ExitIPStage, result.ExitIP, result.ExitIPProvider = ip.outcome, ip.stage, ip.ip, ip.provider
 		result.TotalMS = time.Since(started).Milliseconds()
 		b, _ := json.Marshal(result)
 		return string(b), nil
@@ -75,6 +106,7 @@ func (p *VLESSProbe) run(raw string, tc *tls.Config) (string, error) {
 		body, _ := json.Marshal(map[string]any{"version": 1, "nonce": n})
 		req, _ := http.NewRequestWithContext(ctx, "POST", o.Target, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(trace.context(req.Context()))
 		start := time.Now()
 		resp, err := client.Do(req)
 		if err != nil {

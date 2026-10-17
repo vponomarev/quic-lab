@@ -76,7 +76,7 @@ internal object VlessProbeCoordinator{
     val result=JSONObject(native!!.run(options.toString()))
     if(SystemClock.elapsedRealtime()>=deadline)result.put("outcome","timeout")
     VlessProbePolicy.normalize(result,selected.kind=="cell",JSONObject(selected.budget.snapshot()).optBoolean("blocked")).put("measuredAt",java.time.Instant.now().toString())
-   }catch(_:java.net.UnknownHostException){JSONObject().put("outcome","dns")}catch(_:java.net.SocketTimeoutException){JSONObject().put("outcome","timeout")}catch(_:InterruptedException){JSONObject().put("outcome","canceled")}catch(_:Exception){JSONObject().put("outcome",if(selected.kind=="cell"&&JSONObject(selected.budget.snapshot()).optBoolean("blocked"))"budget" else "transport")}
+   }catch(_:java.net.UnknownHostException){JSONObject().put("outcome","dns").put("dnsOutcome","dns").put("tcpOutcome","not_attempted").put("httpsOutcome","not_attempted").put("exitIpOutcome","not_attempted").put("measuredAt",java.time.Instant.now().toString())}catch(_:java.net.SocketTimeoutException){JSONObject().put("outcome","timeout")}catch(_:InterruptedException){JSONObject().put("outcome","canceled")}catch(_:Exception){JSONObject().put("outcome",if(selected.kind=="cell"&&JSONObject(selected.budget.snapshot()).optBoolean("blocked"))"budget" else "transport")}
    finally{alarm?.cancel(false);native?.close();natives.remove("$runId:$index");runCatching{VpnBudgetRun.sharedForContext(c).checkpoint()}}
   }
   return "queued"

@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.json.JSONObject
 import org.json.JSONArray
 class VlessProbeStoreTest{
+ @Test fun stagesShowIndependentExitIP(){
+ val row=JSONObject().put("dnsOutcome","success").put("tcpOutcome","success").put("proxyOutcome","confirmed").put("httpsOutcome","timeout").put("httpsStage","http_response").put("exitIpOutcome","success").put("exitIp","203.0.113.8")
+ val text=probeStageSummary(row)
+ assertTrue(text.contains("203.0.113.8"));assertTrue(text.contains("ожидание HTTP"));assertTrue(text.contains("подтверждено HTTPS"))
+ assertTrue(probeStageSummary(JSONObject()).contains("повторите проверку"))
+ }
+
  @Test fun proxySniProjectionDoesNotLeakCredentials(){
   val node=ProbeNode("node","Node","proxy.example:443",JSONObject().put("ServerName","cover.example").put("UUID","secret").put("PublicKey","key"))
   val row=node.publicRow()

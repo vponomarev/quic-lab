@@ -85,16 +85,25 @@ func TestVLESSProbeRealCarrierRelayAndCancel(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	client, e := vless.New(ctx, vless.Config{Endpoint: addr, UUID: uuid, Security: "tls", ServerName: "localhost", RootPEM: []byte(cp)}, relayFaultDialer{drop: &atomic.Bool{}})
+	observer := &probeSocketObserver{factory: relayFaultDialer{drop: &atomic.Bool{}}}
+	client, e := vless.New(ctx, vless.Config{Endpoint: addr, UUID: uuid, Security: "tls", ServerName: "localhost", RootPEM: []byte(cp)}, observer)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer client.Close()
-	p := &VLESSProbe{ctx: ctx, cancel: cancel, client: client}
-	echo := httptest.NewUnstartedServer(probeecho.NewHandler())
+	p := &VLESSProbe{ctx: ctx, cancel: cancel, client: client, observer: observer}
+	echo := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ip" {
+			io.WriteString(w, `{"ip":"203.0.113.42"}`)
+			return
+		}
+		probeecho.NewHandler().ServeHTTP(w, r)
+	}))
 	echo.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
 	echo.StartTLS()
 	defer echo.Close()
+	p.exitIPURL = echo.URL + "/ip"
+	p.exitIPTLS = &tls.Config{RootCAs: roots}
 	gw, _ := gateway.New("127.0.0.0/8", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	inner := httptest.NewUnstartedServer(http.HandlerFunc(gw.ServeBondHTTPS))
 	inner.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, ClientCAs: roots, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
@@ -108,7 +117,7 @@ func TestVLESSProbeRealCarrierRelayAndCancel(t *testing.T) {
 	}
 	var v probeRunResult
 	json.Unmarshal([]byte(result), &v)
-	if v.Outcome != "success" || v.RelayOutcome != "success" || v.EchoSucceeded != 3 {
+	if v.Outcome != "success" || v.RelayOutcome != "success" || v.EchoSucceeded != 3 || v.ExitIP != "203.0.113.42" || v.ExitIPOutcome != "success" || v.TCPOutcome != "success" {
 		t.Fatal(result)
 	}
 	options["gateway"] = gatewayConfig{Endpoint: inner.Listener.Addr().String(), Hostname: "wrong.example", Certificate: cp, Key: kp, CA: cp}
@@ -148,5 +157,63 @@ func TestVLESSProbeRealCarrierRelayAndCancel(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Close did not cancel")
+	}
+}
+
+func TestProbeStageReport(t *testing.T) {
+	srv := httptest.NewTLSServer(probeecho.NewHandler())
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &VLESSProbe{ctx: ctx, cancel: cancel, client: probeTestClient{}}
+	raw, _ := json.Marshal(map[string]any{"target": srv.URL})
+	result, err := p.run(string(raw), srv.Client().Transport.(*http.Transport).TLSClientConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	json.Unmarshal([]byte(result), &fields)
+	if fields["httpsOutcome"] != "success" || fields["proxyOutcome"] != "confirmed" {
+		t.Fatalf("missing stage evidence: %s", result)
+	}
+}
+
+func TestProbeIndependentIP(t *testing.T) {
+	for _, test := range []struct{ name, body, echoWant, ipWant string }{
+		{"echo unavailable", `{"ip":"203.0.113.8"}`, "unexpected_response", "success"},
+		{"malformed IP", `{"ip":"not-an-ip"}`, "success", "unexpected_response"},
+		{"private IP", `{"ip":"192.168.1.1"}`, "success", "unexpected_response"},
+		{"oversized IP", strings.Repeat("x", 1025), "success", "unexpected_response"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/ip" {
+					io.WriteString(w, test.body)
+					return
+				}
+				if test.echoWant != "success" {
+					w.WriteHeader(503)
+					return
+				}
+				probeecho.NewHandler().ServeHTTP(w, r)
+			}))
+			defer srv.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			p := &VLESSProbe{ctx: ctx, cancel: cancel, client: probeTestClient{}, exitIPURL: srv.URL + "/ip", exitIPTLS: srv.Client().Transport.(*http.Transport).TLSClientConfig}
+			raw, _ := json.Marshal(map[string]any{"target": srv.URL})
+			out, err := p.run(string(raw), srv.Client().Transport.(*http.Transport).TLSClientConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result probeRunResult
+			json.Unmarshal([]byte(out), &result)
+			if result.HTTPSOutcome != test.echoWant || result.ExitIPOutcome != test.ipWant {
+				t.Fatal(out)
+			}
+			if test.ipWant != "success" && result.ExitIP != "" {
+				t.Fatal("invalid IP retained")
+			}
+		})
 	}
 }

@@ -130,3 +130,25 @@ func TestProbeServerNameRoundTrip(t *testing.T) {
 		t.Fatal("unbounded SNI accepted")
 	}
 }
+
+func TestProbeStagesValidation(t *testing.T) {
+	p := ProbeSnapshot{RunID: "run", Sequence: 1, Network: "cell", Initiator: "local", State: "finished", StartedAt: testNow, Rows: []ProbeRow{{ID: "n", Name: "Node", Endpoint: "example.org:443", Outcome: "timeout", RelayOutcome: "not_applicable", DNSOutcome: "success", TCPOutcome: "success", ProxyOutcome: "confirmed", HTTPSOutcome: "timeout", HTTPSStage: "http_response", ExitIPOutcome: "success", ExitIPStage: "http_body", ExitIP: "203.0.113.8", ExitIPProvider: "ipify"}}}
+	if !validProbe(p) {
+		t.Fatal("valid mixed result rejected")
+	}
+	raw, _ := json.Marshal(p)
+	var copy ProbeSnapshot
+	json.Unmarshal(raw, &copy)
+	if copy.Rows[0].ExitIP != "203.0.113.8" || copy.Rows[0].HTTPSStage != "http_response" {
+		t.Fatal("stage report lost")
+	}
+	p.Rows[0].ExitIP = "bad"
+	if validProbe(p) {
+		t.Fatal("invalid IP accepted")
+	}
+	p.Rows[0].ExitIP = ""
+	p.Rows[0].HTTPSStage = "secret"
+	if validProbe(p) {
+		t.Fatal("unbounded stage accepted")
+	}
+}
