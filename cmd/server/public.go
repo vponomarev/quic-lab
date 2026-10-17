@@ -10,6 +10,7 @@ import (
 
 	"quiclab/internal/echo"
 	"quiclab/internal/gateway"
+	"quiclab/internal/probeecho"
 	"quiclab/internal/protocol"
 	"quiclab/internal/servertls"
 )
@@ -43,7 +44,7 @@ func publicHandler(admin http.Handler, adminURL string, log *slog.Logger, tunnel
 		mux.Handle(base, http.StripPrefix(strings.TrimSuffix(base, "/"), admin))
 		mux.Handle("/api/v1/devices/", publicDeviceConfigRoute(admin))
 		mux.Handle("/mdm/v1/", admin)
-	mux.Handle("/api/editor/v1/", admin)
+		mux.Handle("/api/editor/v1/", admin)
 		if base != "/" {
 			mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, base, http.StatusFound) })
 		}
@@ -81,7 +82,12 @@ func publicDeviceConfigRoute(admin http.Handler) http.Handler {
 // Compatibility is public control metadata and must precede tunnel authorization.
 func withCapabilities(next http.Handler, caps protocol.Capabilities) http.Handler {
 	handler := protocol.CapabilitiesHandler(caps)
+	probe := probeecho.NewHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/probe/echo" {
+			probe.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == "/api/v1/capabilities" {
 			handler.ServeHTTP(w, r)
 			return
