@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"math/rand/v2"
 	"quiclab/internal/bond"
 	"quiclab/internal/pathpolicy"
@@ -271,7 +270,7 @@ func (r *ExitRuntime) UpdateNetwork(networkJSON string, binder SocketBinder) err
 	if n.Generation < old.Generation {
 		return nil
 	}
-	if n.Generation == old.Generation && (n.Available != old.Available || n.Allowed != old.Allowed || networkCheckPermission(n) != networkCheckPermission(old) || !maps.Equal(n.UnderlayEndpoints, old.UnderlayEndpoints)) {
+	if n.Generation == old.Generation && (n.Available != old.Available || n.Allowed != old.Allowed || networkCheckPermission(n) != networkCheckPermission(old) || !extendsUnderlayEndpoints(old.UnderlayEndpoints, n.UnderlayEndpoints)) {
 		return errors.New("changed network requires a new generation")
 	}
 	n.binder = binder
@@ -409,7 +408,7 @@ func (r *ExitRuntime) refresh(now time.Time) {
 			p.nextProbe = now
 		}
 		p.draining = s.Draining
-		if !r.allowed(p.info.Network) || n.Generation != p.networkGeneration || !exists || s.Generation != p.info.Generation {
+		if !r.allowed(p.info.Network) || !r.relayWarmAllowed(p.info.Network) || n.Generation != p.networkGeneration || !exists || s.Generation != p.info.Generation {
 			c := r.candidate(p)
 			r.remove(p)
 			if r.count(c.profile.ID, c.network) == 0 {
@@ -543,7 +542,27 @@ func (r *ExitRuntime) cellEligible() bool {
 	}
 	return r.needsCellular()
 }
+
+// A disabled cellular reserve is not a prohibition on recovery after Wi-Fi
+// fails. Keep these decisions separate; readiness is data-plane verified.
+func (r *ExitRuntime) relayWarmAllowed(network string) bool {
+	if !r.cfg.relay || networkCheckPermission(r.networks[network]) {
+		return true
+	}
+	if active := r.paths[r.preferred]; active != nil && active.info.Network == network {
+		return true
+	}
+	for _, p := range r.paths {
+		if p.info.Network != network && p.ready && !p.draining {
+			return false
+		}
+	}
+	return true
+}
 func (r *ExitRuntime) needsCellular() bool {
+	if !r.relayWarmAllowed("cell") {
+		return false
+	}
 	if r.budget == nil || !r.budget.CellAllowed() {
 		return false
 	}
@@ -575,7 +594,7 @@ func (r *ExitRuntime) eligible(c *runtimeCandidate) bool {
 	if r.cfg.relay && r.networks[c.network].UnderlayEndpoints[c.profile.ID] == "" {
 		return false
 	}
-	return !c.incompatible && r.allowed(c.network) && (c.network != "cell" || r.cellEligible())
+	return !c.incompatible && r.relayWarmAllowed(c.network) && r.allowed(c.network) && (c.network != "cell" || r.cellEligible())
 }
 func (r *ExitRuntime) selectDial(now time.Time) *runtimeCandidate {
 	if r.cfg.relay && len(r.paths) >= 2 {
@@ -793,7 +812,7 @@ func (r *ExitRuntime) run(ctx context.Context, done, dispatcherDone chan struct{
 			r.mu.Lock()
 			r.dialCancel = nil
 			r.dialNetwork = ""
-			stale := ctx.Err() != nil || !r.running || r.networks[c.network].Generation != path.networkGeneration || !r.allowed(c.network)
+			stale := ctx.Err() != nil || !r.running || r.networks[c.network].Generation != path.networkGeneration || !r.allowed(c.network) || !r.relayWarmAllowed(c.network)
 			if err != nil || stale {
 				r.backend.Remove(path.info)
 				r.pools[c.profile.ID].Release(path.reservation)
@@ -974,4 +993,15 @@ func (r *ExitRuntime) gatewayForNetwork(id, network string) gatewayConfig {
 		cfg.UnderlayEndpoint = r.networks[network].UnderlayEndpoints[id]
 	}
 	return cfg
+}
+
+// Late DNS answers may add candidates without invalidating live paths. Replacing
+// or removing a resolved address still requires a new physical network generation.
+func extendsUnderlayEndpoints(old, next map[string]string) bool {
+	for id, endpoint := range old {
+		if next[id] != endpoint {
+			return false
+		}
+	}
+	return true
 }

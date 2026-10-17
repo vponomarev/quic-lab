@@ -15,7 +15,7 @@ import org.json.JSONObject
 internal object VpnConfiguration {
     private const val FILE = "vpn-configuration.json"
     private val localKeys = listOf(
-        "transport", "endpoint", "quic_endpoint", "https_endpoint", "awg_endpoint", "vless_endpoint",
+        "relay_exit_profile_id", "transport", "endpoint", "quic_endpoint", "https_endpoint", "awg_endpoint", "vless_endpoint",
         "hostname", "dns", "mode", "routes", "apps", "global_apps", "ca",
         "server_name", "verify_name", "control_url", "data_version",
         "transit_endpoint", "max_availability", "bond_copy_budget", "bond_cell_budget",
@@ -63,6 +63,26 @@ internal object VpnConfiguration {
     }
     /** Credentials enter only this in-memory runtime envelope, never the portable snapshot. */
     fun attachRuntime(context:Context,id:String,config:JSONObject):JSONObject {
+        synchronized(MdmConfiguration.lock) {
+            val prefs=effectivePreferences(context,id)
+            val targetId=prefs.getString("relay_exit_profile_id","").orEmpty()
+            if(targetId.isNotBlank()) {
+                require(prefs.getString("transport","")=="vless") {"Общий выход доступен только для VLESS"}
+                require(targetId!=id && VpnProfiles.list(context).any{it.id==targetId}) {"Профиль общего выхода отсутствует"}
+                val targetPrefs=effectivePreferences(context,targetId)
+                require(targetPrefs.getString("transport","quic") in listOf("quic","https") && targetPrefs.getString("relay_exit_profile_id","").isNullOrBlank()) {"Несовместимый профиль общего выхода"}
+                val target=VpnIdentity.load(context,targetId)
+                val endpoint=targetPrefs.getString("https_endpoint","").orEmpty().ifBlank {
+                    if(targetPrefs.getString("transport","")=="https") targetPrefs.getString("endpoint","").orEmpty() else ""
+                }
+                target.put("endpoint",endpoint)
+                for(key in listOf("hostname","ca","server_name","verify_name","control_url","transit_endpoint")) target.put(key,targetPrefs.getString(key,""))
+                target.put("data_version",targetPrefs.getInt("data_version",1))
+                val projected=VlessRelayRuntime.project(id,targetId,config,target)
+                for(key in projected.keys()) config.put(key,projected.get(key))
+                return config
+            }
+        }
         val model=load(context).getJSONObject("model")
         val exits=model.getJSONArray("exits")
         val exit=(0 until exits.length()).map{exits.getJSONObject(it)}.single{it.getString("id")==id}

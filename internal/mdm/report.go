@@ -25,7 +25,21 @@ type VLESSGroupEvent struct {
 	Reason string `json:"reason"`
 	Time   int64  `json:"time"`
 }
+type RelayPathStatus struct {
+	Index   int    `json:"index"`
+	Network string `json:"network"`
+	Ready   bool   `json:"ready"`
+	Primary bool   `json:"primary"`
+}
+type RelayStatus struct {
+	LostSessions int               `json:"lostSessions"`
+	ExitID       string            `json:"exitId"`
+	Generation   int64             `json:"generation"`
+	State        string            `json:"state"`
+	Paths        []RelayPathStatus `json:"paths"`
+}
 type DeviceReport struct {
+	RelayStatus       *RelayStatus         `json:"relayStatus,omitempty"`
 	VLESSGroupEvents  []VLESSGroupEvent    `json:"vlessGroupEvents,omitempty"`
 	ResearchDeviceIDs []string             `json:"researchDeviceIds,omitempty"`
 	ResearchScope     *ResearchScopeStatus `json:"researchScopeStatus,omitempty"`
@@ -67,6 +81,23 @@ func supported(b bindingState) bool {
 	return false
 }
 func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) error {
+	if x := r.RelayStatus; x != nil {
+		if x.LostSessions < 0 || x.LostSessions > 1000000 || !profileID.MatchString(x.ExitID) || x.Generation < 0 || !oneOf(x.State, "ready", "degraded", "no_path", "session_lost", "stopped") || len(x.Paths) > 2 {
+			return ErrInvalid
+		}
+		primary := 0
+		for _, p := range x.Paths {
+			if p.Index < 1 || p.Index > 256 || !oneOf(p.Network, "wifi", "cell") {
+				return ErrInvalid
+			}
+			if p.Primary {
+				primary++
+			}
+		}
+		if primary > 1 {
+			return ErrInvalid
+		}
+	}
 	if len(r.VLESSGroupEvents) > 32 {
 		return ErrInvalid
 	}
@@ -141,7 +172,7 @@ func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) er
 	if !b.Binding.Active {
 		return ErrPaused
 	}
-	if (len(r.Configuration) > 0 || r.Inventory != nil) && !b.Binding.GrantedRights.Config || (r.VPNState != "" || len(r.VLESSGroupEvents) > 0) && !b.Binding.GrantedRights.VPN {
+	if (len(r.Configuration) > 0 || r.Inventory != nil) && !b.Binding.GrantedRights.Config || (r.VPNState != "" || len(r.VLESSGroupEvents) > 0 || r.RelayStatus != nil) && !b.Binding.GrantedRights.VPN {
 		return ErrUnauthorized
 	}
 	if b.Desired == nil && r.AppliedRevision != 0 || b.Desired != nil && r.AppliedRevision > b.Desired.Revision {
@@ -228,7 +259,7 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	if !b.Binding.GrantedRights.Config || !supported(b) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
-	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) {
+	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	raw, _ := json.Marshal([]any{revision, generation, mode, json.RawMessage(document)})
@@ -275,7 +306,7 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 			return ConfigRevision{}, ErrInvalid
 		}
 	}
-	if !allowsVLESSGroup(b, document) {
+	if !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	r := ConfigRevision{Revision: revision + 1, Mode: mode, Document: append(json.RawMessage(nil), document...), ExpectedGeneration: generation}
@@ -405,6 +436,28 @@ func allowsProfileSelection(b bindingState, raw json.RawMessage) bool {
 	if b.Report != nil {
 		for _, capability := range b.Report.Capabilities {
 			if capability == "profile_selection_v1" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func allowsVLESSRelay(b bindingState, raw json.RawMessage) bool {
+	var d ConfigurationDocument
+	if json.Unmarshal(raw, &d) != nil {
+		return false
+	}
+	needed := false
+	for _, p := range d.Profiles {
+		needed = needed || settingString(p, "relay_exit_profile_id") != ""
+	}
+	if !needed {
+		return true
+	}
+	if b.Report != nil {
+		for _, capability := range b.Report.Capabilities {
+			if capability == "vless_relay_v1" {
 				return true
 			}
 		}

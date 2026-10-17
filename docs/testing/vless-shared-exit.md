@@ -1,6 +1,6 @@
 # VLESS shared exit: development verification
 
-Date: 2026-10-17. Implementation is in progress; no Android release or production activation yet.
+Date: 2026-10-17. Android/MDM integration is implemented for 0.9.5-pre.5; Note12 activation remains separate from publication.
 
 ## Verified transport core
 
@@ -23,4 +23,20 @@ Full Linux verification passed:
 go test -race ./mobile ./internal/bond ./internal/bondhttps ./internal/vpnmodel ./internal/pathpolicy -count=1
 ```
 
-Existing bond tests also cover pending limits, retention, ACK/deduplication and datagram expiry. Device LTE accounting, Android TUN continuity, MDM reference validation/editor and release acceptance remain outstanding. Note12 was left stopped and its active configuration was not changed.
+Existing bond tests also cover pending limits, retention, ACK/deduplication and datagram expiry. Physical LTE accounting is covered by the shared-budget tests; actual blocked-network LTE handover remains field acceptance. Note12 configuration was not changed during development.
+
+## Android acceptance checkpoint
+
+Note9 (`dc69eb2c`), actual Android TUN and separate probe UID, two REALITY VLESS servers on the Linux lab host and an inner mTLS gateway bound only to server loopback. The target accepted exactly one TCP connection; after stopping the first VLESS server, 387 bidirectional exchanges completed with exact payload and maximum exchange RTT 40 ms. Logical bond connection ID stayed unchanged. This proves the tested Wi-Fi carrier failure, not arbitrary mobile-network reliability or indefinite session retention. The test restores/deletes only its temporary profiles.
+
+Fixture preparation problems were corrected separately: explicit Stop is required for a bound Android VpnService; fixture control uses pinned TLS; the gateway allowlist includes only loopback and the lab echo host. These were test harness defects, not product tunnel regressions.
+
+The Android fixture is opt-in with `QUIC_LAB_RELAY_ANDROID_FIXTURE=/absolute/private/directory go test ./mobile -run TestRelayAndroidFixture -v -count=1 -timeout=17m`. It writes short-lived credentials to `fixture.json` mode 0600. Copy to the test app's private files as `relay-fixture.json`, run `VlessRelayDeviceTest`, then stop the fixture by creating its directory's `stop` file. Never publish the credential file.
+
+Configuration tests cover invalid references, capability downgrade, incompatible pending identity merge, redacted public snapshots, stable candidate IDs, underlay-only DNS and retained addresses after late DNS. Final review identified reserve-policy and session-status regressions and absent TLS hostname fallback. All three were reproduced by regressions and fixed. Final Linux race tests passed; Android build/lint and 31 instrumentation checks passed. No deferred review findings.
+
+## Final pre.5 acceptance and deployment
+
+Final Note9 TCP+UDP instrumentation passed: 389 bidirectional TCP exchanges, maximum exchange RTT 41 ms, exactly one destination accept and unchanged logical connection after stopping a VLESS carrier. UDP echo through the surviving path also passed. This is measured exchange RTT, not a guaranteed failover SLA. Original profile restored; VPN foreground service restarted after testing. MDM remains in its original paused state.
+
+Final Linux race command covered `./mobile ./internal/mdm ./internal/admin ./internal/bond ./internal/bondhttps ./internal/vpnmodel ./internal/pathpolicy`; all passed. Android build/lint and 31 configuration/status instrumentation tests passed, followed by the actual TUN device test. Production binary/APK deployed as 0.9.5-pre.5; public APK hash matches release notes. Note12 settings unchanged.

@@ -27,6 +27,8 @@ class ProfileEditorActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var pendingIdentity: org.json.JSONObject? = null
     private lateinit var transport: Spinner
+    private lateinit var relayExit: Spinner
+    private var relayIds=listOf("")
     private lateinit var mode: Spinner
     private lateinit var endpoint: EditText
     private lateinit var hostname: EditText
@@ -247,6 +249,20 @@ class ProfileEditorActivity : Activity() {
                 transportTypes.map { transportName(it) }.toTypedArray(),
                 transportTypes.indexOf(prefs.getString("transport", "quic")).coerceAtLeast(0),
             )
+        val relayTargets=VpnProfiles.list(this).filter {p->
+            if(p.id==profileId)false else runCatching {
+                val pref=VpnConfiguration.effectivePreferences(this,p.id)
+                pref.getString("transport","quic") in setOf("quic","https") &&
+                    (!pref.getString("https_endpoint","").isNullOrBlank() || pref.getString("transport","")=="https") &&
+                    VpnIdentity.exists(this,p.id)
+            }.getOrDefault(false)
+        }
+        val savedRelay=prefs.getString("relay_exit_profile_id","").orEmpty()
+        relayIds=listOf("")+relayTargets.map{it.id}
+        var relayLabels=listOf("Напрямую")+relayTargets.map{"Через профиль QUIC Lab · ${it.name}"}
+        if(savedRelay.isNotBlank() && savedRelay !in relayIds){relayIds=relayIds+savedRelay;relayLabels=relayLabels+"Недоступный профиль общего выхода"}
+        relayExit=choice(panel,"Выход VLESS",relayLabels.toTypedArray(),relayIds.indexOf(savedRelay).coerceAtLeast(0))
+        label(panel,"Общий выход: основной и резервный VLESS-пути через один сервер QUIC Lab. Включение переподключает VPN. Прямого обхода при отказе нет.")
         endpoint = field(panel, "Сервер · домен:порт", "endpoint")
         hostname = field(panel, "Имя сервера в сертификате TLS", "hostname")
         hostname.isEnabled = selectedTransport() !in setOf("awg", "vless")
@@ -445,7 +461,7 @@ class ProfileEditorActivity : Activity() {
         val visible=when(category) {"Подключение"->setOf("ПОДКЛЮЧЕНИЕ");"Маршруты"->setOf("МАРШРУТИЗАЦИЯ");"Устойчивость"->setOf("ОБЩАЯ СЕССИЯ И КАРУСЕЛЬ");else->setOf("СЕРТИФИКАТ И БЕЗОПАСНОСТЬ")}
         sectionViews.forEach{(name,views)->views.forEach{it.visibility=if(name in visible)android.view.View.VISIBLE else android.view.View.GONE}}
     }
-    private fun formFingerprint() = listOf(endpoint.text.toString(),hostname.text.toString(),transport.selectedItemPosition,mode.selectedItemPosition,useGlobalApps.isChecked,routes.text.toString(),dns.text.toString(),ca.text.toString(),copyBudget.text.toString()).joinToString("\u0000")
+    private fun formFingerprint() = listOf(endpoint.text.toString(),hostname.text.toString(),transport.selectedItemPosition,relayExit.selectedItemPosition,mode.selectedItemPosition,useGlobalApps.isChecked,routes.text.toString(),dns.text.toString(),ca.text.toString(),copyBudget.text.toString()).joinToString("\u0000")
     private fun dirty() = !initialising && (pendingIdentity != null || prefs.dirty || formFingerprint()!=initialForm || apps!=initialApps)
     private fun leaveDraft(next:()->Unit) {
         if(busy)return
@@ -554,6 +570,7 @@ class ProfileEditorActivity : Activity() {
     private fun updateTransportControls() {
         val kind=selectedTransport()
         val managed=prefs.getBoolean("managed_profile",false)
+        relayExit.isEnabled=kind=="vless"
         hostname.isEnabled=!managed && kind !in setOf("awg","vless")
         endpoint.isEnabled=!managed && kind!="vless"
         ca.isEnabled=!managed && kind!="vless"
@@ -572,8 +589,12 @@ class ProfileEditorActivity : Activity() {
         else VpnRoutes.parse(dns.text.toString() + "/32")
         val keys = pendingIdentity ?: VpnIdentity.load(this,profileId)
         require(when(selectedTransport()) { "awg" -> keys.optString("awg_config").isNotBlank(); "vless" -> keys.optString("vless_config").isNotBlank(); else -> keys.has("certificate") }) { "Для другого протокола импортируйте отдельный профиль" }
+        val relayId=relayIds[relayExit.selectedItemPosition]
+        require(relayId.isBlank() || selectedTransport()=="vless") {"Общий выход доступен только для VLESS"}
+        require(relayId.isBlank() || VpnProfiles.list(this).any{it.id==relayId}) {"Профиль общего выхода отсутствует"}
         prefs
             .edit()
+            .putString("relay_exit_profile_id",relayId)
             .putString("transport", selectedTransport())
             .putString("endpoint", endpoint.text.toString().trim())
             .putString("hostname", hostname.text.toString().trim())

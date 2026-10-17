@@ -173,7 +173,13 @@ class VpnActivity:Activity() {
     labelsCache[card.exitId]=card.generation to mapOf("" to selected,card.exitId to selected,"${card.exitId}.quic" to "QUIC","${card.exitId}.https" to "HTTPS","${card.exitId}.vless" to "VLESS","${card.exitId}.awg" to "AmneziaWG")
    }
    val labels=labelsCache.getValue(card.exitId).second
-   setText(v,VpnDashboardText.card(card,names[card.exitId] ?: "Подключение",SystemClock.elapsedRealtime(),VpnRttSettings.interval(this),"",labels))
+   val relay=VlessRelayStatus.snapshot()?.takeIf{it.optString("exitId")==card.exitId}
+   val relayText=relay?.let {r->
+    val state=when(r.optString("state")){"ready"->"основной и резерв готовы";"degraded"->"один готовый путь";"session_lost"->"общая сессия потеряна";else->"ожидание пути"}
+    val paths=r.getJSONArray("paths")
+    "\nОбщий выход · $state · потерь сессии: ${r.optInt("lostSessions")}"+(0 until paths.length()).joinToString(""){i->val p=paths.getJSONObject(i);"\n${if(p.optBoolean("primary")) "Основной" else "Резерв"}: №${p.getInt("index")} · ${if(p.getString("network")=="wifi") "Wi-Fi" else "LTE"} · ${if(p.optBoolean("ready")) "готов" else "проверяется"}"}
+   }.orEmpty()
+   setText(v,VpnDashboardText.card(card,names[card.exitId] ?: "Подключение",SystemClock.elapsedRealtime(),VpnRttSettings.interval(this),"",labels)+relayText)
   }
  }
  override fun onResume(){super.onResume();MdmRuntime.restore(this,foreground=true);checkUpdates();showPage(page,false);handler.removeCallbacks(ticker);handler.post(ticker);radios=RadioMonitor(this,{wifi,cell->wifiRadio=wifi;cellRadio=cell;refreshStatus()},{_,_->}).also{it.start()}}

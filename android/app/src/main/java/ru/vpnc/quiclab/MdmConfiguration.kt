@@ -95,7 +95,7 @@ internal object MdmConfiguration {
   assertEditable(c);if(!hasLayer(c))return@synchronized false
   store(c).editRuntime{it.getJSONObject("identities").remove(id)};true
  }
- private val settingsKeys=setOf("transport","endpoint","quic_endpoint","https_endpoint","awg_endpoint","vless_endpoint",
+ private val settingsKeys=setOf("relay_exit_profile_id","transport","endpoint","quic_endpoint","https_endpoint","awg_endpoint","vless_endpoint",
   "hostname","dns","mode","routes","apps","global_apps","ca","server_name","verify_name","control_url","data_version",
   "transit_endpoint","max_availability","bond_copy_budget","bond_cell_budget","bond_copy_kib","cell_mib",
   "available_transports","demux_enabled","quic_mode","https_mode","quic_pool_size","https_pool_size","quic_check_reserve","https_check_reserve")

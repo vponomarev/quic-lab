@@ -10,7 +10,7 @@
 
 **Spec:** ../specs/2026-10-17-vless-shared-exit-design.md
 
-Status: approved; implementation in progress. Transport adapter and initial pool/fault fixtures implemented; Android/MDM and device acceptance pending. Execution method: inline in the existing isolated phase1-vpn checkout; independent review after functional checks. Do not touch unrelated untracked files or the active Note12 profile.
+Status: implemented and published as 0.9.5-pre.5; Note9 acceptance complete. Note12 field activation pending. See execution reconciliation below for actual coverage; original detailed checkboxes are retained rather than asserting unperformed test combinations. Execution method: inline in the existing isolated phase1-vpn checkout; independent review after functional checks. Do not touch unrelated untracked files or the active Note12 profile.
 
 ## Global Constraints
 
@@ -101,3 +101,11 @@ Status: approved; implementation in progress. Transport adapter and initial pool
 ## Self-review
 
 Spec requirements map to adapter (1), scheduling/security budget lifecycle (2), continuity/retention oracle (3), configuration and compatibility (4), device/reporting integration (5), actual acceptance and deployment (6). Public IP continuity and TCP continuity are independently asserted. Temporary direct outage is part of setup testing. No change to existing retention limits or billing accounting is hidden in this plan.
+
+## Execution reconciliation — 2026-10-17
+
+Tasks 1–5 delivered: transport/pool, failure fixtures, configuration gates and selectors, Android runtime/network/status integration. Task 6 lab acceptance, independent review and publication delivered. Evidence and measured limits: [verification](../../testing/vless-shared-exit.md); [release](../../release-0.9.5-pre.5.md).
+
+Existing bond tests were reused for ACK/deduplication, retention, pending limits, slow readers and datagram expiry; these were not all repeated as a physical-phone/VLESS cross-product. Configuration instrumentation covers retained identities and rollback through the existing store tests. Actual Note9 Wi-Fi carrier loss passed TCP and UDP; physical LTE handover and blocked-network third-party subscription behavior remain unverified. No claim of an exhaustive physical network/budget/consent failure matrix.
+
+Remaining acceptance: upgrade Note12, await capability report, agree activation of its shared-exit reference, then verify production exit IP and readiness. First activation reconnects VPN. Do not mark that step complete from lab results.

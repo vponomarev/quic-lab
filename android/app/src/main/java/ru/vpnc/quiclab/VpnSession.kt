@@ -32,13 +32,16 @@ internal class VpnSession(
     private val isBond = isDemux || config.optBoolean("max_availability")
     @Volatile private var demuxRuntime: mobile.ExitRuntime? = null
     private val runtimeNetworks = mutableMapOf<Int,Triple<Network?,Boolean,Boolean>>()
+    private val relayAddresses = mutableMapOf<Int,JSONObject>()
+    private val relayDNSRetry = mutableMapOf<Int,Long>()
+    private val isRelay = config.optJSONObject("_exit_runtime")?.optJSONObject("gateways")?.let {g->g.keys().asSequence().any{g.getJSONObject(it).optString("underlay_vless_config").isNotBlank()}} == true
     private val runtimeGenerations = mutableMapOf<Int,Long>()
     private val bondNetworks = mutableMapOf<Int, Network>()
     private val bondRetry = mutableMapOf<Int, Long>()
     private var bondResolverNetwork: Network? = null
     private fun refreshBondPaths() {
         if (!alive || !isBond) return
-        if (demuxRuntime != null) { refreshDemuxNetworks(); return }
+        if (demuxRuntime != null) { refreshDemuxNetworks(); refreshRelayStatus(); return }
         service?.setUnderlyingNetworks(networks.values.toTypedArray())
         for ((kind, network) in networks) {
             val name = if (kind == WIFI) "wifi" else "cell"
@@ -421,6 +424,9 @@ internal class VpnSession(
 
     private fun physicalName(kind:Int)=if(kind==WIFI) "wifi" else "cell"
 
+    private fun refreshRelayStatus(){
+        if(isRelay)demuxRuntime?.let {VlessRelayStatus.update(config.getJSONObject("_exit_runtime"),JSONObject(it.snapshot()))}
+    }
     private fun refreshDemuxNetworks() {
         val runtime=demuxRuntime ?: return
         for(kind in listOf(WIFI,CELLULAR)) {
@@ -428,11 +434,25 @@ internal class VpnSession(
             val allowed=kind!=CELLULAR || cellAllowed()
             val checkAllowed=reserveAllowed(kind,network)
             val state=Triple(network,allowed,checkAllowed)
-            if(runtimeNetworks[kind]==state) continue
-            val generation=(runtimeGenerations[kind]?:0L)+1
-            runtimeGenerations[kind]=generation;runtimeNetworks[kind]=state
-            runtime.updateNetwork(JSONObject().put("network",physicalName(kind)).put("available",network!=null)
-                .put("allowed",allowed).put("reserve_check_allowed",checkAllowed).put("generation",generation).toString(),network?.let {binder(it)})
+            val changed=runtimeNetworks[kind]!=state
+            val runtimeConfig=config.getJSONObject("_exit_runtime")
+            val previous=if(changed) JSONObject() else relayAddresses[kind] ?: JSONObject()
+            val readyPaths=if(isRelay)JSONObject(runtime.snapshot()).getJSONArray("paths") else org.json.JSONArray()
+            val hasReadyOther=(0 until readyPaths.length()).any {val p=readyPaths.getJSONObject(it);p.optBoolean("ready") && p.optString("network")!=physicalName(kind)}
+            val mayResolve=checkAllowed || network==activeNetwork || !hasReadyOther
+            val needsDNS=isRelay && network!=null && allowed && mayResolve && previous.length()<runtimeConfig.getJSONObject("gateways").length()
+            if(!changed && (!needsDNS || now()<(relayDNSRetry[kind]?:0L)))continue
+            val resolved=if(needsDNS) {
+                relayDNSRetry[kind]=now()+30000
+                VlessRelayRuntime.resolve(runtimeConfig,previous){resolveEndpoint(it,requireNotNull(network)).address}
+            } else previous
+            if(!changed && resolved.length()==previous.length())continue
+            val generation=if(changed) (runtimeGenerations[kind]?:0L)+1 else requireNotNull(runtimeGenerations[kind])
+            val update=JSONObject().put("network",physicalName(kind)).put("available",network!=null)
+                .put("allowed",allowed).put("reserve_check_allowed",checkAllowed).put("generation",generation)
+            if(isRelay)update.put("underlay_endpoints",resolved)
+            runtime.updateNetwork(update.toString(),network?.let {binder(it)})
+            runtimeGenerations[kind]=generation;runtimeNetworks[kind]=state;relayAddresses[kind]=resolved
         }
         service?.setUnderlyingNetworks(networks.values.toTypedArray())
     }
@@ -448,12 +468,16 @@ internal class VpnSession(
             val profile=profiles.getJSONObject(i)
             if(profile.getString("mode")=="disabled")continue
             val gateway=gateways.getJSONObject(profile.getString("id"))
+            if(isRelay)continue // Inner hostname is resolved remotely through each VLESS path.
             val resolved=resolveEndpoint(profile.getString("endpoint"),network)
             profile.put("endpoint",resolved.address);gateway.put("endpoint",resolved.address)
             if(gateway.optString("hostname").isBlank()) gateway.put("hostname",name.ifBlank{resolved.hostname})
         }
-        runtimeConfig.put("initial_network",JSONObject().put("network",physicalName(kind))
-            .put("available",true).put("allowed",true).put("reserve_check_allowed",reserveAllowed(kind,network)).put("generation",1))
+        val initial=JSONObject().put("network",physicalName(kind))
+            .put("available",true).put("allowed",true).put("reserve_check_allowed",reserveAllowed(kind,network)).put("generation",1)
+        val resolved=if(isRelay) VlessRelayRuntime.resolve(runtimeConfig){resolveEndpoint(it,network).address} else JSONObject()
+        if(isRelay)initial.put("underlay_endpoints",resolved)
+        runtimeConfig.put("initial_network",initial)
         val runtime=Mobile.newExitRuntime(object:EventSink {
             override fun onEvent(eventJSON:String) {
                 if(closed || token!=epoch)return
@@ -468,7 +492,10 @@ internal class VpnSession(
                     val active=if(e.optString("network")=="cell") CELLULAR else WIFI
                     networks[active]?.let {n->activeKind=active;activeNetwork=n;selected(n,active);event("active_network",label(active))}
                 }
-                if(e.optString("event")=="session_lost") event("reconnecting","Общая сессия завершена; прежние потоки закрыты")
+                if(e.optString("event")=="session_lost") {
+                    event("reconnecting","Общая сессия завершена; прежние потоки закрыты")
+                    if(isRelay)submit {if(token==epoch)demuxRuntime?.let {VlessRelayStatus.update(config.getJSONObject("_exit_runtime"),JSONObject(it.snapshot()),true)}}
+                }
             }
         })
         try {
@@ -476,6 +503,7 @@ internal class VpnSession(
             runtime.start(runtimeConfig.toString(),binder(network))
             demuxRuntime=runtime
             runtimeNetworks[kind]=Triple(network,true,reserveAllowed(kind,network));runtimeGenerations[kind]=1
+            relayAddresses[kind]=resolved;relayDNSRetry[kind]=now()+30000
             val gateway=requireNotNull(runtime.gateway())
             client=gateway
             service?.let { gateway.setResearch(ResearchBridge.observer(it)) }
@@ -588,7 +616,7 @@ internal class VpnSession(
             client?.checkExitIP()
             nextExitCheckAt = time + 60000
         }
-        if (demuxRuntime != null) { refreshDemuxNetworks(); return }
+        if (demuxRuntime != null) { refreshDemuxNetworks(); refreshRelayStatus(); return }
         if (isBond) {
             if (client?.isConnected() != true && time-lastAttemptAt>5000) {
                 lastAttemptAt=time
@@ -786,7 +814,7 @@ internal class VpnSession(
         client?.let { detached?.invoke(it) }
         val runtime=demuxRuntime;demuxRuntime=null
         if(runtime!=null) runtime.stop() else client?.stop()
-        runtimeNetworks.clear();runtimeGenerations.clear()
+        runtimeNetworks.clear();runtimeGenerations.clear();relayAddresses.clear();relayDNSRetry.clear();if(isRelay)VlessRelayStatus.clear()
         client = null
         manualCellUntil = 0L
         pendingCellStart = null

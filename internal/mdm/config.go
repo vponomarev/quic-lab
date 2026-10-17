@@ -203,6 +203,9 @@ func ValidateDocument(raw json.RawMessage) error {
 			}
 		}
 	}
+	if validateRelayReferences(d) != nil {
+		return ErrInvalid
+	}
 	if policy := d.ProfileSelection; policy != nil {
 		if policy.ServerRevision < 0 || policy.ServerRevision > 9007199254740991 || len(policy.ProfileIDs) > 32 || policy.Enabled && (d.Multiple || len(policy.ProfileIDs) == 0) {
 			return ErrInvalid
@@ -306,12 +309,16 @@ func validateSettings(m map[string]json.RawMessage) error {
 				}
 			}
 		case "transport", "endpoint", "quic_endpoint", "https_endpoint", "awg_endpoint", "vless_endpoint",
-			"hostname", "dns", "routes", "ca", "server_name", "verify_name", "control_url", "transit_endpoint", "quic_mode", "https_mode":
+			"hostname", "dns", "routes", "ca", "server_name", "verify_name", "control_url", "transit_endpoint", "quic_mode", "https_mode", "relay_exit_profile_id":
 			var s string
 			if json.Unmarshal(r, &s) != nil || len(s) > 65536 || strings.ContainsRune(s, 0) {
 				return ErrInvalid
 			}
 			switch k {
+			case "relay_exit_profile_id":
+				if s != "" && !profileID.MatchString(s) {
+					return ErrInvalid
+				}
 			case "transport":
 				if !oneOf(s, "quic", "https", "awg", "vless") {
 					return ErrInvalid
@@ -397,6 +404,43 @@ func uniqueValue(d *json.Decoder, depth int) error {
 		}
 		t, e = d.Token()
 		if e != nil || t != json.Delim(']') {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
+func settingString(p ConfigurationProfile, key string) string {
+	var v string
+	_ = json.Unmarshal(p.Settings[key], &v)
+	return v
+}
+func validateRelayReferences(d ConfigurationDocument) error {
+	profiles := map[string]ConfigurationProfile{}
+	for _, p := range d.Profiles {
+		profiles[p.ID] = p
+	}
+	for _, p := range d.Profiles {
+		targetID := settingString(p, "relay_exit_profile_id")
+		if targetID == "" {
+			continue
+		}
+		target, ok := profiles[targetID]
+		if !ok || targetID == p.ID || settingString(p, "transport") != "vless" || target.RemoveIdentity || settingString(target, "relay_exit_profile_id") != "" {
+			return ErrInvalid
+		}
+		transport := settingString(target, "transport")
+		if transport != "" && transport != "quic" && transport != "https" {
+			return ErrInvalid
+		}
+		endpoint := settingString(target, "https_endpoint")
+		if endpoint == "" && transport == "https" {
+			endpoint = settingString(target, "endpoint")
+		}
+		if endpoint == "" {
+			return ErrInvalid
+		}
+		if target.Identity != nil && (target.Identity.Certificate == "" || target.Identity.Key == "") {
 			return ErrInvalid
 		}
 	}
