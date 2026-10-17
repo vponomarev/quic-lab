@@ -43,7 +43,7 @@ internal object VlessProbeCoordinator{
   val origin=if(initiator=="local"&&localControl.startsWith("https://"))java.net.URI(localControl).let{"https://"+it.rawAuthority} else MdmStore(c).read().binding?.endpoint?:"https://quic-lab.vpnc.ru"
   val target=origin.trimEnd('/')+"/api/v1/probe/echo"
   val targetCA=if(initiator=="local"&&localControl.startsWith(origin))localGateway?.optString("ca").orEmpty()else ""
-  val rows=JSONArray(nodes.map{n->JSONObject().put("id",n.id).put("name",n.name).put("endpoint",n.endpoint).put("role",n.role).put("outcome","queued").put("relayOutcome",if(n.gateway==null)"not_applicable" else "").put("echoSucceeded",0).put("totalMs",0)})
+  val rows=JSONArray(nodes.map{n->n.publicRow()})
   val run=JSONObject().put("runId",runId).put("sourceId",src.id).put("fingerprint",src.fingerprint).put("sequence",0).put("network",selected.kind).put("initiator",initiator).put("state","running").put("startedAt",java.time.Instant.now().toString()).put("rows",rows)
   if(initiator=="mdm")MdmStore(c).read().let{run.put("ownerBinding",it.binding?.id).put("ownerEpoch",it.binding?.epoch).put("ownerGeneration",it.localGeneration)}
   timer=Executors.newSingleThreadScheduledExecutor().also{clock->clock.scheduleAtFixedRate({

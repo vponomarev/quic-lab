@@ -4,7 +4,9 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.security.MessageDigest
 import java.util.UUID
-internal data class ProbeNode(val id:String,val name:String,val endpoint:String,val config:JSONObject,val gateway:JSONObject?=null,val role:String="")
+internal data class ProbeNode(val id:String,val name:String,val endpoint:String,val config:JSONObject,val gateway:JSONObject?=null,val role:String=""){
+ fun publicRow()=JSONObject().put("id",id).put("name",name).put("endpoint",endpoint).put("serverName",config.optString("ServerName")).put("role",role).put("outcome","queued").put("relayOutcome",if(gateway==null)"not_applicable" else "").put("echoSucceeded",0).put("totalMs",0)
+}
 internal data class ProbeSource(val id:String,val name:String,val nodes:List<ProbeNode>){
  val fingerprint:String=probeHash(nodes.map{it.id+":"+it.config.toString()+":"+(it.gateway?.toString()?:"")}.sorted().joinToString("\n"))
  fun publicJSON()=JSONObject().put("id",id).put("name",name.take(100)).put("fingerprint",fingerprint)

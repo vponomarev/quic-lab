@@ -1,6 +1,7 @@
 package mdm
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestProbeSnapshots(t *testing.T) {
 	r.Capabilities = append(r.Capabilities, "vless_probe_v1")
 	r.ProbeSources = []ProbeSource{{ID: "group", Fingerprint: strings.Repeat("a", 64), Name: "Group"}}
 	s.Report(b.ID, b.Epoch, r, testNow)
-	p := ProbeSnapshot{RunID: "run1", SourceID: "group", Fingerprint: strings.Repeat("a", 64), Sequence: 2, Network: "wifi", Initiator: "local", State: "finished", StartedAt: testNow, FinishedAt: testNow, Rows: []ProbeRow{{ID: "node", Name: "Node", Endpoint: "example.org:443", Outcome: "success", RelayOutcome: "not_applicable", EchoSucceeded: 3}}}
+	p := ProbeSnapshot{RunID: "run1", SourceID: "group", Fingerprint: strings.Repeat("a", 64), Sequence: 2, Network: "wifi", Initiator: "local", State: "finished", StartedAt: testNow, FinishedAt: testNow, Rows: []ProbeRow{{ID: "node", Name: "Node", Endpoint: "example.org:443", ServerName: "cover.example", Outcome: "success", RelayOutcome: "not_applicable", EchoSucceeded: 3}}}
 	if e := s.SaveProbe(b.ID, b.Epoch, p, testNow); e != nil {
 		t.Fatal(e)
 	}
@@ -57,6 +58,9 @@ func TestProbeSnapshots(t *testing.T) {
 		t.Fatal(e)
 	}
 	state, _ := s.DeviceState(b.ID)
+	if state.Probes["group"].Rows[0].ServerName != "cover.example" {
+		t.Fatal("stored SNI lost")
+	}
 	if state.Probes["group"].State != "finished" {
 		t.Fatal("stale snapshot overwrote")
 	}
@@ -96,5 +100,33 @@ func TestProbeResumeEndsPreviousRemoteRun(t *testing.T) {
 	got, _ := s.DeviceState(b.ID)
 	if got.Probes["group"].State != "interrupted" {
 		t.Fatal("previous epoch still appears running")
+	}
+}
+
+func TestProbeServerNameRoundTrip(t *testing.T) {
+	var row ProbeRow
+	if err := json.Unmarshal([]byte(`{"id":"node","name":"Node","endpoint":"proxy.example:443","serverName":"cover.example","outcome":"success","relayOutcome":"not_applicable"}`), &row); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	json.Unmarshal(raw, &wire)
+	if wire["serverName"] != "cover.example" {
+		t.Fatalf("proxy SNI lost: %s", raw)
+	}
+	p := ProbeSnapshot{RunID: "run", Sequence: 1, Network: "wifi", Initiator: "local", State: "finished", StartedAt: testNow, Rows: []ProbeRow{row}}
+	if !validProbe(p) {
+		t.Fatal("SNI report rejected")
+	}
+	json.Unmarshal([]byte(`{"serverName":""}`), &p.Rows[0])
+	if !validProbe(p) {
+		t.Fatal("legacy report rejected")
+	}
+	json.Unmarshal([]byte(`{"serverName":"`+strings.Repeat("x", 254)+`"}`), &p.Rows[0])
+	if validProbe(p) {
+		t.Fatal("unbounded SNI accepted")
 	}
 }

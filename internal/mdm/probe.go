@@ -19,6 +19,7 @@ type ProbeRequest struct {
 	RunID       string `json:"runId,omitempty"`
 }
 type ProbeRow struct {
+	ServerName    string     `json:"serverName,omitempty"`
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
 	Endpoint      string     `json:"endpoint"`
@@ -121,7 +122,7 @@ func validProbe(p ProbeSnapshot) bool {
 	}
 	seen := map[string]bool{}
 	for _, r := range p.Rows {
-		if !displayName(r.ID, 128) || seen[r.ID] || !displayName(r.Name, 100) || len(r.Endpoint) > 300 {
+		if !displayName(r.ID, 128) || seen[r.ID] || !displayName(r.Name, 100) || len(r.Endpoint) > 300 || (r.ServerName != "" && !displayName(r.ServerName, 253)) {
 			return false
 		}
 		seen[r.ID] = true

@@ -5,6 +5,16 @@ import org.junit.Assert.*
 import org.json.JSONObject
 import org.json.JSONArray
 class VlessProbeStoreTest{
+ @Test fun proxySniProjectionDoesNotLeakCredentials(){
+  val node=ProbeNode("node","Node","proxy.example:443",JSONObject().put("ServerName","cover.example").put("UUID","secret").put("PublicKey","key"))
+  val row=node.publicRow()
+  assertEquals("cover.example",row.getString("serverName"))
+  assertEquals("proxy.example:443",row.getString("endpoint"))
+  assertFalse(row.toString().contains("secret"));assertFalse(row.has("PublicKey"))
+  val legacy=ProbeNode("old","Old","proxy.example:443",JSONObject()).publicRow()
+  assertEquals("",legacy.getString("serverName"))
+ }
+
  @Test fun recoveryPreservesCompletedRowsAndBoundsSources(){
  val real=InstrumentationRegistry.getInstrumentation().targetContext
  val dir=java.io.File(real.cacheDir,"probe-store-test-"+System.nanoTime()).apply{mkdirs()}
