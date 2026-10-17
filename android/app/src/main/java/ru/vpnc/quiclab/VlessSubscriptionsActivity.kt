@@ -20,6 +20,7 @@ class VlessSubscriptionsActivity:Activity(){
   body.addView(TextView(this).apply{text="Подписки VLESS";textSize=23f})
   body.addView(TextView(this).apply{text="HTTPS-ссылка на VLESS (текст, Base64 или JSON Xray). Обновление вручную, после просмотра изменений. Поддерживаются TCP TLS/REALITY. Исчезнувшие записи сохраняются; удалённые вручную могут вернуться при обновлении."})
   status=TextView(this);body.addView(status)
+  button("Проверить серверы"){startActivity(android.content.Intent(this,VlessProbeActivity::class.java))}
   button("Добавить подписку"){
    val fields=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
    val name=EditText(this).apply{hint="Название подписки";setSingleLine()}

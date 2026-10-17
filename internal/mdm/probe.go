@@ -192,3 +192,19 @@ func (s *Store) SaveProbe(id string, epoch int64, p ProbeSnapshot, now time.Time
 	n.Bindings[id] = b
 	return s.save(n)
 }
+
+func interruptRemoteProbes(b *bindingState, now time.Time) {
+	for id, p := range b.Probes {
+		if p.Initiator != "mdm" || (p.State != "running" && p.State != "queued") {
+			continue
+		}
+		p.State = "interrupted"
+		p.FinishedAt = now
+		for i := range p.Rows {
+			if p.Rows[i].Outcome == "running" || p.Rows[i].Outcome == "queued" {
+				p.Rows[i].Outcome = "interrupted"
+			}
+		}
+		b.Probes[id] = p
+	}
+}

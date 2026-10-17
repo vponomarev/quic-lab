@@ -130,14 +130,14 @@ internal class MdmController(
    MdmRight.RESEARCH->s.rights.research;MdmRight.RESEARCH_DIRECT->s.rights.researchDirect;MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
   }
  }
- internal fun poll(consume:(MdmState,MdmSyncResponse)->Unit):Boolean{
+ internal fun poll(wait:Boolean=true,consume:(MdmState,MdmSyncResponse)->Unit):Boolean{
   val state=store.read()
   if(!state.active || state.cleanupPending)return false
   val b=state.binding?:return false
   val events=store.document().optJSONArray("events")?:org.json.JSONArray()
   val sent=org.json.JSONArray();for(i in 0 until minOf(100,events.length()))sent.put(events.getJSONObject(i))
   val response=MdmSyncResponse.parse(send(b,"sync",
-   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,grantedRights=state.rights).json().also{if(!store.document().optBoolean("server_research_scope_v1"))it.optJSONObject("grantedRights")?.remove("researchDirect")},state.localGeneration,store.secret()).toString())
+   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,wait=wait,grantedRights=state.rights).json().also{if(!store.document().optBoolean("server_research_scope_v1"))it.optJSONObject("grantedRights")?.remove("researchDirect")},state.localGeneration,store.secret()).toString())
   synchronized(this){
    val latest=store.read()
    if(!latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
@@ -147,7 +147,7 @@ internal class MdmController(
     if(!permitted.active || permitted.cleanupPending || permitted.localGeneration!=state.localGeneration)return false
     val ids=(0 until sent.length()).map{sent.getJSONObject(it).getString("id")}.toSet()
     store.edit{j->val pending=j.optJSONArray("events")?:org.json.JSONArray();val keep=org.json.JSONArray();for(i in 0 until pending.length())if(pending.getJSONObject(i).optString("id") !in ids)keep.put(pending.getJSONObject(i));j.put("events",keep)}
-    store.edit{it.put("server_research_scope_v1",response.researchScopeSupported).put("server_vless_group_v1",response.vlessGroupSupported).put("server_vless_relay_v1",response.vlessRelaySupported)}
+    store.edit{it.put("server_research_scope_v1",response.researchScopeSupported).put("server_vless_group_v1",response.vlessGroupSupported).put("server_vless_relay_v1",response.vlessRelaySupported).put("server_vless_probe_v1",response.vlessProbeSupported)}
     consume(permitted,response)
    }
   }

@@ -61,7 +61,10 @@ func (p *VLESSProbe) probeRelay(ctx context.Context, raw json.RawMessage) string
 		if ctx.Err() != nil {
 			return probeError(ctx, e)
 		}
-		return "relay_auth"
+		if probeError(ctx, e) == "target_tls" {
+			return "relay_auth"
+		}
+		return "transport"
 	}
 	if e = g.bond.Session.ProbeData(info.ID); e != nil {
 		return "transport"

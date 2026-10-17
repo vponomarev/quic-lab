@@ -35,9 +35,9 @@ internal data class MdmSyncRequest(val bindingId:String,val epoch:Long,val appli
 }
 internal data class MdmConfigRevision(val revision:Long,val mode:String,val document:JSONObject,val expectedGeneration:Long=-1)
 internal data class MdmCommand(val id:String,val bindingId:String,val epoch:Long,val issuedAt:Instant,
- val expiresAt:Instant,val kind:String)
+ val expiresAt:Instant,val kind:String,val probe:JSONObject?=null)
 internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRevision?,val commands:List<MdmCommand>,
- val serverTime:Instant,val telemetryEnabled:Boolean=false,val researchScopeSupported:Boolean=false,val vlessGroupSupported:Boolean=false,val vlessRelaySupported:Boolean=false) {
+ val serverTime:Instant,val telemetryEnabled:Boolean=false,val researchScopeSupported:Boolean=false,val vlessGroupSupported:Boolean=false,val vlessRelaySupported:Boolean=false,val vlessProbeSupported:Boolean=false) {
  companion object {
   fun parse(raw:String):MdmSyncResponse {
    val j=JSONObject(raw);require(j.getInt("version")==1)
@@ -47,10 +47,10 @@ internal data class MdmSyncResponse(val epoch:Long,val desiredConfig:MdmConfigRe
    }
    val commands=j.optJSONArray("commands")?:JSONArray();require(commands.length()<=100)
    return MdmSyncResponse(j.getLong("epoch"),config,(0 until commands.length()).map { i ->
-    val c=commands.getJSONObject(i);val kind=c.getString("kind");require(kind=="vpn_start"||kind=="vpn_stop")
+    val c=commands.getJSONObject(i);val kind=c.getString("kind");require(kind=="vpn_start"||kind=="vpn_stop"||(kind=="vless_probe" && j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_probe_v1"}}==true))
     MdmCommand(c.getString("id"),c.getString("bindingId"),c.getLong("epoch"),
-     Instant.parse(c.getString("issuedAt")),Instant.parse(c.getString("expiresAt")),kind)
-   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="research_scope_v1"}}==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_group_v1"}}==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_relay_v1"}}==true)
+     Instant.parse(c.getString("issuedAt")),Instant.parse(c.getString("expiresAt")),kind,c.optJSONObject("probe"))
+   },Instant.parse(j.getString("serverTime")),j.optJSONObject("telemetry")?.optBoolean("enabled")==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="research_scope_v1"}}==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_group_v1"}}==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_relay_v1"}}==true,j.optJSONArray("capabilities")?.let{a->(0 until a.length()).any{a.optString(it)=="vless_probe_v1"}}==true)
   }
  }
 }

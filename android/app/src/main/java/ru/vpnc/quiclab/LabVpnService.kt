@@ -329,6 +329,8 @@ class LabVpnService : VpnService() {
     }
 
     companion object {
+        internal fun probeNetwork():android.net.Network?=liveService?.session?.probeNetwork()
+        internal fun protectProbe(fd:Long):Boolean=liveService?.protect(fd.toInt()) ?: !active
         @Volatile private var liveService: LabVpnService? = null
         internal fun stopForMdm(clearBudget:Boolean=false){check(Looper.myLooper()==Looper.getMainLooper());liveService?.let{it.shutdown(clearBudget);it.stopSelf()}}
         /** Diagnostics never create a service, a VPN run, or a replacement exit. */

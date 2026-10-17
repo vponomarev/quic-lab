@@ -72,3 +72,29 @@ func TestProbeSnapshots(t *testing.T) {
 		t.Fatal("revoked consent accepted")
 	}
 }
+
+func TestProbeResumeEndsPreviousRemoteRun(t *testing.T) {
+	s, b, r := reportFixture(t)
+	rights := Rights{Config: true, VPN: true, Telemetry: true}
+	s.Sync(b.ID, SyncRequest{Version: 1, Epoch: b.Epoch, GrantedRights: &rights}, testNow)
+	r.Capabilities = append(r.Capabilities, "vless_probe_v1")
+	r.ProbeSources = []ProbeSource{{ID: "group", Fingerprint: strings.Repeat("a", 64), Name: "Group"}}
+	if e := s.Report(b.ID, b.Epoch, r, testNow); e != nil {
+		t.Fatal(e)
+	}
+	cmd, e := s.QueueProbe(b.ID, "run", ProbeRequest{SourceID: "group", Fingerprint: strings.Repeat("a", 64), Action: "start"}, testNow)
+	if e != nil {
+		t.Fatal(e)
+	}
+	p := ProbeSnapshot{RunID: cmd.ID, SourceID: "group", Fingerprint: strings.Repeat("a", 64), Sequence: 1, Network: "wifi", Initiator: "mdm", State: "running", StartedAt: testNow, Rows: []ProbeRow{{ID: "node", Name: "Node", Endpoint: "example.org:443", Outcome: "running"}}}
+	if e = s.SaveProbe(b.ID, b.Epoch, p, testNow); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.Activate(b.ID, testNow.Add(time.Second)); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.DeviceState(b.ID)
+	if got.Probes["group"].State != "interrupted" {
+		t.Fatal("previous epoch still appears running")
+	}
+}

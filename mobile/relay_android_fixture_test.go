@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"quiclab/internal/gateway"
+	"quiclab/internal/probeecho"
+	"quiclab/internal/protocol"
 	"quiclab/internal/vless"
 	"sync/atomic"
 	"testing"
@@ -77,7 +79,7 @@ func TestRelayAndroidFixture(t *testing.T) {
 		port := slot.Addr().(*net.TCPAddr).Port
 		slot.Close()
 		key, _ := ecdh.X25519().GenerateKey(rand.Reader)
-		p, e := vless.StartServer(context.Background(), vless.ServerOptions{Listen: fmt.Sprintf("0.0.0.0:%d", port), Security: "reality", Mode: "demux-only", DemuxEndpoint: inner.Addr().String(), RealityTarget: disguise.Addr().String(), RealityServerNames: []string{"localhost"}, RealityPrivateKey: key.Bytes(), RealityShortIDs: []string{"aabb"}, Clients: []vless.ServerClient{{UUID: uuid}}})
+		p, e := vless.StartServer(context.Background(), vless.ServerOptions{Listen: fmt.Sprintf("0.0.0.0:%d", port), Security: "reality", Mode: "standalone", RealityTarget: disguise.Addr().String(), RealityServerNames: []string{"localhost"}, RealityPrivateKey: key.Bytes(), RealityShortIDs: []string{"aabb"}, Clients: []vless.ServerClient{{UUID: uuid}}})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -123,7 +125,16 @@ func TestRelayAndroidFixture(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	echoProbe := probeecho.NewHandler()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			protocol.CapabilitiesHandler(protocol.Capabilities{ControlVersion: 1, DataVersion: protocol.DataVersion}).ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/api/v1/probe/echo" {
+			echoProbe.ServeHTTP(w, r)
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			http.Error(w, "unauthorized", 401)
 			return
@@ -144,7 +155,7 @@ func TestRelayAndroidFixture(t *testing.T) {
 	control := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	defer control.Close()
 	go control.Serve(ctl)
-	payload := map[string]any{"group": map[string]any{"vless_uris": uris, "vless_config": mustImportRelay(t, uris[0])}, "target": map[string]any{"transport": "https", "endpoint": inner.Addr().String(), "hostname": "localhost", "certificate": cp, "key": kp, "ca": cp}, "probeHost": "192.168.5.214", "udpPort": udp.LocalAddr().(*net.UDPAddr).Port, "probePort": dst.Addr().(*net.TCPAddr).Port, "control": fmt.Sprintf("https://192.168.5.214:%d", ctl.Addr().(*net.TCPAddr).Port), "token": token}
+	payload := map[string]any{"group": map[string]any{"vless_uris": uris, "vless_config": mustImportRelay(t, uris[0])}, "target": map[string]any{"transport": "https", "endpoint": inner.Addr().String(), "hostname": "localhost", "certificate": cp, "key": kp, "ca": cp, "control_url": fmt.Sprintf("https://localhost:%d", ctl.Addr().(*net.TCPAddr).Port)}, "probeHost": "192.168.5.214", "udpPort": udp.LocalAddr().(*net.UDPAddr).Port, "probePort": dst.Addr().(*net.TCPAddr).Port, "control": fmt.Sprintf("https://192.168.5.214:%d", ctl.Addr().(*net.TCPAddr).Port), "token": token}
 	raw, _ := json.Marshal(payload)
 	if e = os.WriteFile(filepath.Join(dir, "fixture.json"), raw, 0600); e != nil {
 		t.Fatal(e)

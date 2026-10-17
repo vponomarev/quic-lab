@@ -31,6 +31,7 @@
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
             <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false" />
         </service>
+        <activity android:name=".VlessProbeActivity" android:exported="false" />
         <activity android:name=".VlessSubscriptionsActivity" android:exported="false" />
         <activity android:name=".MdmTelemetryActivity" android:exported="false" />
         <service android:name=".MdmTelemetryService" android:exported="false" android:foregroundServiceType="location" />

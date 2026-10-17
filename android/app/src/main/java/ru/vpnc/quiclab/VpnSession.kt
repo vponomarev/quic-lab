@@ -204,7 +204,8 @@ internal class VpnSession(
     private var alive = false
     private var reconnectRequired = false
     @Volatile private var lastReplyAt = 0L
-    private var activeNetwork: Network? = null
+    @Volatile private var activeNetwork: Network? = null
+    fun probeNetwork():Network?=activeNetwork
     private var activeKind = WIFI
     private var failedNetwork: Network? = null
     private var automatic = true

@@ -51,7 +51,7 @@ internal object MdmRuntime {
    override fun sync(){
     var delivered:Pair<MdmState,MdmSyncResponse>?=null
     var received=android.os.SystemClock.elapsedRealtime()
-    if(!c.poll{state,response->
+    if(!c.poll(wait=!VlessProbeCoordinator.busy()){state,response->
      MdmTelemetry.setServerEnabled(context,response.telemetryEnabled)
      delivered=state to response;received=android.os.SystemClock.elapsedRealtime()
     })
@@ -60,11 +60,11 @@ internal object MdmRuntime {
     val desired=response.desiredConfig
     var applyFailed=false
     if(desired!=null){val result=MdmApplyCoordinator(context).apply(state,desired);applyFailed=!result.configurationApplied;MdmVpnControl.event(context,"config_result",if(result.configurationApplied)"applied" else result.errorCode,result.revision);if(result.configurationApplied && result.errorCode.isNotEmpty())MdmVpnControl.event(context,"config_vpn_result",result.errorCode,result.revision)}
-    for(command in response.commands)MdmVpnControl.execute(context,state,command,response.serverTime,received)
+    for(command in response.commands)if(command.kind=="vless_probe")MdmProbeControl.execute(context,state,command,response.serverTime) else MdmVpnControl.execute(context,state,command,response.serverTime,received)
     runCatching{c.report{current->MdmDeviceReport.snapshot(context,current)}}
     MdmTelemetry.reconcile(context)
     runCatching{MdmTelemetry.upload(context)}
-    if(desired!=null || response.commands.isNotEmpty())Thread.sleep(if(applyFailed)15000 else 1000)
+    if(desired!=null || response.commands.isNotEmpty() || VlessProbeCoordinator.busy())Thread.sleep(if(applyFailed)15000 else 1000)
    }
    override fun pause(){c.pause()}
    override fun close(){closed.set(true);c.cancelCalls()}

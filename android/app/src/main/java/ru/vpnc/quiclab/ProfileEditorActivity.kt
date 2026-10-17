@@ -241,6 +241,7 @@ class ProfileEditorActivity : Activity() {
             }
         }
         var panel = section("ПОДКЛЮЧЕНИЕ")
+        button(panel,"Проверить серверы VLESS"){startActivity(android.content.Intent(this,VlessProbeActivity::class.java).putExtra("source",profileId))}
         if(prefs.getBoolean("managed_profile",false)) button(panel,"Обновить конфигурацию с сервера") { leaveDraft { updateProfile(profileId) } }
         transport =
             choice(

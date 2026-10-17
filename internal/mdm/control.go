@@ -17,6 +17,7 @@ func (s *Store) Activate(id string, now time.Time) (Binding, error) {
 	}
 	n := s.clone()
 	b = n.Bindings[id]
+	interruptRemoteProbes(&b, now)
 	b.Binding.Epoch++
 	b.Binding.Active = true
 	b.Commands = nil
@@ -36,6 +37,7 @@ func (s *Store) Pause(id string, epoch int64, now time.Time) error {
 	}
 	n := s.clone()
 	b = n.Bindings[id]
+	interruptRemoteProbes(&b, now)
 	b.Binding.Active = false
 	b.Commands = nil
 	if len(b.Audit) < 10000 {

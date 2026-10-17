@@ -76,6 +76,8 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("POST /mdm/config", w.mdmConfig)
 	m.HandleFunc("POST /mdm/command", w.mdmCommand)
 	m.HandleFunc("POST /mdm/probe", w.mdmProbe)
+	m.HandleFunc("GET /mdm/probes", w.mdmProbes)
+	m.HandleFunc("GET /mdm-probe.js", w.mdmProbeScript)
 	m.HandleFunc("POST /mdm/policy", w.mdmPolicy)
 	m.HandleFunc("POST /mdm/delete-telemetry", w.mdmDeleteTelemetry)
 	if w.MDM != nil {

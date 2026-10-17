@@ -100,9 +100,9 @@ func TestVLESSProbeRealCarrierRelayAndCancel(t *testing.T) {
 	inner.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, ClientCAs: roots, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
 	inner.StartTLS()
 	defer inner.Close()
-	options := map[string]any{"target": echo.URL, "gateway": gatewayConfig{Transport: "https", Endpoint: inner.Listener.Addr().String(), Hostname: "localhost", Certificate: cp, Key: kp, CA: cp}}
+	options := map[string]any{"target": echo.URL, "ca": cp, "gateway": gatewayConfig{Transport: "https", Endpoint: inner.Listener.Addr().String(), Hostname: "localhost", Certificate: cp, Key: kp, CA: cp}}
 	raw, _ := json.Marshal(options)
-	result, e := p.run(string(raw), &tls.Config{RootCAs: roots, ServerName: "localhost"})
+	result, e := p.Run(string(raw))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -110,6 +110,16 @@ func TestVLESSProbeRealCarrierRelayAndCancel(t *testing.T) {
 	json.Unmarshal([]byte(result), &v)
 	if v.Outcome != "success" || v.RelayOutcome != "success" || v.EchoSucceeded != 3 {
 		t.Fatal(result)
+	}
+	options["gateway"] = gatewayConfig{Endpoint: inner.Listener.Addr().String(), Hostname: "wrong.example", Certificate: cp, Key: kp, CA: cp}
+	raw, _ = json.Marshal(options)
+	result, e = p.Run(string(raw))
+	if e != nil {
+		t.Fatal(e)
+	}
+	json.Unmarshal([]byte(result), &v)
+	if v.RelayOutcome != "relay_auth" {
+		t.Fatalf("certificate mismatch must be authentication failure: %s", result)
 	}
 	options["gateway"] = gatewayConfig{Endpoint: inner.Listener.Addr().String(), Hostname: "localhost"}
 	raw, _ = json.Marshal(options)

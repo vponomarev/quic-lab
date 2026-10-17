@@ -24,6 +24,7 @@ type probeRunResult struct {
 	RelayOutcome  string `json:"relayOutcome"`
 }
 type probeRunOptions struct {
+	CA      string          `json:"ca,omitempty"`
 	Target  string          `json:"target"`
 	Gateway json.RawMessage `json:"gateway,omitempty"`
 }
@@ -43,6 +44,13 @@ func (p *VLESSProbe) run(raw string, tc *tls.Config) (string, error) {
 	u, e := url.Parse(o.Target)
 	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || len(o.Target) > 2048 {
 		return "", errors.New("HTTPS target required")
+	}
+	if o.CA != "" {
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM([]byte(o.CA)) {
+			return "", errors.New("invalid probe CA")
+		}
+		tc = &tls.Config{RootCAs: roots}
 	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(p.ctx, 20*time.Second)
@@ -108,7 +116,9 @@ func probeError(ctx context.Context, e error) string {
 	}
 	var cert *tls.CertificateVerificationError
 	var unknown x509.UnknownAuthorityError
-	if errors.As(e, &cert) || errors.As(e, &unknown) {
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	if errors.As(e, &cert) || errors.As(e, &unknown) || errors.As(e, &hostname) || errors.As(e, &invalid) {
 		return "target_tls"
 	}
 	var timeout interface{ Timeout() bool }

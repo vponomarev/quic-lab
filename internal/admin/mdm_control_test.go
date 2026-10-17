@@ -49,6 +49,10 @@ func TestMDMControlRoutesGuarded(t *testing.T) {
 	if out.Code != 200 || strings.Contains(out.Body.String(), strings.Repeat("c", 64)) {
 		t.Fatal("state leaks secret", out.Code)
 	}
+	page := call(h, "GET", "/mdm/probes?id="+b.ID, "", cookie)
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Проверяет телефон") {
+		t.Fatal("probe page missing", page.Code)
+	}
 	form.Set("csrf", "wrong")
 	if out = call(h, "POST", "/mdm/config", form.Encode(), cookie); out.Code != 403 {
 		t.Fatal("csrf", out.Code)

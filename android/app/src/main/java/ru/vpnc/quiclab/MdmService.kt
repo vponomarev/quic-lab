@@ -43,6 +43,7 @@ class MdmService:Service(){
   session=selected
   try{
    AppServiceNotification.start(this,"mdm",if(Build.VERSION.SDK_INT>=34)ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
+   foregroundReady=true
    VpnBudgetRun.sharedForContext(this).acquireControl(VpnBudgetSettings.limitBytes(this));retained=true
    // Retry only once management has a legitimate foreground service.
    VpnProcessRecovery.restore(this)
@@ -69,11 +70,13 @@ class MdmService:Service(){
   return START_STICKY
  }
  override fun onDestroy(){
+  foregroundReady=false
   ending.set(true);handler.removeCallbacks(checkpoint);session?.close();worker?.interrupt()
   if(retained){retained=false;runCatching{VpnBudgetRun.sharedForContext(this).releaseControl()}}
   session=null;AppServiceNotification.stop(this);super.onDestroy()
  }
  companion object {
+  @Volatile internal var foregroundReady=false
   @Volatile internal var owner:((Context)->MdmSession?)?=null
   @Volatile internal var status="MDM выключено"
   fun start(context:Context){
