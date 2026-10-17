@@ -49,12 +49,13 @@ type ConfigRevision struct {
 	Document           json.RawMessage `json:"document"`
 }
 type Command struct {
-	ID        string    `json:"id"`
-	BindingID string    `json:"bindingId"`
-	Epoch     int64     `json:"epoch"`
-	IssuedAt  time.Time `json:"issuedAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	Kind      string    `json:"kind"`
+	Probe     *ProbeRequest `json:"probe,omitempty"`
+	ID        string        `json:"id"`
+	BindingID string        `json:"bindingId"`
+	Epoch     int64         `json:"epoch"`
+	IssuedAt  time.Time     `json:"issuedAt"`
+	ExpiresAt time.Time     `json:"expiresAt"`
+	Kind      string        `json:"kind"`
 }
 type Event struct {
 	ID         string    `json:"id"`

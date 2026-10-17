@@ -26,6 +26,7 @@ type auditEntry struct {
 	ReceivedAt time.Time
 }
 type bindingState struct {
+	Probes            map[string]ProbeSnapshot
 	ResearchDeviceIDs []string
 	Report            *DeviceReport
 	ReportHash        string

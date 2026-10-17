@@ -26,6 +26,10 @@ func TestMDMControlRoutesGuarded(t *testing.T) {
 		t.Fatal(e)
 	}
 	h := w.Handler()
+	if out := call(h, "POST", "/mdm/probe", "", nil); out.Code != 303 {
+		t.Fatal("public probe route", out.Code)
+	}
+
 	if out := call(h, "GET", "/mdm/state?id="+b.ID, "", nil); out.Code != 303 {
 		t.Fatal("public state")
 	}

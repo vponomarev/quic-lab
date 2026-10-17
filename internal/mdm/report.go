@@ -39,6 +39,8 @@ type RelayStatus struct {
 	Paths        []RelayPathStatus `json:"paths"`
 }
 type DeviceReport struct {
+	ProbeSources      []ProbeSource        `json:"probeSources,omitempty"`
+	ProbeSnapshots    []ProbeSnapshot      `json:"probeSnapshots,omitempty"`
 	RelayStatus       *RelayStatus         `json:"relayStatus,omitempty"`
 	VLESSGroupEvents  []VLESSGroupEvent    `json:"vlessGroupEvents,omitempty"`
 	ResearchDeviceIDs []string             `json:"researchDeviceIds,omitempty"`
@@ -55,13 +57,14 @@ type DeviceReport struct {
 	Inventory         *AppInventory        `json:"inventory,omitempty"`
 }
 type DeviceState struct {
-	Binding    Binding         `json:"binding"`
-	UserID     string          `json:"userId"`
-	Report     *DeviceReport   `json:"report,omitempty"`
-	ReceivedAt time.Time       `json:"receivedAt"`
-	Desired    *ConfigRevision `json:"desired,omitempty"`
-	Commands   []Command       `json:"commands"`
-	Events     []Event         `json:"events"`
+	Probes     map[string]ProbeSnapshot `json:"probes,omitempty"`
+	Binding    Binding                  `json:"binding"`
+	UserID     string                   `json:"userId"`
+	Report     *DeviceReport            `json:"report,omitempty"`
+	ReceivedAt time.Time                `json:"receivedAt"`
+	Desired    *ConfigRevision          `json:"desired,omitempty"`
+	Commands   []Command                `json:"commands"`
+	Events     []Event                  `json:"events"`
 }
 type requestRecord struct {
 	Hash    string
@@ -81,6 +84,16 @@ func supported(b bindingState) bool {
 	return false
 }
 func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) error {
+	if len(r.ProbeSources) > 32 || len(r.ProbeSnapshots) > 1 {
+		return ErrInvalid
+	}
+	seenSources := map[string]bool{}
+	for _, p := range r.ProbeSources {
+		if !validProbeSource(p) || seenSources[p.ID] {
+			return ErrInvalid
+		}
+		seenSources[p.ID] = true
+	}
 	if x := r.RelayStatus; x != nil {
 		if x.LostSessions < 0 || x.LostSessions > 1000000 || !profileID.MatchString(x.ExitID) || x.Generation < 0 || !oneOf(x.State, "ready", "degraded", "no_path", "session_lost", "stopped") || len(x.Paths) > 2 {
 			return ErrInvalid
@@ -210,7 +223,15 @@ func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) er
 			}
 		}
 	}
+	if len(r.ProbeSources) > 0 && (!b.Binding.GrantedRights.VPN || !b.Binding.GrantedRights.Telemetry) {
+		return ErrUnauthorized
+	}
 	b.Report = &own
+	for _, p := range r.ProbeSnapshots {
+		if e := mergeProbe(&b, p, now); e != nil {
+			return e
+		}
+	}
 	b.ReportHash = hash
 	b.ReceivedAt = now
 	n.Bindings[id] = b
@@ -224,7 +245,7 @@ func (s *Store) DeviceState(id string) (DeviceState, error) {
 		return DeviceState{}, ErrUnauthorized
 	}
 	b = s.clone().Bindings[id]
-	out := DeviceState{Binding: b.Binding, UserID: b.UserID, Report: b.Report, ReceivedAt: b.ReceivedAt, Desired: b.Desired, Commands: b.Commands, Events: []Event{}}
+	out := DeviceState{Probes: b.Probes, Binding: b.Binding, UserID: b.UserID, Report: b.Report, ReceivedAt: b.ReceivedAt, Desired: b.Desired, Commands: b.Commands, Events: []Event{}}
 	// Credential replacement is write-only in the ordinary admin read model.
 	if out.Desired != nil {
 		var doc ConfigurationDocument
