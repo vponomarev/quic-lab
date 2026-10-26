@@ -14,6 +14,7 @@ import (
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport/internet"
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
+	_ "github.com/xtls/xray-core/transport/internet/websocket"
 )
 
 var engineInit sync.Mutex

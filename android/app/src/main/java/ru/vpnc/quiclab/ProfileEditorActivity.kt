@@ -29,6 +29,7 @@ class ProfileEditorActivity : Activity() {
     private lateinit var transport: Spinner
     private lateinit var relayExit: Spinner
     private var relayIds=listOf("")
+    private val groupMembers=mutableSetOf<String>()
     private lateinit var mode: Spinner
     private lateinit var endpoint: EditText
     private lateinit var hostname: EditText
@@ -251,7 +252,7 @@ class ProfileEditorActivity : Activity() {
                 transportTypes.indexOf(prefs.getString("transport", "quic")).coerceAtLeast(0),
             )
         val relayTargets=VpnProfiles.list(this).filter {p->
-            if(p.id==profileId)false else runCatching {
+            if(p.id==profileId || !MdmConfiguration.canSelectProfile(this,p.id))false else runCatching {
                 val pref=VpnConfiguration.effectivePreferences(this,p.id)
                 pref.getString("transport","quic") in setOf("quic","https") &&
                     (!pref.getString("https_endpoint","").isNullOrBlank() || pref.getString("transport","")=="https") &&
@@ -260,10 +261,27 @@ class ProfileEditorActivity : Activity() {
         }
         val savedRelay=prefs.getString("relay_exit_profile_id","").orEmpty()
         relayIds=listOf("")+relayTargets.map{it.id}
-        var relayLabels=listOf("Напрямую")+relayTargets.map{"Через профиль QUIC Lab · ${it.name}"}
+        var relayLabels=listOf("Обычный · напрямую")+relayTargets.map{"HA · общий выход ${it.name}"}
         if(savedRelay.isNotBlank() && savedRelay !in relayIds){relayIds=relayIds+savedRelay;relayLabels=relayLabels+"Недоступный профиль общего выхода"}
-        relayExit=choice(panel,"Выход VLESS",relayLabels.toTypedArray(),relayIds.indexOf(savedRelay).coerceAtLeast(0))
-        label(panel,"Общий выход: основной и резервный VLESS-пути через один сервер QUIC Lab. Включение переподключает VPN. Прямого обхода при отказе нет.")
+        relayExit=choice(panel,"Режим всей группы",relayLabels.toTypedArray(),relayIds.indexOf(savedRelay).coerceAtLeast(0))
+        label(panel,"Общий выход: основной и резервный пути через один сервер QUIC Lab. Включение переподключает VPN. Прямого обхода при отказе нет.")
+        groupMembers.clear();groupMembers.addAll(prefs.getStringSet(AdaptiveGroups.MEMBERS,emptySet()).orEmpty())
+        val membersButton=Button(this).apply { text="Профили автоматической группы: ${groupMembers.size+1}" }
+        panel.addView(membersButton)
+        membersButton.setOnClickListener {
+            val choices=VpnProfiles.list(this).filter { it.id!=profileId && MdmConfiguration.canSelectProfile(this,it.id) &&
+                VpnConfiguration.effectivePreferences(this,it.id).getString("transport","") in AdaptiveGroups.SUPPORTED }
+            val selected=choices.map{it.id in groupMembers}.toBooleanArray()
+            AlertDialog.Builder(this).setTitle("Подключения · текущий профиль включён")
+                .setMultiChoiceItems(choices.map{it.name}.toTypedArray(),selected){_,index,checked->selected[index]=checked}
+                .setPositiveButton("Применить"){_,_->
+                    groupMembers.clear();choices.forEachIndexed{index,p->if(selected[index])groupMembers.add(p.id)}
+                    prefs.edit().putStringSet(AdaptiveGroups.MEMBERS,groupMembers).apply()
+                    membersButton.text="Профили автоматической группы: ${groupMembers.size+1}"
+                }.setNegativeButton("Отмена",null).show()
+        }
+        label(panel,"Подписка считается одним логическим подключением, даже если узлы импортированы отдельно. Лимит группы: 16 подключений, 32 профиля, 4096 узлов. Правила трафика задаёт этот профиль. Группа поддерживает VLESS, AWG, QUIC и HTTPS. Для HA требуется общий выход QUIC Lab.")
+        label(panel,"Участники группы сохраняются только на этом устройстве и пока не переносятся экспортом или MDM. После переноса настройте состав группы заново.")
         endpoint = field(panel, "Сервер · домен:порт", "endpoint")
         hostname = field(panel, "Имя сервера в сертификате TLS", "hostname")
         hostname.isEnabled = selectedTransport() !in setOf("awg", "vless")
@@ -571,7 +589,7 @@ class ProfileEditorActivity : Activity() {
     private fun updateTransportControls() {
         val kind=selectedTransport()
         val managed=prefs.getBoolean("managed_profile",false)
-        relayExit.isEnabled=kind=="vless"
+        relayExit.isEnabled=kind in AdaptiveGroups.SUPPORTED
         hostname.isEnabled=!managed && kind !in setOf("awg","vless")
         endpoint.isEnabled=!managed && kind!="vless"
         ca.isEnabled=!managed && kind!="vless"
@@ -591,8 +609,14 @@ class ProfileEditorActivity : Activity() {
         val keys = pendingIdentity ?: VpnIdentity.load(this,profileId)
         require(when(selectedTransport()) { "awg" -> keys.optString("awg_config").isNotBlank(); "vless" -> keys.optString("vless_config").isNotBlank(); else -> keys.has("certificate") }) { "Для другого протокола импортируйте отдельный профиль" }
         val relayId=relayIds[relayExit.selectedItemPosition]
-        require(relayId.isBlank() || selectedTransport()=="vless") {"Общий выход доступен только для VLESS"}
+        require(relayId.isBlank() || selectedTransport() in AdaptiveGroups.SUPPORTED) {"Транспорт не поддерживает общий выход"}
         require(relayId.isBlank() || VpnProfiles.list(this).any{it.id==relayId}) {"Профиль общего выхода отсутствует"}
+        require(groupMembers.isEmpty() || selectedTransport() in AdaptiveGroups.SUPPORTED){"Транспорт не поддерживает автоматическую группу"}
+        require(groupMembers.size<=31){"Не более 32 профилей в группе"}
+        if(groupMembers.isNotEmpty()){
+            val logical=AdaptiveGroups.logicalConnections(VlessSubscriptions.membershipSnapshot(this),VlessSubscriptions.list(this))
+            require((groupMembers+profileId).map{logical[it] ?: it}.distinct().size<=16){"Не более 16 логических подключений в группе"}
+        }
         prefs
             .edit()
             .putString("relay_exit_profile_id",relayId)

@@ -90,11 +90,18 @@ func (r *socketRouter) Dial(ctx context.Context, source xnet.Address, dest xnet.
 		return nil, ErrUnknownEngine
 	}
 	network := "tcp4"
+	if dest.Address.Family().IsIPv6() {
+		network = "tcp6"
+	}
 	if dest.Network == xnet.Network_UDP {
 		if _, ok := o.factory.(*serverSockets); !ok {
 			return nil, ErrUnsupportedSocket
 		}
-		network = "udp4"
+		if dest.Address.Family().IsIPv6() {
+			network = "udp6"
+		} else {
+			network = "udp4"
+		}
 	}
 	dialCtx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(o.ctx, cancel)

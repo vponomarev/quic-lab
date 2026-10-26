@@ -27,7 +27,7 @@ internal object MdmProbeControl{
   if(!state.rights.vpn||!state.rights.telemetry||!MdmStore(c).document().optBoolean("server_vless_probe_v1"))return
   val sources=VlessProbeCoordinator.sources(c);out.put("probeSources",org.json.JSONArray(sources.map{it.publicJSON()}))
   val all=VlessProbeCoordinator.results(c)
-  val run=all.keys().asSequence().map{all.getJSONObject(it)}.filter{r->VlessProbePolicy.owns(r,state)&&sources.any{it.id==r.optString("sourceId")&&it.fingerprint==r.optString("fingerprint")}}.maxByOrNull{it.optString("startedAt")}
+  val run=all.keys().asSequence().map{all.getJSONObject(it)}.filter{r->VlessProbePolicy.reportableV1(r)&&VlessProbePolicy.owns(r,state)&&sources.any{it.id==r.optString("sourceId")&&it.fingerprint==r.optString("fingerprint")}}.maxByOrNull{it.optString("startedAt")}
   if(run!=null){val wire=JSONObject(run.toString());for(k in listOf("ownerBinding","ownerEpoch","ownerGeneration"))wire.remove(k);out.put("probeSnapshots",org.json.JSONArray().put(wire))}
  }
 }

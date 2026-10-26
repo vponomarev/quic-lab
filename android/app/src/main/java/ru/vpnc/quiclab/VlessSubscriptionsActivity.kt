@@ -52,13 +52,13 @@ class VlessSubscriptionsActivity:Activity(){
     dialog.dismiss()
     run("Готовим изменения…",{VlessSubscriptions.prepare(this,name,url,parsed.copy(entries=chosen),asGroup)}){p->
      AlertDialog.Builder(this).setTitle("Изменения подписки")
-      .setMessage(p.summary+"\nВыбранные серверы импортируются отдельными подключениями или одной группой с автоматической ротацией. DNS, маршрутизация и балансировка Xray не переносятся. Общий лимит — 32 подключения.\nVPN при применении может переподключиться.")
+      .setMessage(p.summary+"\nВыбранные серверы импортируются отдельными подключениями или одной группой с автоматической ротацией. DNS, маршрутизация и балансировка Xray не переносятся. Общий лимит — 32 подключения, в одной группе — до 256 серверов. Для переноса группы более 32 серверов нужен обновлённый клиент.\nVPN при применении может переподключиться.")
       .setNegativeButton("Отмена",null).setPositiveButton("Применить"){_,_->run("Применяем…",{LocalConfigurationApply.apply(this,p)}){render();status.text="Подписка обновлена"}}.show()
     }
    }}
    dialog.show()
   }
  }
- private fun <T> run(label:String,work:()->T,done:(T)->Unit){if(busy)return;busy=true;status.text=label;worker.execute{val result=runCatching(work);runOnUiThread{busy=false;if(isDestroyed||isFinishing)return@runOnUiThread;result.fold(done){status.text="Не удалось обновить подписку. Проверьте HTTPS-ссылку, доступность сервера, TCP TLS/REALITY, лимит 32 подключений и права MDM. Настройки не изменены."}}}}
+ private fun <T> run(label:String,work:()->T,done:(T)->Unit){if(busy)return;busy=true;status.text=label;worker.execute{val result=runCatching(work);runOnUiThread{busy=false;if(isDestroyed||isFinishing)return@runOnUiThread;result.fold(done){status.text="Не удалось обновить подписку. Проверьте HTTPS-ссылку, доступность сервера, TCP TLS/REALITY, лимиты 32 подключений / 256 серверов в группе и права MDM. Настройки не изменены."}}}}
  override fun onDestroy(){worker.shutdownNow();super.onDestroy()}
 }

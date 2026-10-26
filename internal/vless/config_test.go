@@ -17,6 +17,7 @@ import (
 	outbound "github.com/xtls/xray-core/proxy/vless/outbound"
 	"github.com/xtls/xray-core/transport/internet/reality"
 	xtls "github.com/xtls/xray-core/transport/internet/tls"
+	"github.com/xtls/xray-core/transport/internet/websocket"
 )
 
 func validConfig() Config {
@@ -65,6 +66,42 @@ func TestBuildConfigRestrictsRuntime(t *testing.T) {
 	a := raw.(*account.Account)
 	if a.Encryption != "none" || a.Testpre != 0 || a.Reverse != nil {
 		t.Fatal("unexpected account behavior")
+	}
+}
+
+func TestBuildConfigWebSocketTLS(t *testing.T) {
+	c := validConfig()
+	c.Transport = "ws"
+	c.WebSocketPath = "/tunnel"
+	c.WebSocketHost = "cover.invalid"
+	c.Endpoint = "[2001:db8::4]:443"
+	cfg, err := buildConfig(c)
+	if err != nil {
+		t.Fatalf("WebSocket config rejected: %v", err)
+	}
+	raw, _ := cfg.Outbound[0].SenderSettings.GetInstance()
+	sender := raw.(*proxyman.SenderConfig)
+	if sender.StreamSettings.ProtocolName != "websocket" {
+		t.Fatalf("transport = %q", sender.StreamSettings.ProtocolName)
+	}
+	if len(sender.StreamSettings.TransportSettings) != 1 || sender.StreamSettings.TransportSettings[0].ProtocolName != "websocket" {
+		t.Fatalf("unexpected transport settings: %+v", sender.StreamSettings.TransportSettings)
+	}
+	settings, err := sender.StreamSettings.TransportSettings[0].Settings.GetInstance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := settings.(*websocket.Config)
+	if ws.Path != "/tunnel" || ws.Host != "cover.invalid" {
+		t.Fatalf("WebSocket config changed: %+v", ws)
+	}
+}
+
+func TestBuildConfigAcceptsEdgeFingerprint(t *testing.T) {
+	c := validConfig()
+	c.Fingerprint = "edge"
+	if _, err := buildConfig(c); err != nil {
+		t.Fatalf("Xray-supported Edge fingerprint rejected: %v", err)
 	}
 }
 func TestBuildConfigRealityAndVision(t *testing.T) {
@@ -117,7 +154,13 @@ func TestBuildConfigPrivateTLSRoot(t *testing.T) {
 }
 func TestBuildConfigRejectsUnsupportedInputs(t *testing.T) {
 	cases := map[string]func(*Config){
-		"missing endpoint": func(c *Config) { c.Endpoint = "" }, "missing port": func(c *Config) { c.Endpoint = "outer.invalid" }, "zero port": func(c *Config) { c.Endpoint = "outer.invalid:0" }, "large port": func(c *Config) { c.Endpoint = "outer.invalid:65536" }, "ipv6": func(c *Config) { c.Endpoint = "[::1]:443" }, "url endpoint": func(c *Config) { c.Endpoint = "https://outer.invalid:443" },
+		"missing endpoint": func(c *Config) { c.Endpoint = "" }, "missing port": func(c *Config) { c.Endpoint = "outer.invalid" }, "zero port": func(c *Config) { c.Endpoint = "outer.invalid:0" }, "large port": func(c *Config) { c.Endpoint = "outer.invalid:65536" }, "invalid ipv6": func(c *Config) { c.Endpoint = "[::]:443" }, "url endpoint": func(c *Config) { c.Endpoint = "https://outer.invalid:443" },
+		"websocket vision": func(c *Config) { c.Transport = "ws"; c.Flow = "xtls-rprx-vision" }, "websocket reality": func(c *Config) {
+			c.Transport = "ws"
+			c.Security = "reality"
+			c.RealityPublicKey = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+			c.ShortID = "ab"
+		},
 		"invalid uuid": func(c *Config) { c.UUID = "secret-invalid-uuid" }, "uuid alias": func(c *Config) { c.UUID = "device-name" }, "security": func(c *Config) { c.Security = "none" }, "flow": func(c *Config) { c.Flow = "secret-unsupported-flow" }, "fingerprint": func(c *Config) { c.Fingerprint = "secret-unsupported-fingerprint" }, "missing name": func(c *Config) { c.ServerName = "" }, "name URL": func(c *Config) { c.ServerName = "https://server.invalid" },
 		"special name": func(c *Config) { c.ServerName = "frommitm" }, "TLS reality key": func(c *Config) { c.RealityPublicKey = "secret-key" }, "TLS shortid": func(c *Config) { c.ShortID = "ab" }, "invalid root": func(c *Config) { c.RootPEM = []byte("secret-not-a-cert") },
 		"reality missing key": func(c *Config) { c.Security = "reality" }, "reality short key": func(c *Config) {

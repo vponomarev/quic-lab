@@ -33,6 +33,7 @@ import (
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	xtls "github.com/xtls/xray-core/transport/internet/tls"
+	"github.com/xtls/xray-core/transport/internet/websocket"
 	"github.com/xtls/xray-core/transport/pipe"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -146,6 +147,66 @@ func TestEngineTLSRoundTripAndWrongIdentity(t *testing.T) {
 				t.Fatal("flow did not finish within bound")
 			}
 		})
+	}
+}
+
+func TestEngineWebSocketTLSRoundTrip(t *testing.T) {
+	cert, key := fixtureCertificate(t)
+	portListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := uint32(portListener.Addr().(*net.TCPAddr).Port)
+	portListener.Close()
+	sec := serial.ToTypedMessage(&xtls.Config{Certificate: []*xtls.Certificate{{Certificate: cert, Key: key, OneTimeLoading: true}}})
+	ws := serial.ToTypedMessage(&websocket.Config{Path: "/tunnel", Host: "cover.invalid"})
+	cfg := &core.Config{
+		App: []*serial.TypedMessage{serial.ToTypedMessage(&emptypb.Empty{}), serial.ToTypedMessage(&proxyman.OutboundConfig{}), serial.ToTypedMessage(&proxyman.InboundConfig{})},
+		Inbound: []*core.InboundHandlerConfig{{
+			Tag:              "fixture",
+			ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{Listen: xnet.NewIPOrDomain(xnet.LocalHostIP), PortList: &xnet.PortList{Range: []*xnet.PortRange{{From: port, To: port}}}, StreamSettings: &internet.StreamConfig{ProtocolName: "websocket", TransportSettings: []*internet.TransportConfig{{ProtocolName: "websocket", Settings: ws}}, SecurityType: sec.Type, SecuritySettings: []*serial.TypedMessage{sec}}}),
+			ProxySettings:    serial.ToTypedMessage(&inbound.Config{Decryption: "none", Clients: []*protocol.User{{Email: "fixture", Account: serial.ToTypedMessage(&account.Account{Id: "11111111-1111-4111-8111-111111111111", Encryption: "none"})}}}),
+		}},
+		Outbound: []*core.OutboundHandlerConfig{{ProxySettings: serial.ToTypedMessage(&freedom.Config{})}},
+	}
+	server, err := newEngine(context.Background(), cfg, &net.Dialer{})
+	if err != nil {
+		t.Fatalf("start WebSocket/TLS fixture: %v", err)
+	}
+	defer server.Close()
+	echo, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			c, e := echo.Accept()
+			if e != nil {
+				return
+			}
+			go func() { defer c.Close(); _, _ = io.Copy(c, c) }()
+		}
+	}()
+	c := Config{Endpoint: net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), Transport: "ws", WebSocketPath: "/tunnel", WebSocketHost: "cover.invalid", UUID: "11111111-1111-4111-8111-111111111111", Security: "tls", ServerName: "fixture.invalid", Fingerprint: "chrome", RootPEM: cert}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := New(ctx, c, &net.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	conn, err := client.DialContext(ctx, "tcp4", echo.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = conn.Write([]byte("ws-vless-fixture")); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len("ws-vless-fixture"))
+	if _, err = io.ReadFull(conn, got); err != nil || string(got) != "ws-vless-fixture" {
+		t.Fatalf("WebSocket VLESS payload = %q, error = %v", got, err)
 	}
 }
 func TestServerRevokeRealTLSFlow(t *testing.T) {

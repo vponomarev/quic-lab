@@ -26,7 +26,7 @@ internal class VlessProbeEngine(private val save:(JSONObject)->Unit){
  @Synchronized fun cancel(id:String,reason:String="canceled"):Boolean{
   val run=value?:return false;if(run.optString("runId")!=id||run.optString("state")!="running")return false
   generation++;pool?.shutdownNow();run.put("state",reason).put("finishedAt",java.time.Instant.now().toString())
-  val rows=run.getJSONArray("rows");for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("outcome") in listOf("queued","running"))row.put("outcome",if(reason in listOf("network_changed","configuration_changed","interrupted"))reason else "canceled")};publish();return true
+  val rows=run.getJSONArray("rows");for(i in 0 until rows.length()){val row=rows.getJSONObject(i);if(row.optString("outcome") in listOf("queued","running"))row.put("outcome",if(reason in listOf("network_changed","configuration_changed","interrupted","budget","permission_denied"))reason else "canceled")};publish();return true
  }
  private fun publish(){val v=value?:return;v.put("sequence",v.optLong("sequence")+1);save(JSONObject(v.toString()))}
 }

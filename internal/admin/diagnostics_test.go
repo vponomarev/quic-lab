@@ -161,15 +161,19 @@ func TestDeviceReportSummaryUsesClientReceipt(t *testing.T) {
 	if r := diagnosticRequest(w, d.ID, token, body); r.Code != 200 {
 		t.Fatal(r.Code)
 	}
-	fs, _ := w.diagnosticFiles()
-	stamp := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	fs, err := w.diagnosticFiles()
+	if err != nil || len(fs) != 1 {
+		t.Fatalf("client diagnostic files: count=%d err=%v", len(fs), err)
+	}
+	// Keep the receipt inside retention regardless of the date the test runs.
+	stamp := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	if err := os.Chtimes(fs[0].path, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	w.recordServerDiagnostic(d.ID, "server-only-event")
 	rw := httptest.NewRecorder()
 	w.page(rw, view{Admin: true, Users: w.Store.List()})
-	if !strings.Contains(rw.Body.String(), `data-last-report="2026-10-07T00:00:00Z"`) {
+	if !strings.Contains(rw.Body.String(), `data-last-report="`+stamp.Format(time.RFC3339)+`"`) {
 		t.Fatal("missing client receipt timestamp")
 	}
 	if !strings.Contains(rw.Body.String(), "Регистрация:") {

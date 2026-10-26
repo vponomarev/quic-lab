@@ -25,6 +25,7 @@ import (
 )
 
 type gatewayConfig struct {
+	UnderlayAWGConfig   string `json:"underlay_awg_config,omitempty"`
 	UnderlayVLESSConfig string `json:"underlay_vless_config,omitempty"`
 	UnderlayEndpoint    string `json:"underlay_endpoint,omitempty"`
 	VLESSConfig         string `json:"vless_config"`
@@ -120,6 +121,12 @@ func (g *Gateway) startWithContext(parent context.Context, configJSON string, bi
 	if e := json.Unmarshal([]byte(configJSON), &g.cfg); e != nil {
 		return e
 	}
+	if _, err := g.cfg.validateUnderlay(); err != nil {
+		return err
+	}
+	if g.cfg.hasUnderlay() && !g.cfg.MaxAvailability {
+		return errors.New("underlay requires maximum availability")
+	}
 	g.budget = nil
 	if b, ok := binder.(*budgetBinder); ok {
 		g.budget = b.budget
@@ -163,7 +170,11 @@ func (g *Gateway) startWithContext(parent context.Context, configJSON string, bi
 	if g.cfg.Transport != "quic" && g.cfg.Transport != "https" {
 		return errors.New("choose quic, https, awg or vless")
 	}
-	host, _, e := net.SplitHostPort(g.cfg.Endpoint)
+	physicalEndpoint := g.cfg.Endpoint
+	if g.cfg.hasUnderlay() {
+		physicalEndpoint = g.cfg.UnderlayEndpoint
+	}
+	host, _, e := net.SplitHostPort(physicalEndpoint)
 	if e != nil || net.ParseIP(host).To4() == nil {
 		return errors.New("numeric IPv4 endpoint required")
 	}

@@ -111,6 +111,9 @@ func TestAWGAuthenticatedPeerAdmissionNetstack(t *testing.T) {
 	}
 	// Source-IP spoofing remains rejected in the native peer receive path before
 	// the wrapper sees plaintext, even though the handshake keys remain valid.
+	// Replace the client: one peer may only own one active physical path.
+	socket.Close()
+	client.Close()
 	badCfg := *clientCfg
 	badCfg.Address = "10.77.0.9"
 	bad, e := awg.Start(&badCfg, "127.0.0.1:"+port, nil)

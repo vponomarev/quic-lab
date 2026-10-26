@@ -49,14 +49,19 @@ func nextEcho(t *testing.T, sink *eventSink, predicate func(map[string]any) bool
 	t.Helper()
 	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
+	var recent []map[string]any
 	for {
 		select {
 		case e := <-sink.ch:
 			if e["event"] == "echo" && predicate(e) {
 				return e
 			}
+			recent = append(recent, e)
+			if len(recent) > 8 {
+				recent = recent[len(recent)-8:]
+			}
 		case <-timer.C:
-			t.Fatal("timed out waiting for echo")
+			t.Fatalf("timed out waiting for echo; recent events: %v", recent)
 			return nil
 		}
 	}

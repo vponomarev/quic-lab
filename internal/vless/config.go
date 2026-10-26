@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,12 +24,16 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/reality"
 	xtls "github.com/xtls/xray-core/transport/internet/tls"
+	"github.com/xtls/xray-core/transport/internet/websocket"
 )
 
-// Config is the restricted TCP client configuration, not an arbitrary Xray JSON
+// Config is the restricted TCP/WebSocket client configuration, not an arbitrary Xray JSON
 // configuration. Endpoint resolution belongs to the bound SocketFactory.
 type Config struct {
 	Endpoint         string
+	Transport        string
+	WebSocketPath    string
+	WebSocketHost    string
 	UUID             string
 	Security         string
 	ServerName       string
@@ -59,8 +64,28 @@ func buildConfig(c Config) (*core.Config, error) {
 	if c.Flow != "" && c.Flow != "xtls-rprx-vision" {
 		return nil, errors.New("unsupported VLESS flow")
 	}
+	transport := c.Transport
+	if transport == "" {
+		transport = "tcp"
+	}
+	if transport != "tcp" && transport != "ws" {
+		return nil, errors.New("unsupported VLESS transport")
+	}
+	if transport == "ws" {
+		if c.Security != "tls" || c.Flow != "" || c.RealityPublicKey != "" || c.ShortID != "" || c.SpiderX != "" {
+			return nil, errors.New("invalid WebSocket VLESS options")
+		}
+		if c.WebSocketHost != "" && !validHost(c.WebSocketHost) {
+			return nil, errors.New("invalid WebSocket host")
+		}
+		if _, err := normalizeWebSocketPath(c.WebSocketPath); err != nil {
+			return nil, err
+		}
+	} else if c.WebSocketPath != "" || c.WebSocketHost != "" {
+		return nil, errors.New("WebSocket settings require WebSocket transport")
+	}
 	switch c.Fingerprint {
-	case "", "chrome", "firefox", "safari":
+	case "", "chrome", "firefox", "safari", "edge":
 	default:
 		return nil, errors.New("unsupported VLESS fingerprint")
 	}
@@ -104,10 +129,16 @@ func buildConfig(c Config) (*core.Config, error) {
 	default:
 		return nil, errors.New("unsupported VLESS security")
 	}
+	stream := &internet.StreamConfig{ProtocolName: transport, SecurityType: security.Type, SecuritySettings: []*serial.TypedMessage{security}}
+	if transport == "ws" {
+		path, _ := normalizeWebSocketPath(c.WebSocketPath)
+		stream.ProtocolName = "websocket"
+		stream.TransportSettings = []*internet.TransportConfig{{ProtocolName: "websocket", Settings: serial.ToTypedMessage(&websocket.Config{Path: path, Host: c.WebSocketHost})}}
+	}
 	return &core.Config{
 		App: []*serial.TypedMessage{serial.ToTypedMessage(&dispatcher.Config{}), serial.ToTypedMessage(&proxyman.OutboundConfig{})},
 		Outbound: []*core.OutboundHandlerConfig{{
-			SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{StreamSettings: &internet.StreamConfig{ProtocolName: "tcp", SecurityType: security.Type, SecuritySettings: []*serial.TypedMessage{security}}}),
+			SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{StreamSettings: stream}),
 			ProxySettings:  serial.ToTypedMessage(&outbound.Config{Vnext: &protocol.ServerEndpoint{Address: xnet.NewIPOrDomain(xnet.ParseAddress(host)), Port: uint32(port), User: &protocol.User{Account: serial.ToTypedMessage(&account.Account{Id: c.UUID, Flow: c.Flow, Encryption: "none"})}}}),
 		}},
 	}, nil
@@ -125,8 +156,8 @@ func validHost(s string) bool {
 	if len(s) == 0 || len(s) > 253 {
 		return false
 	}
-	if ip := net.ParseIP(s); ip != nil {
-		return ip.To4() != nil
+	if ip, err := netip.ParseAddr(s); err == nil {
+		return !ip.IsUnspecified() && !ip.IsMulticast() && !ip.Is4In6() && ip.Zone() == ""
 	}
 	for _, label := range strings.Split(s, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
@@ -139,6 +170,25 @@ func validHost(s string) bool {
 		}
 	}
 	return true
+}
+
+func normalizeWebSocketPath(value string) (string, error) {
+	if value == "" {
+		return "/", nil
+	}
+	if len(value) > 2048 || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\\#\r\n\t") {
+		return "", errors.New("invalid WebSocket path")
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.IsAbs() || u.Host != "" || u.Fragment != "" {
+		return "", errors.New("invalid WebSocket path")
+	}
+	for _, r := range value {
+		if r < 32 || r == 127 {
+			return "", errors.New("invalid WebSocket path")
+		}
+	}
+	return value, nil
 }
 
 func validRoots(data []byte) bool {

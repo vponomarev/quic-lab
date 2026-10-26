@@ -53,10 +53,12 @@ class MdmEnrollActivity:Activity(){
   if(state.binding!=null){
    panel.addView(ui.text("Сервер: "+URI(state.binding.endpoint).authority))
    panel.addView(ui.button(if(state.active)"Приостановить MDM" else "Возобновить MDM",true){
-    work{
-     if(controller.read().active){controller.pause();MdmService.stop(this)}
-     else{controller.resume();MdmService.start(this)}
-    }
+    if(controller.read().active){
+     AlertDialog.Builder(this).setTitle("Приостановить MDM?")
+      .setMessage("Сбор истории Wi-Fi и сот остановится. Все ещё не отправленные измерения будут удалены с телефона без возможности восстановления. Уже отправленная история останется на сервере. Привязка MDM сохранится.\n\nДля выбора разрешённого профиля или транспорта откройте «Подключения» — пауза MDM не нужна.")
+      .setNegativeButton("Отмена",null)
+      .setPositiveButton("Приостановить и удалить очередь"){_,_->work{if(controller.read().active){controller.pause();MdmService.stop(this)}}}.show()
+    }else work{if(!controller.read().active){controller.resume();MdmService.start(this)}}
    })
    panel.addView(ui.text("Пауза полностью отключает управление. Привязка сохранится; вы сможете возобновить её."))
    telemetryButton=ui.button("Данные Wi-Fi и сот"){startActivity(Intent(this,MdmTelemetryActivity::class.java))}

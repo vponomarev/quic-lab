@@ -179,7 +179,7 @@ func ValidateDocument(raw json.RawMessage) error {
 				}
 			}
 			if i.VLESSGroup != nil {
-				if len(i.VLESSGroup) < 1 || len(i.VLESSGroup) > 32 || i.VLESS != i.VLESSGroup[0] {
+				if len(i.VLESSGroup) < 1 || len(i.VLESSGroup) > 256 || i.VLESS != i.VLESSGroup[0] {
 					return ErrInvalid
 				}
 				seen := map[string]bool{}

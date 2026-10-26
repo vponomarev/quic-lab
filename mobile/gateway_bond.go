@@ -20,8 +20,10 @@ import (
 )
 
 func (g *Gateway) startBond(binder SocketBinder) error {
-	if err := g.checkCapabilities(binder); err != nil {
-		return err
+	if !g.cfg.hasUnderlay() {
+		if err := g.checkCapabilities(binder); err != nil {
+			return err
+		}
 	}
 	if g.budget != nil && !g.budget.CellAllowed() {
 		g.bondCellBlocked = true
@@ -89,11 +91,18 @@ func (g *Gateway) addBondNamedPath(ctx context.Context, info bond.PathInfo, bind
 			return errors.New("bond path must use the run budget and physical network")
 		}
 	}
-	if g.cfg.UnderlayVLESSConfig != "" {
-		if g.cfg.Transport != "https" {
-			return errors.New("VLESS relay requires HTTPS carrier")
+	if _, err := g.cfg.validateUnderlay(); err != nil {
+		return err
+	}
+	if g.cfg.hasUnderlay() {
+		var dial bondStreamDialer
+		var cleanup func()
+		var err error
+		if g.cfg.UnderlayAWGConfig != "" {
+			dial, cleanup, err = newBondAWGDialer(g.cfg.UnderlayAWGConfig, g.cfg.UnderlayEndpoint, binder)
+		} else {
+			dial, cleanup, err = newBondVLESSDialer(g.cfg.UnderlayVLESSConfig, g.cfg.UnderlayEndpoint, binder)
 		}
-		dial, cleanup, err := newBondVLESSDialer(g.cfg.UnderlayVLESSConfig, g.cfg.UnderlayEndpoint, binder)
 		if err != nil {
 			return err
 		}
@@ -102,9 +111,6 @@ func (g *Gateway) addBondNamedPath(ctx context.Context, info bond.PathInfo, bind
 			return err
 		}
 		return g.addBondHTTPSWithDial(ctx, g.cfg.Endpoint, info, binder, create, dial, cleanup)
-	}
-	if g.cfg.UnderlayEndpoint != "" {
-		return errors.New("underlay endpoint without VLESS profile")
 	}
 	if g.cfg.Transport == "https" {
 		return g.addBondHTTPS(ctx, g.cfg.Endpoint, info, binder, create)
@@ -410,7 +416,7 @@ func (b *runtimeGateway) Dial(ctx context.Context, cfg gatewayConfig, info bond.
 		return err
 	}
 	physicalEndpoint := cfg.Endpoint
-	if cfg.UnderlayVLESSConfig != "" {
+	if cfg.hasUnderlay() {
 		physicalEndpoint = cfg.UnderlayEndpoint
 	}
 	host, _, err := net.SplitHostPort(physicalEndpoint)
@@ -470,7 +476,7 @@ func (b *runtimeGateway) Dial(ctx context.Context, cfg gatewayConfig, info bond.
 	}
 	dial := &Gateway{ctx: ctx, cfg: cfg, tls: tc, bond: g.bond, bondToken: g.bondToken, budget: g.budget}
 	dial.cfg.BondCellBudget = 0
-	if cfg.UnderlayVLESSConfig == "" {
+	if !cfg.hasUnderlay() {
 		err = dial.checkCapabilities(binder)
 	}
 	if err == nil {

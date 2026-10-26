@@ -42,7 +42,7 @@ internal object VlessImport {
 
     private fun error(activity: Activity) {
         AlertDialog.Builder(activity).setTitle("Импорт VLESS не выполнен")
-            .setMessage("Проверьте URI или один VLESS outbound JSON: TCP, TLS/REALITY, корректные параметры. VPN должен быть остановлен.")
+            .setMessage("Проверьте URI или один VLESS outbound JSON: TCP или WebSocket, TLS/REALITY, корректные параметры. VPN должен быть остановлен.")
             .setPositiveButton("OK", null).show()
     }
 

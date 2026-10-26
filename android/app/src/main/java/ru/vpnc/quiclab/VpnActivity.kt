@@ -82,6 +82,20 @@ class VpnActivity:Activity() {
    val card=ui.card(content);card.addView(ui.text(p.name,17f,true));val prefs=VpnProfiles.preferences(this,p.id)
    card.addView(ui.text(listOf(prefs.getString("transport","quic").orEmpty().uppercase(),prefs.getString("endpoint","").orEmpty()).joinToString(" · ")))
    card.addView(ui.text(if(p.id==selected)"Выбрано для запуска" else "Сохранённое подключение"))
+   if(MdmConfiguration.managed(this)){
+    val kinds=MdmConfiguration.selectableTransports(this,p.id)
+    if(kinds.isNotEmpty())card.addView(ui.button("Выбрать транспорт"){
+     action{
+      check(!LabVpnService.active){"Для смены транспорта отключите VPN. MDM и сбор данных можно оставить включёнными."}
+      val available=MdmConfiguration.selectableTransports(this,p.id)
+      check(available.isNotEmpty()){"Право выбора транспорта отозвано"}
+      AlertDialog.Builder(this).setTitle("Транспорт: ${p.name}")
+       .setSingleChoiceItems(available.map{it.uppercase()}.toTypedArray(),available.indexOf(prefs.getString("transport","quic"))){dialog,index->
+        action{MdmConfiguration.selectTransport(this,p.id,available[index]);dialog.dismiss();showPage(page,false)}
+       }.setNegativeButton("Отмена",null).show()
+     }
+    })
+   }
    val row=LinearLayout(this);card.addView(row)
    row.addView(ui.button("Настроить"){openEditor(p.id)},LinearLayout.LayoutParams(0,-2,1f))
    if(prefs.getBoolean("managed_profile",false))ui.add(card,ui.button("Обновить настройки"){startActivity(Intent(this,ProfileEditorActivity::class.java).putExtra("profile_id",p.id).putExtra("update_profile",true))})

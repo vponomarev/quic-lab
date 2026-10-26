@@ -1,6 +1,7 @@
 package vless
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
@@ -96,11 +97,26 @@ func TestServerXUDPSameGlobalIDDifferentDevices(t *testing.T) {
 	a.Write(muxFrame(t, target, [8]byte{}, mux.SessionStatusKeep, []byte("still-a")))
 	read(a, "still-a")
 	s.Revoke(serverID)
-	a.SetReadDeadline(time.Now().Add(time.Second))
-	if _, e := a.Read(make([]byte, 1)); e == nil {
-		t.Fatal("revoked XUDP alive")
-	} else if n, ok := e.(net.Error); ok && n.Timeout() {
-		t.Fatal("XUDP revoke timed out")
+	if e := a.SetReadDeadline(time.Now().Add(time.Second)); e != nil {
+		t.Fatal(e)
+	}
+	// Cancellation can flush a six-byte mux End frame before closing TLS.
+	// Require EOF, permitting only that payload-free shutdown for session 3.
+	// The extra byte detects any data beyond the allowed frame without an
+	// unbounded read if revocation regresses.
+	trailing, e := io.ReadAll(io.LimitReader(a, 7))
+	if e != nil {
+		t.Fatalf("XUDP revoke did not reach EOF: %v", e)
+	}
+	if len(trailing) > 0 {
+		if len(trailing) != 6 {
+			t.Fatalf("unexpected data after XUDP revoke: %x", trailing)
+		}
+		r := bytes.NewReader(trailing)
+		var end mux.FrameMetadata
+		if e := end.Unmarshal(r, false); e != nil || r.Len() != 0 || end.SessionID != 3 || end.SessionStatus != mux.SessionStatusEnd || (end.Option != 0 && end.Option != mux.OptionError) {
+			t.Fatalf("unexpected data after XUDP revoke: %x (metadata error: %v)", trailing, e)
+		}
 	}
 	b.Write(muxFrame(t, target, [8]byte{}, mux.SessionStatusKeep, []byte("still-b")))
 	read(b, "still-b")

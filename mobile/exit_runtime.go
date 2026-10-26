@@ -35,11 +35,14 @@ type runtimeNetwork struct {
 	binder              SocketBinder
 }
 type exitRuntimeConfig struct {
-	Model          vpnmodel.Config          `json:"model"`
-	Gateways       map[string]gatewayConfig `json:"gateways"`
-	InitialNetwork runtimeNetwork           `json:"initial_network"`
-	Economy        bool                     `json:"economy"`
-	relay          bool
+	TargetEndpoints    map[string]string        `json:"target_endpoints,omitempty"`
+	LogicalConnections map[string]string        `json:"logical_connections,omitempty"`
+	Model              vpnmodel.Config          `json:"model"`
+	Gateways           map[string]gatewayConfig `json:"gateways"`
+	InitialNetwork     runtimeNetwork           `json:"initial_network"`
+	Economy            bool                     `json:"economy"`
+	relay              bool
+	exclusivePeers     map[string][32]byte
 }
 type runtimeCandidate struct {
 	profile              vpnmodel.Profile
@@ -61,6 +64,8 @@ type runtimePath struct {
 	healthySince, nextProbe, progressSince, lastProgress time.Time
 	ready                                                bool
 	draining                                             bool
+	betterSince                                          time.Time
+	lastUseful                                           time.Time
 }
 
 // ExitRuntime owns one demux exit. The Android VPN run supplies its common budget.
@@ -89,6 +94,7 @@ type ExitRuntime struct {
 	serial            map[string]uint64
 	checks            map[string]time.Time
 	preferred         string
+	lastPromotion     time.Time
 	probeInterval     time.Duration
 	diagnostics       bool
 	connectionID      string
@@ -127,6 +133,8 @@ func (r *ExitRuntime) Start(configJSON string, binder SocketBinder) error {
 		return errors.New("invalid initial network")
 	}
 	var identity *gatewayConfig
+	cfg.relay = len(cfg.TargetEndpoints) != 0
+	cfg.exclusivePeers = map[string][32]byte{}
 	for _, p := range cfg.Model.Profiles {
 		if p.Mode == "disabled" {
 			continue
@@ -135,16 +143,18 @@ func (r *ExitRuntime) Start(configJSON string, binder SocketBinder) error {
 		if !ok || c.Endpoint != p.Endpoint || c.Transport != p.Transport {
 			return errors.New("missing or inconsistent profile transport")
 		}
-		if c.UnderlayVLESSConfig != "" {
-			if c.Transport != "https" || c.UnderlayEndpoint == "" || p.PoolSize != 1 {
+		peer, err := c.validateUnderlayProfile()
+		if err != nil {
+			return err
+		}
+		if c.hasUnderlay() {
+			if p.PoolSize != 1 {
 				return errors.New("relay requires HTTPS carrier and one slot per candidate")
 			}
-			if _, err := decodeGatewayVLESS(c.UnderlayVLESSConfig, c.UnderlayEndpoint); err != nil {
-				return err
-			}
 			cfg.relay = true
-		} else if c.UnderlayEndpoint != "" {
-			return errors.New("underlay endpoint without VLESS profile")
+			if c.UnderlayAWGConfig != "" {
+				cfg.exclusivePeers[p.ID] = peer
+			}
 		}
 		if identity == nil {
 			copy := c
@@ -155,12 +165,13 @@ func (r *ExitRuntime) Start(configJSON string, binder SocketBinder) error {
 	}
 	if cfg.relay {
 		for _, p := range cfg.Model.Profiles {
-			if p.Mode != "disabled" && cfg.Gateways[p.ID].UnderlayVLESSConfig == "" {
-				return errors.New("relay exit cannot include direct paths")
-			}
 			if p.Mode != "disabled" {
 				g := cfg.Gateways[p.ID]
-				if g.Endpoint != identity.Endpoint || g.ServerName != identity.ServerName || g.ControlURL != identity.ControlURL {
+				target := identity.Endpoint
+				if len(cfg.TargetEndpoints) != 0 {
+					target = cfg.TargetEndpoints[g.Transport]
+				}
+				if target == "" || g.Endpoint != target || g.ServerName != identity.ServerName || g.ControlURL != identity.ControlURL || (g.Transport != "https" && g.Transport != "quic") {
 					return errors.New("relay candidates must share one logical gateway")
 				}
 			}
@@ -170,7 +181,11 @@ func (r *ExitRuntime) Start(configJSON string, binder SocketBinder) error {
 		if cfg.InitialNetwork.UnderlayEndpoints == nil {
 			cfg.InitialNetwork.UnderlayEndpoints = map[string]string{}
 			for id, g := range cfg.Gateways {
-				cfg.InitialNetwork.UnderlayEndpoints[id] = g.UnderlayEndpoint
+				if g.hasUnderlay() {
+					cfg.InitialNetwork.UnderlayEndpoints[id] = g.UnderlayEndpoint
+				} else {
+					cfg.InitialNetwork.UnderlayEndpoints[id] = g.Endpoint
+				}
 			}
 		}
 		if err := validateUnderlayEndpoints(cfg.InitialNetwork, cfg.Gateways); err != nil {
@@ -435,6 +450,7 @@ func (r *ExitRuntime) refresh(now time.Time) {
 			}
 		}
 		if progress {
+			p.lastUseful = now
 			c := r.candidate(p)
 			if c.stalled {
 				c.stalled = false
@@ -516,9 +532,32 @@ func (r *ExitRuntime) refresh(now time.Time) {
 		}
 	}
 	old := r.paths[r.preferred]
+	// Relay priorities choose admission, not reasons to interrupt a useful primary.
+	if r.cfg.relay && old != nil && old.ready && !old.draining {
+		best = old
+		for _, candidate := range r.paths {
+			usable := candidate != old && candidate.ready && !candidate.draining && candidate.successes >= 3
+			fresh := now.Sub(candidate.lastUseful) <= 3*r.probeInterval && now.Sub(old.lastUseful) <= 3*r.probeInterval
+			faster := stats[old.info.ID].RTTMS > 600 && stats[candidate.info.ID].RTTMS > 0 && stats[candidate.info.ID].RTTMS*2 < stats[old.info.ID].RTTMS
+			if !usable || !fresh || !faster {
+				candidate.betterSince = time.Time{}
+				continue
+			}
+			if candidate.betterSince.IsZero() {
+				candidate.betterSince = now
+			}
+			if now.Sub(candidate.betterSince) >= 8*time.Second && (r.lastPromotion.IsZero() || now.Sub(r.lastPromotion) >= 30*time.Second) {
+				best = candidate
+			}
+		}
+	}
 	if best != nil && (old == nil || !old.ready || old.draining || old == best || best.successes >= 3 && now.Sub(best.healthySince) >= 8*time.Second) {
 		if r.preferred != best.info.ID {
 			r.preferred = best.info.ID
+			r.lastPromotion = now
+			for _, path := range r.paths {
+				path.betterSince = time.Time{}
+			}
 			if b, ok := r.backend.(interface{ Prefer(string) }); ok {
 				b.Prefer(best.info.ID)
 			}
@@ -591,18 +630,65 @@ func (r *ExitRuntime) needsCellular() bool {
 	return true
 }
 func (r *ExitRuntime) eligible(c *runtimeCandidate) bool {
+	return r.eligibleReplacing(c, nil)
+}
+
+func (r *ExitRuntime) eligibleReplacing(c *runtimeCandidate, spare *runtimePath) bool {
 	if r.cfg.relay && r.networks[c.network].UnderlayEndpoints[c.profile.ID] == "" {
 		return false
 	}
+	if peer, exclusive := r.cfg.exclusivePeers[c.profile.ID]; exclusive {
+		for _, path := range r.paths {
+			if path == spare {
+				continue
+			}
+			if other, ok := r.cfg.exclusivePeers[path.info.ProfileID]; ok && peer == other {
+				return false
+			}
+		}
+	}
 	return !c.incompatible && r.relayWarmAllowed(c.network) && r.allowed(c.network) && (c.network != "cell" || r.cellEligible())
+}
+
+// Logical identity is private runtime metadata; legacy callers retain profile identity.
+func (r *ExitRuntime) logicalConnection(profile string) string {
+	if id := r.cfg.LogicalConnections[profile]; id != "" {
+		return id
+	}
+	return profile
+}
+func (r *ExitRuntime) dialCandidates() []*runtimeCandidate {
+	if !r.cfg.relay || len(r.paths) == 0 {
+		return r.candidates
+	}
+	current := r.paths[r.preferred]
+	if current == nil {
+		if len(r.paths) != 1 {
+			return r.candidates
+		}
+		for _, path := range r.paths {
+			current = path
+		}
+	}
+	connection := r.logicalConnection(current.info.ProfileID)
+	ordered := append([]*runtimeCandidate(nil), r.candidates...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		iOther := r.logicalConnection(ordered[i].profile.ID) != connection
+		jOther := r.logicalConnection(ordered[j].profile.ID) != connection
+		if iOther != jOther {
+			return iOther
+		}
+		return ordered[i].network != current.info.Network && ordered[j].network == current.info.Network
+	})
+	return ordered
 }
 func (r *ExitRuntime) selectDial(now time.Time) *runtimeCandidate {
 	if r.cfg.relay && len(r.paths) >= 2 {
-		return nil
+		return r.rebalanceRelayReserve(now)
 	}
 	// All automatic profile/network attempts precede reserve admission.
 	autoLive := false
-	for _, c := range r.candidates {
+	for _, c := range r.dialCandidates() {
 		if c.profile.Mode == "auto" && r.eligible(c) && (!c.attempted || r.count(c.profile.ID, c.network) > 0) {
 			autoLive = true
 		}
@@ -611,7 +697,7 @@ func (r *ExitRuntime) selectDial(now time.Time) *runtimeCandidate {
 		if mode == "reserve" && autoLive {
 			break
 		}
-		for _, c := range r.candidates {
+		for _, c := range r.dialCandidates() {
 			if c.profile.Mode != mode || !r.eligible(c) || now.Before(c.retry) {
 				continue
 			}
@@ -665,6 +751,51 @@ func (r *ExitRuntime) selectDial(now time.Time) *runtimeCandidate {
 		}
 	}
 	return nil
+}
+
+// A late network may arrive after both relay slots were filled. Move only the
+// spare, retaining the verified primary and the two-path bound during dialing.
+func (r *ExitRuntime) rebalanceRelayReserve(now time.Time) *runtimeCandidate {
+	primary := r.paths[r.preferred]
+	if len(r.paths) != 2 || primary == nil || !primary.ready || primary.draining {
+		return nil
+	}
+	var spare *runtimePath
+	for _, p := range r.paths {
+		if p != primary {
+			spare = p
+		}
+	}
+	if spare.info.Network != primary.info.Network {
+		return nil
+	}
+	for _, c := range r.dialCandidates() {
+		if c.network == primary.info.Network || c.profile.Mode != "auto" || now.Before(c.retry) || !r.eligibleReplacing(c, spare) {
+			continue
+		}
+		total := r.count(c.profile.ID, "")
+		if spare.info.ProfileID == c.profile.ID {
+			total--
+		}
+		if total >= c.profile.PoolSize {
+			continue
+		}
+		r.remove(spare)
+		return c
+	}
+	return nil
+}
+
+func (r *ExitRuntime) keepRelayCellReserve() bool {
+	if !r.cfg.relay || !r.cellEligible() {
+		return false
+	}
+	for _, p := range r.paths {
+		if p.info.Network == "wifi" && p.ready && !p.draining {
+			return true
+		}
+	}
+	return false
 }
 func (r *ExitRuntime) run(ctx context.Context, done, dispatcherDone chan struct{}) {
 	// A bounded dispatcher isolates application callbacks from the worker. Stop
@@ -753,7 +884,13 @@ func (r *ExitRuntime) run(ctx context.Context, done, dispatcherDone chan struct{
 				// A single-slot profile cannot hold a prepared backup. Verify returning Wi-Fi
 				// separately, then replace its LTE slot while retaining the logical mux.
 				for _, candidate := range r.candidates {
-					if !candidate.incompatible && candidate.network == "wifi" && candidate.profile.PoolSize == 1 && r.allowed("wifi") && r.count(candidate.profile.ID, "cell") == 1 && !now.Before(candidate.retry) && !now.Before(r.checks["return/"+candidate.profile.ID]) {
+					// Wi-Fi already serves this relay. Its permitted LTE spare is
+					// intentional, not a single-network session waiting to return.
+					if r.keepRelayCellReserve() {
+						break
+					}
+					_, exclusive := r.cfg.exclusivePeers[candidate.profile.ID]
+					if !exclusive && !candidate.incompatible && candidate.network == "wifi" && candidate.profile.PoolSize == 1 && r.allowed("wifi") && r.count(candidate.profile.ID, "cell") == 1 && !now.Before(candidate.retry) && !now.Before(r.checks["return/"+candidate.profile.ID]) {
 						check = candidate
 						returnCheck = true
 						r.checks["return/"+candidate.profile.ID] = now.Add(time.Second)
@@ -978,10 +1115,15 @@ func (r *ExitRuntime) observeSession(path *runtimePath) {
 // Resolutions belong to the physical Network generation, never to the logical exit.
 func validateUnderlayEndpoints(n runtimeNetwork, gateways map[string]gatewayConfig) error {
 	for id, endpoint := range n.UnderlayEndpoints {
-		if g, ok := gateways[id]; !ok || g.UnderlayVLESSConfig == "" {
+		g, ok := gateways[id]
+		if !ok {
 			return errors.New("unknown underlay candidate")
 		}
-		if _, err := newVLESSSocketFactory(endpoint, vlessEndpointValidator{}); err != nil {
+		if g.UnderlayVLESSConfig != "" {
+			if _, err := newVLESSSocketFactory(endpoint, vlessEndpointValidator{}); err != nil {
+				return err
+			}
+		} else if err := validateAWGEndpoint(endpoint); err != nil {
 			return err
 		}
 	}
@@ -990,7 +1132,11 @@ func validateUnderlayEndpoints(n runtimeNetwork, gateways map[string]gatewayConf
 func (r *ExitRuntime) gatewayForNetwork(id, network string) gatewayConfig {
 	cfg := r.cfg.Gateways[id]
 	if r.cfg.relay {
-		cfg.UnderlayEndpoint = r.networks[network].UnderlayEndpoints[id]
+		if cfg.hasUnderlay() {
+			cfg.UnderlayEndpoint = r.networks[network].UnderlayEndpoints[id]
+		} else {
+			cfg.Endpoint = r.networks[network].UnderlayEndpoints[id]
+		}
 	}
 	return cfg
 }

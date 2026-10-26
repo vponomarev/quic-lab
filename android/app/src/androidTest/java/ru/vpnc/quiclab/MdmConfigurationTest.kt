@@ -33,6 +33,27 @@ class MdmConfigurationTest {
   }finally{c.close()}
  }
  private fun desired(mode:String,revision:Long=1)=MdmConfigRevision(revision,mode,JSONObject("""{"schema":1,"profiles":[{"id":"default","name":"Managed","settings":{"transport":"quic","endpoint":"managed.example:443","mode":0}}],"currentProfileId":"default","enabledProfileIds":["default"],"multiple":false,"globalApps":["example.managed"],"dns":{"mode":"system","profileId":"default"},"budget":{"limitBytes":1048576},"diagnostics":{"enabled":false,"detailed":false}}"""))
+ @Test fun transportChoiceKeepsMdmAndPendingRadioRecordsActive()=fixture{c->
+  val d=desired("current")
+  d.document.put("profileSelection",JSONObject("""{"enabled":true,"profileIds":["default"],"serverRevision":1}"""))
+  d.document.getJSONArray("profiles").getJSONObject(0).getJSONObject("settings").put("https_endpoint","managed.example:8443")
+  MdmConfiguration.apply(c,d,7)
+  MdmConfigurationStore(c).editRuntime{it.getJSONObject("identities").getJSONObject("default").put("certificate","cert").put("key","key")}
+  MdmStore(c).edit{it.put("rights",MdmRights(config=true,telemetry=true,geo=true).json()).put("radio_manual",true)}
+  val now=System.currentTimeMillis();val queue=MdmTelemetryStore(c)
+  queue.append(JSONObject().put("id","pending").put("measuredAt",java.time.Instant.ofEpochMilli(now).toString()),now)
+  VpnProfiles.select(c,"default")
+  MdmConfiguration.selectTransport(c,"default","https")
+  assertEquals("https",VpnProfiles.preferences(c).getString("transport",""))
+  assertEquals("managed.example:8443",VpnProfiles.preferences(c).getString("endpoint",""))
+  assertTrue(MdmStore(c).read().active);assertTrue(MdmTelemetry.wanted(c))
+  assertEquals(7L,MdmStore(c).read().localGeneration)
+  assertEquals(1,queue.pending(now).length())
+  assertTrue(runCatching{VpnProfiles.preferences(c).edit().putString("endpoint","unauthorized:443").commit()}.isFailure)
+  d.document.getJSONObject("profileSelection").put("enabled",false)
+  MdmConfiguration.apply(c,MdmConfigRevision(2,"current",d.document),7)
+  assertTrue(runCatching{MdmConfiguration.selectTransport(c,"default","https")}.isFailure)
+ }
  @Test fun authoritativeReadersAndExternalRestore()=fixture{c->
   MdmConfiguration.apply(c,desired("external"),7)
   assertEquals("Managed",VpnProfiles.current(c).name)

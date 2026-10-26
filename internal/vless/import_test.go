@@ -29,11 +29,22 @@ func TestParseImportRealityVision(t *testing.T) {
 		t.Fatal("incorrect REALITY config")
 	}
 }
+
+func TestParseImportWebSocketTLSIPv6(t *testing.T) {
+	raw := `{"tag":"ws node","protocol":"vless","settings":{"vnext":[{"address":"2001:db8::4","port":443,"users":[{"id":"11111111-1111-4111-8111-111111111111","encryption":"none"}]}]},"streamSettings":{"network":"ws","security":"tls","wsSettings":{"path":"/tunnel","headers":{"Host":"cover.example"}},"tlsSettings":{"serverName":"cover.example","fingerprint":"firefox"}}}`
+	p, err := ParseImport(raw)
+	if err != nil {
+		t.Fatalf("ParseImport() error = %v", err)
+	}
+	if p.Config.Endpoint != "[2001:db8::4]:443" || p.Config.Transport != "ws" || p.Config.WebSocketPath != "/tunnel" || p.Config.WebSocketHost != "cover.example" {
+		t.Fatalf("unexpected config: %+v", p.Config)
+	}
+}
 func TestParseImportRejectsUnsafeInputs(t *testing.T) {
 	cases := []string{
 		"", strings.Repeat("x", 16*1024+1), "https://subscription.invalid/secret", strings.Replace(importURI, "#Fixture", "&unknown=secret#Fixture", 1),
 		strings.Replace(importURI, "&security=tls", "&security=tls&security=tls", 1),
-		strings.Replace(importURI, "type=tcp", "type=ws", 1),
+		strings.Replace(importURI, "type=tcp", "type=grpc", 1),
 		strings.Replace(importURI, "security=tls", "security=none", 1),
 		strings.Replace(importURI, "fp=chrome", "allowInsecure=1", 1),
 		strings.Replace(importURI, "11111111-1111-4111-8111-111111111111", "secret-uuid", 1),

@@ -64,11 +64,13 @@ internal object VpnConfiguration {
     /** Credentials enter only this in-memory runtime envelope, never the portable snapshot. */
     fun attachRuntime(context:Context,id:String,config:JSONObject):JSONObject {
         synchronized(MdmConfiguration.lock) {
+            AdaptiveGroups.attach(context,id,config)
             val prefs=effectivePreferences(context,id)
             val targetId=prefs.getString("relay_exit_profile_id","").orEmpty()
             if(targetId.isNotBlank()) {
-                require(prefs.getString("transport","")=="vless") {"Общий выход доступен только для VLESS"}
+                require(prefs.getString("transport","") in AdaptiveGroups.SUPPORTED) {"Транспорт не поддерживает общий выход"}
                 require(targetId!=id && VpnProfiles.list(context).any{it.id==targetId}) {"Профиль общего выхода отсутствует"}
+                require(MdmConfiguration.canSelectProfile(context,targetId)){"MDM не разрешает профиль общего выхода"}
                 val targetPrefs=effectivePreferences(context,targetId)
                 require(targetPrefs.getString("transport","quic") in listOf("quic","https") && targetPrefs.getString("relay_exit_profile_id","").isNullOrBlank()) {"Несовместимый профиль общего выхода"}
                 val target=VpnIdentity.load(context,targetId)
@@ -76,6 +78,10 @@ internal object VpnConfiguration {
                     if(targetPrefs.getString("transport","")=="https") targetPrefs.getString("endpoint","").orEmpty() else ""
                 }
                 target.put("endpoint",endpoint)
+                target.put("https_endpoint",endpoint)
+                target.put("quic_endpoint",targetPrefs.getString("quic_endpoint","").orEmpty().ifBlank {
+                    if(targetPrefs.getString("transport","")=="quic")targetPrefs.getString("endpoint","").orEmpty() else ""
+                })
                 for(key in listOf("hostname","ca","server_name","verify_name","control_url","transit_endpoint")) target.put(key,targetPrefs.getString(key,""))
                 target.put("data_version",targetPrefs.getInt("data_version",1))
                 val projected=VlessRelayRuntime.project(id,targetId,config,target)
@@ -83,6 +89,7 @@ internal object VpnConfiguration {
                 return config
             }
         }
+        if(config.has(AdaptiveGroups.CANDIDATES)){config.put("max_availability",false);return config}
         val model=load(context).getJSONObject("model")
         val exits=model.getJSONArray("exits")
         val exit=(0 until exits.length()).map{exits.getJSONObject(it)}.single{it.getString("id")==id}

@@ -17,7 +17,7 @@ type vlessTestBinder struct {
 
 func (b *vlessTestBinder) Bind(int64) error { b.calls.Add(1); return b.err }
 func TestVLESSSocketRefusesUnboundOrUnresolved(t *testing.T) {
-	for _, endpoint := range []string{"server.invalid:443", "[::1]:443", "127.0.0.1:0"} {
+	for _, endpoint := range []string{"server.invalid:443", "[::]:443", "127.0.0.1:0"} {
 		if _, err := newVLESSSocketFactory(endpoint, &vlessTestBinder{}); err == nil {
 			t.Fatal("invalid endpoint admitted")
 		}
@@ -50,6 +50,23 @@ func TestVLESSSocketRefusesUnboundOrUnresolved(t *testing.T) {
 	}
 	if _, err = f.DialContext(context.Background(), "tcp4", "127.0.0.1:1"); err == nil {
 		t.Fatal("unconfigured target allowed")
+	}
+}
+
+func TestVLESSSocketSelectsIPv6FamilyWithoutFallback(t *testing.T) {
+	binder := &vlessTestBinder{}
+	f, err := newVLESSSocketFactory("[2001:db8::4]:443", binder)
+	if err != nil {
+		t.Fatalf("valid IPv6 endpoint rejected: %v", err)
+	}
+	if f.network != "tcp6" {
+		t.Fatalf("network = %q", f.network)
+	}
+	if _, err := f.DialContext(context.Background(), "tcp4", f.endpoint); err == nil {
+		t.Fatal("IPv6 endpoint fell back to IPv4")
+	}
+	if binder.calls.Load() != 0 {
+		t.Fatal("socket was opened before family validation")
 	}
 }
 func TestVLESSOuterBudgetStopsActiveAndNewSockets(t *testing.T) {

@@ -71,12 +71,22 @@ func parseImportURI(raw string) (ImportedProfile, error) {
 			return p, invalid
 		}
 		switch key {
-		case "encryption", "security", "type", "sni", "fp", "flow", "pbk", "sid", "spx":
+		case "encryption", "security", "type", "sni", "fp", "flow", "pbk", "sid", "spx", "path", "host":
 		default:
 			return p, invalid
 		}
 	}
-	if (q.Has("type") && q.Get("type") != "tcp" && q.Get("type") != "raw") || (q.Has("encryption") && q.Get("encryption") != "none") {
+	transport := q.Get("type")
+	if transport == "" {
+		transport = "tcp"
+	}
+	if transport == "raw" {
+		transport = "tcp"
+	}
+	if (transport != "tcp" && transport != "raw" && transport != "ws") || (q.Has("encryption") && q.Get("encryption") != "none") {
+		return p, invalid
+	}
+	if (q.Has("path") || q.Has("host")) && transport != "ws" {
 		return p, invalid
 	}
 	// Explicit SpiderX belongs only to REALITY.
@@ -88,7 +98,7 @@ func parseImportURI(raw string) (ImportedProfile, error) {
 		return p, invalid
 	}
 	p.Name = u.Fragment
-	p.Config = Config{Endpoint: u.Host, UUID: u.User.Username(), Security: q.Get("security"), ServerName: q.Get("sni"), Fingerprint: q.Get("fp"), Flow: q.Get("flow"), RealityPublicKey: q.Get("pbk"), ShortID: q.Get("sid"), SpiderX: q.Get("spx")}
+	p.Config = Config{Endpoint: u.Host, Transport: transport, WebSocketPath: q.Get("path"), WebSocketHost: q.Get("host"), UUID: u.User.Username(), Security: q.Get("security"), ServerName: q.Get("sni"), Fingerprint: q.Get("fp"), Flow: q.Get("flow"), RealityPublicKey: q.Get("pbk"), ShortID: q.Get("sid"), SpiderX: q.Get("spx")}
 	return p, nil
 }
 
@@ -113,6 +123,10 @@ type importReality struct {
 	ShortID     string `json:"shortId"`
 	SpiderX     string `json:"spiderX,omitempty"`
 }
+type importWebSocket struct {
+	Path    string            `json:"path"`
+	Headers map[string]string `json:"headers"`
+}
 type importObject struct {
 	Tag      string `json:"tag"`
 	Protocol string `json:"protocol"`
@@ -120,10 +134,11 @@ type importObject struct {
 		Vnext []importServer `json:"vnext"`
 	} `json:"settings"`
 	Stream struct {
-		Network  string         `json:"network"`
-		Security string         `json:"security"`
-		TLS      *importTLS     `json:"tlsSettings"`
-		Reality  *importReality `json:"realitySettings"`
+		Network   string           `json:"network"`
+		Security  string           `json:"security"`
+		TLS       *importTLS       `json:"tlsSettings"`
+		Reality   *importReality   `json:"realitySettings"`
+		WebSocket *importWebSocket `json:"wsSettings"`
 	} `json:"streamSettings"`
 }
 
@@ -145,33 +160,52 @@ func parseImportJSON(raw string) (ImportedProfile, error) {
 	if err := d.Decode(&o); err != nil {
 		return p, invalid
 	}
-	if o.Protocol != "vless" || (o.Stream.Network != "tcp" && o.Stream.Network != "raw") || len(o.Settings.Vnext) != 1 {
+	if o.Protocol != "vless" || (o.Stream.Network != "tcp" && o.Stream.Network != "raw" && o.Stream.Network != "ws") || len(o.Settings.Vnext) != 1 {
 		return p, invalid
 	}
 	server := o.Settings.Vnext[0]
 	if len(server.Users) != 1 || server.Users[0].Encryption != "none" {
 		return p, invalid
 	}
+	transport := o.Stream.Network
+	if transport == "raw" {
+		transport = "tcp"
+	}
 	p.Name = o.Tag
-	p.Config = Config{Endpoint: net.JoinHostPort(server.Address, strconv.Itoa(int(server.Port))), UUID: server.Users[0].ID, Flow: server.Users[0].Flow, Security: o.Stream.Security}
-	switch o.Stream.Security {
-	case "tls":
-		if o.Stream.TLS == nil || o.Stream.Reality != nil {
+	p.Config = Config{Endpoint: net.JoinHostPort(server.Address, strconv.Itoa(int(server.Port))), Transport: transport, UUID: server.Users[0].ID, Flow: server.Users[0].Flow, Security: o.Stream.Security}
+	if o.Stream.Network == "ws" {
+		if o.Stream.Security != "tls" || o.Stream.WebSocket == nil || o.Stream.TLS == nil || o.Stream.Reality != nil || len(o.Stream.WebSocket.Headers) > 1 {
 			return p, invalid
 		}
+		for key, value := range o.Stream.WebSocket.Headers {
+			if !strings.EqualFold(key, "host") {
+				return p, invalid
+			}
+			p.Config.WebSocketHost = value
+		}
+		p.Config.WebSocketPath = o.Stream.WebSocket.Path
 		p.Config.ServerName = o.Stream.TLS.ServerName
 		p.Config.Fingerprint = o.Stream.TLS.Fingerprint
-	case "reality":
-		if o.Stream.Reality == nil || o.Stream.TLS != nil {
+	} else {
+		switch o.Stream.Security {
+		case "tls":
+			if o.Stream.TLS == nil || o.Stream.Reality != nil || o.Stream.WebSocket != nil {
+				return p, invalid
+			}
+			p.Config.ServerName = o.Stream.TLS.ServerName
+			p.Config.Fingerprint = o.Stream.TLS.Fingerprint
+		case "reality":
+			if o.Stream.Reality == nil || o.Stream.TLS != nil || o.Stream.WebSocket != nil {
+				return p, invalid
+			}
+			p.Config.ServerName = o.Stream.Reality.ServerName
+			p.Config.Fingerprint = o.Stream.Reality.Fingerprint
+			p.Config.RealityPublicKey = o.Stream.Reality.PublicKey
+			p.Config.ShortID = o.Stream.Reality.ShortID
+			p.Config.SpiderX = o.Stream.Reality.SpiderX
+		default:
 			return p, invalid
 		}
-		p.Config.ServerName = o.Stream.Reality.ServerName
-		p.Config.Fingerprint = o.Stream.Reality.Fingerprint
-		p.Config.RealityPublicKey = o.Stream.Reality.PublicKey
-		p.Config.ShortID = o.Stream.Reality.ShortID
-		p.Config.SpiderX = o.Stream.Reality.SpiderX
-	default:
-		return p, invalid
 	}
 	return p, nil
 }
@@ -206,7 +240,7 @@ func scanImportJSON(d *json.Decoder, depth int) error {
 			}
 			seen[key] = true
 			switch key {
-			case "tag", "protocol", "settings", "vnext", "address", "port", "users", "id", "encryption", "flow", "streamSettings", "network", "security", "tlsSettings", "realitySettings", "serverName", "fingerprint", "publicKey", "shortId", "spiderX":
+			case "tag", "protocol", "settings", "vnext", "address", "port", "users", "id", "encryption", "flow", "streamSettings", "network", "security", "tlsSettings", "realitySettings", "serverName", "fingerprint", "publicKey", "shortId", "spiderX", "wsSettings", "path", "headers", "Host":
 			default:
 				return invalid
 			}

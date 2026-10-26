@@ -37,6 +37,15 @@ internal object MdmConfiguration {
   ConfigurationPreferences.notify(c,"vpn_profiles",setOf("current"))
   true
  }
+ fun selectableTransports(c:Context,id:String):List<String> = synchronized(lock){
+  if(!managed(c) || !selectionGranted(c,id))emptyList() else MdmProfileSelection.transports(store(c).runtime(),id)
+ }
+ fun selectTransport(c:Context,id:String,kind:String)=synchronized(lock){
+  check(!LabVpnService.active){"Для смены транспорта отключите VPN. MDM и сбор данных можно оставить включёнными."}
+  check(managed(c) && selectionGranted(c,id)){"MDM не разрешает выбор транспорта этого подключения"}
+  store(c).selectManagedTransport(id,kind)
+  ConfigurationPreferences.notify(c,if(id=="default")"vpn" else "vpn_$id",setOf("transport","endpoint"))
+ }
  fun preferences(c:Context,name:String):SharedPreferences=ConfigurationPreferences(c,name)
  internal fun values(c:Context,name:String):Map<String,*> {
   val r=store(c).runtime()?:return c.getSharedPreferences(name,0).all

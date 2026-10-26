@@ -15,6 +15,7 @@ import (
 // this factory. Xray cannot invoke the system resolver or choose another endpoint.
 type vlessSocketFactory struct {
 	endpoint        string
+	network         string
 	binder          SocketBinder
 	mu              sync.Mutex
 	active, pending int
@@ -24,20 +25,24 @@ type vlessSocketFactory struct {
 func newVLESSSocketFactory(endpoint string, binder SocketBinder) (*vlessSocketFactory, error) {
 	host, port, err := net.SplitHostPort(endpoint)
 	if err != nil {
-		return nil, errors.New("VLESS requires an IPv4 endpoint")
+		return nil, errors.New("VLESS requires a resolved IP endpoint")
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.Is4() || ip.IsUnspecified() || ip.IsMulticast() {
-		return nil, errors.New("VLESS endpoint must be resolved on its physical network")
+	if err != nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Is4In6() || ip.Zone() != "" {
+		return nil, errors.New("VLESS endpoint must be resolved to a valid physical-network IP")
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 || binder == nil {
 		return nil, errors.New("VLESS endpoint and socket binder required")
 	}
-	return &vlessSocketFactory{endpoint: endpoint, binder: binder}, nil
+	network := "tcp4"
+	if ip.Is6() {
+		network = "tcp6"
+	}
+	return &vlessSocketFactory{endpoint: endpoint, network: network, binder: binder}, nil
 }
 func (f *vlessSocketFactory) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if network != "tcp4" || address != f.endpoint {
+	if network != f.network || address != f.endpoint {
 		return nil, errors.New("VLESS socket destination is outside its profile")
 	}
 	f.mu.Lock()
@@ -50,7 +55,7 @@ func (f *vlessSocketFactory) DialContext(ctx context.Context, network, address s
 		}
 		return bindErr
 	}}
-	c, err := dialer.DialContext(ctx, "tcp4", f.endpoint)
+	c, err := dialer.DialContext(ctx, f.network, f.endpoint)
 	f.mu.Lock()
 	f.pending--
 	f.failed = err != nil

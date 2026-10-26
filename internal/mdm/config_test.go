@@ -3,6 +3,7 @@ package mdm
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -93,6 +94,32 @@ func TestVLESSGroupIdentity(t *testing.T) {
 	for _, bad := range []string{strings.Replace(base, `"vless_uris":["`+uri+`"]`, `"vless_uris":[]`, 1), strings.Replace(base, `"vless_uris":["`+uri+`"]`, `"vless_uris":["invalid"]`, 1)} {
 		if ValidateDocument([]byte(bad)) == nil {
 			t.Fatal("invalid group accepted")
+		}
+	}
+}
+
+func TestVLESSGroupCatalogBoundary(t *testing.T) {
+	var document map[string]any
+	if err := json.Unmarshal([]byte(validDocument), &document); err != nil {
+		t.Fatal(err)
+	}
+	profile := document["profiles"].([]any)[0].(map[string]any)
+	for _, count := range []int{256, 257} {
+		uris := make([]string, count)
+		for i := range uris {
+			uris[i] = "vless://11111111-1111-4111-8111-111111111111@node" + strconv.Itoa(i) + ".example.org:443?security=tls&type=tcp&sni=example.org"
+		}
+		profile["identity"] = map[string]any{"vless_uri": uris[0], "vless_uris": uris}
+		raw, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = ValidateDocument(raw)
+		if count == 256 && err != nil {
+			t.Fatalf("256-node subscription rejected: %v", err)
+		}
+		if count == 257 && err == nil {
+			t.Fatal("257-node subscription accepted")
 		}
 	}
 }

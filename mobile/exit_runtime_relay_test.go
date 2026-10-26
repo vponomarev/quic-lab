@@ -3,6 +3,7 @@ package mobile
 import (
 	"encoding/json"
 	"quiclab/internal/bond"
+	"quiclab/internal/trafficbudget"
 	"quiclab/internal/vpnmodel"
 	"testing"
 	"time"
@@ -60,12 +61,14 @@ func TestRelayPoolTwoDistinctAndReplacement(t *testing.T) {
 		t.Fatal("exceeded two paths")
 	}
 }
-func TestRelayPoolRejectMixedDirect(t *testing.T) {
+func TestRelayPoolRejectDifferentDirectExit(t *testing.T) {
 	var c exitRuntimeConfig
 	json.Unmarshal([]byte(relayRuntimeConfig(t)), &c)
 	g := c.Gateways["relay2"]
 	g.UnderlayVLESSConfig = ""
 	g.UnderlayEndpoint = ""
+	g.Endpoint = "different.invalid:443"
+	c.Model.Profiles[1].Endpoint = g.Endpoint
 	c.Gateways["relay2"] = g
 	raw, _ := json.Marshal(c)
 	r := NewExitRuntime(nil)
@@ -282,5 +285,247 @@ func TestRelayReservePermissionKeepsActiveNetwork(t *testing.T) {
 	}
 	if !r.relayWarmAllowed("cell") {
 		t.Fatal("active LTE interrupted by reserve permission")
+	}
+}
+
+func TestRelayLogicalReservePrefersAnotherConnection(t *testing.T) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(relayRuntimeConfig(t)), &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["logical_connections"] = map[string]string{"relay1": "subscription-a", "relay2": "subscription-a", "relay3": "subscription-b"}
+	encoded, _ := json.Marshal(raw)
+	b := &runtimeTransport{}
+	r := NewExitRuntime(nil)
+	r.backend = b
+	budget, _ := NewTrafficBudget("logical", 0)
+	r.SetTrafficBudget(budget)
+	if err := r.Start(string(encoded), nil); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	awaitRuntime(t, func() bool { return len(b.Stats().Paths) == 2 })
+	seen := map[string]bool{}
+	for _, p := range b.Stats().Paths {
+		seen[p.ProfileID] = true
+	}
+	if !seen["relay1"] || !seen["relay3"] {
+		t.Fatalf("reserve should use another logical connection: %v", seen)
+	}
+}
+
+func TestRelayLogicalReserveFallsBackWithinConnection(t *testing.T) {
+	var raw map[string]any
+	json.Unmarshal([]byte(relayRuntimeConfig(t)), &raw)
+	raw["logical_connections"] = map[string]string{"relay1": "a", "relay2": "a", "relay3": "b"}
+	encoded, _ := json.Marshal(raw)
+	b := &runtimeTransport{fail: map[string]bool{"relay3": true}}
+	r := NewExitRuntime(nil)
+	r.backend = b
+	budget, _ := NewTrafficBudget("logical-fallback", 0)
+	r.SetTrafficBudget(budget)
+	if err := r.Start(string(encoded), nil); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	awaitRuntime(t, func() bool { return len(b.Stats().Paths) == 2 })
+	seen := map[string]bool{}
+	for _, p := range b.Stats().Paths {
+		seen[p.ProfileID] = true
+	}
+	if !seen["relay1"] || !seen["relay2"] {
+		t.Fatal(seen)
+	}
+}
+
+func TestRelayLogicalHealthyPrimaryRetained(t *testing.T) {
+	r := policyRuntimeFixture(t, []vpnmodel.Profile{{ID: "first", Mode: "auto", PoolSize: 1}, {ID: "second", Mode: "auto", PoolSize: 1, Priority: 1}})
+	r.cfg.relay = true
+	now := time.Now()
+	addPolicyPath(t, r, "first", 1, now)
+	primary := addPolicyPath(t, r, "second", 1, now)
+	r.preferred = primary.info.ID
+	r.refresh(now)
+	if r.preferred != primary.info.ID {
+		t.Fatal("healthy primary replaced by list priority", r.preferred)
+	}
+}
+
+func TestRelayLogicalSustainedDegradationSwitchesButSpikeDoesNot(t *testing.T) {
+	r := policyRuntimeFixture(t, []vpnmodel.Profile{{ID: "first", Mode: "auto", PoolSize: 1}, {ID: "second", Mode: "auto", PoolSize: 1, Priority: 1}})
+	r.cfg.relay = true
+	now := time.Now()
+	primary := addPolicyPath(t, r, "first", 1, now)
+	reserve := addPolicyPath(t, r, "second", 1, now)
+	r.preferred = primary.info.ID
+	b := r.backend.(*runtimeTransport)
+	observe := func(at time.Time, rtt float64) {
+		for id, s := range b.paths {
+			s.DataProbes++
+			if id == primary.info.ID {
+				s.RTTMS = rtt
+			} else {
+				s.RTTMS = 50
+			}
+			b.paths[id] = s
+		}
+		r.refresh(at)
+	}
+	observe(now, 900)
+	observe(now.Add(7*time.Second), 900)
+	if r.preferred != primary.info.ID {
+		t.Fatal("switched before sustained window")
+	}
+	observe(now.Add(8*time.Second), 100)
+	observe(now.Add(9*time.Second), 900)
+	observe(now.Add(16*time.Second), 900)
+	if r.preferred != primary.info.ID {
+		t.Fatal("spike carried over across healthy sample")
+	}
+	observe(now.Add(17*time.Second), 900)
+	if r.preferred != reserve.info.ID {
+		t.Fatal("sustained degradation did not promote usable reserve")
+	}
+}
+
+func TestRelayLogicalGenerationRestartsDegradationWindow(t *testing.T) {
+	r := policyRuntimeFixture(t, []vpnmodel.Profile{{ID: "first", Mode: "auto", PoolSize: 1}, {ID: "second", Mode: "auto", PoolSize: 1, Priority: 1}})
+	r.cfg.relay = true
+	now := time.Now()
+	primary := addPolicyPath(t, r, "first", 1, now)
+	reserve := addPolicyPath(t, r, "second", 1, now)
+	r.preferred = primary.info.ID
+	b := r.backend.(*runtimeTransport)
+	for second := 0; second <= 10; second++ {
+		for id, s := range b.paths {
+			s.DataProbes++
+			if id == primary.info.ID {
+				s.RTTMS = 900
+			} else {
+				s.RTTMS = 50
+				if second == 7 {
+					s.Generation++
+				}
+			}
+			b.paths[id] = s
+		}
+		r.refresh(now.Add(time.Duration(second) * time.Second))
+	}
+	if r.preferred != primary.info.ID {
+		t.Fatal("new reserve generation inherited old degradation evidence", reserve.info.ID)
+	}
+}
+
+func TestRelayLogicalReservePrefersPermittedDifferentNetwork(t *testing.T) {
+	r := policyRuntimeFixture(t, []vpnmodel.Profile{{ID: "first", Mode: "auto", PoolSize: 1}, {ID: "second", Mode: "auto", PoolSize: 1, Priority: 1}})
+	r.cfg.relay = true
+	r.cfg.LogicalConnections = map[string]string{"first": "a", "second": "b"}
+	now := time.Now()
+	primary := addPolicyPath(t, r, "first", 1, now)
+	r.preferred = primary.info.ID
+	wifi := r.networks["wifi"]
+	wifi.UnderlayEndpoints = map[string]string{"first": "127.0.0.1:443", "second": "127.0.0.2:443"}
+	r.networks["wifi"] = wifi
+	allowed := true
+	r.networks["cell"] = runtimeNetwork{Network: "cell", Allowed: true, Available: true, Generation: 1, ReserveCheckAllowed: &allowed, UnderlayEndpoints: wifi.UnderlayEndpoints}
+	r.candidates = append(r.candidates, &runtimeCandidate{profile: r.cfg.Model.Profiles[1], network: "cell"})
+	got := r.selectDial(now)
+	if got == nil || got.profile.ID != "second" || got.network != "cell" {
+		t.Fatalf("reserve did not diversify permitted network: %+v", got)
+	}
+	allowed = false
+	got = r.selectDial(now)
+	if got == nil || got.network != "wifi" {
+		t.Fatal("forbidden LTE reserve admitted", got)
+	}
+}
+
+// A late cellular network must replace only the Wi-Fi spare, even when both
+// logical connection slots were filled before Android supplied LTE endpoints.
+func TestRelayLateCellRebalancesFullPool(t *testing.T) {
+	for _, blocked := range []string{"", "permission", "economy", "unresolved", "backoff", "exclusive-primary", "exclusive-spare", "budget"} {
+		t.Run(blocked, func(t *testing.T) {
+			r := policyRuntimeFixture(t, []vpnmodel.Profile{{ID: "first", Mode: "auto", PoolSize: 1}, {ID: "second", Mode: "auto", PoolSize: 1, Priority: 1}})
+			r.cfg.relay = true
+			now := time.Now()
+			primary := addPolicyPath(t, r, "first", 1, now)
+			spare := addPolicyPath(t, r, "second", 1, now)
+			r.preferred = primary.info.ID
+			yes := true
+			r.networks["cell"] = runtimeNetwork{Network: "cell", Allowed: true, Available: true, Generation: 1, ReserveCheckAllowed: &yes, UnderlayEndpoints: map[string]string{"second": "127.0.0.2:443"}}
+			candidate := &runtimeCandidate{profile: r.cfg.Model.Profiles[1], network: "cell"}
+			r.candidates = append(r.candidates, candidate)
+			switch blocked {
+			case "permission":
+				yes = false
+			case "economy":
+				r.cfg.Economy = true
+			case "unresolved":
+				n := r.networks["cell"]
+				n.UnderlayEndpoints = nil
+				r.networks["cell"] = n
+			case "backoff":
+				candidate.retry = now.Add(time.Minute)
+			case "exclusive-primary":
+				r.cfg.exclusivePeers = map[string][32]byte{"first": {}, "second": {}}
+			case "exclusive-spare":
+				r.cfg.exclusivePeers = map[string][32]byte{"second": {}}
+			case "budget":
+				r.budget, _ = NewTrafficBudget("exhausted", 1)
+				r.budget.ledger.ObserveReceived(1, trafficbudget.User)
+			}
+			got := r.selectDial(now)
+			if blocked != "" && blocked != "exclusive-spare" {
+				if got != nil || len(r.paths) != 2 {
+					t.Fatal("unusable LTE displaced healthy spare", got, len(r.paths))
+				}
+				return
+			}
+			if got != candidate {
+				t.Fatalf("full Wi-Fi pool did not admit late LTE: %+v", got)
+			}
+			if r.paths[primary.info.ID] != primary || r.preferred != primary.info.ID || r.paths[spare.info.ID] != nil {
+				t.Fatal("replacement disturbed primary or retained old spare")
+			}
+		})
+	}
+}
+
+func TestRelayLateCellReserveRemainsWarm(t *testing.T) {
+	var c exitRuntimeConfig
+	json.Unmarshal([]byte(relayRuntimeConfig(t)), &c)
+	c.Economy = false
+	b := &runtimeTransport{}
+	r := NewExitRuntime(nil)
+	r.backend = b
+	budget, _ := NewTrafficBudget("late-lte", 0)
+	r.SetTrafficBudget(budget)
+	raw, _ := json.Marshal(c)
+	if err := r.Start(string(raw), nil); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	awaitRuntime(t, func() bool { return len(b.Stats().Paths) == 2 })
+	r.mu.Lock()
+	primary := r.preferred
+	r.mu.Unlock()
+	if err := r.UpdateNetwork(`{"network":"cell","available":true,"allowed":true,"reserve_check_allowed":true,"generation":1,"underlay_endpoints":{"relay2":"127.0.0.2:443","relay3":"127.0.0.3:443"}}`, nil); err != nil {
+		t.Fatal(err)
+	}
+	awaitRuntime(t, func() bool {
+		for _, p := range b.Stats().Paths {
+			if p.Network == "cell" && p.Ready {
+				return true
+			}
+		}
+		return false
+	})
+	n, _ := b.counts()
+	time.Sleep(1500 * time.Millisecond)
+	after, _ := b.counts()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if after != n || len(r.paths) != 2 || r.preferred != primary || r.paths[primary] == nil {
+		t.Fatal("warm LTE churned or primary changed", n, after, r.preferred)
 	}
 }

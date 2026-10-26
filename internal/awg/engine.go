@@ -103,11 +103,37 @@ func (b *protectedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 }
 
 type Engine struct {
-	mu      sync.Mutex
-	device  *device.Device
-	network *netstack.Net
-	bind    *protectedBind
-	allowed []netip.Prefix
+	mu          sync.Mutex
+	device      *device.Device
+	network     *netstack.Net
+	bind        *protectedBind
+	allowed     []netip.Prefix
+	releasePeer func()
+}
+
+// WG peers keep one roaming remote endpoint. All client engines, including
+// standalone and temporary checks, share this lease across duplicate imports.
+var activePeers = struct {
+	sync.Mutex
+	peers map[[32]byte]bool
+}{peers: map[[32]byte]bool{}}
+
+func acquirePeer(c *Config) (func(), error) {
+	identity := c.PeerIdentity()
+	if identity == ([32]byte{}) {
+		return nil, errors.New("invalid AWG peer identity")
+	}
+	activePeers.Lock()
+	defer activePeers.Unlock()
+	if activePeers.peers[identity] {
+		return nil, errors.New("AWG peer already has an active physical path")
+	}
+	activePeers.peers[identity] = true
+	return func() {
+		activePeers.Lock()
+		delete(activePeers.peers, identity)
+		activePeers.Unlock()
+	}, nil
 }
 
 func Start(c *Config, endpoint string, binder Binder) (*Engine, error) {
@@ -118,6 +144,16 @@ func startWithBind(c *Config, endpoint string, binder Binder, sockets conn.Bind)
 	if e != nil || !addr.Addr().Is4() {
 		return nil, errors.New("numeric IPv4 endpoint required")
 	}
+	release, e := acquirePeer(c)
+	if e != nil {
+		return nil, e
+	}
+	started := false
+	defer func() {
+		if !started {
+			release()
+		}
+	}()
 	tun, n, e := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(c.Address)}, []netip.Addr{netip.MustParseAddr(c.DNS)}, c.MTU)
 	if e != nil {
 		return nil, e
@@ -133,10 +169,11 @@ func startWithBind(c *Config, endpoint string, binder Binder, sockets conn.Bind)
 		d.Close()
 		return nil, e
 	}
-	engine := &Engine{device: d, network: n, bind: b}
+	engine := &Engine{device: d, network: n, bind: b, releasePeer: release}
 	for _, s := range c.Allowed {
 		engine.allowed = append(engine.allowed, netip.MustParsePrefix(s))
 	}
+	started = true
 	return engine, nil
 }
 func (e *Engine) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -190,6 +227,8 @@ func (e *Engine) Close() {
 	if e.device != nil {
 		e.device.Close()
 		e.device = nil
+		e.releasePeer()
+		e.releasePeer = nil
 	}
 }
 

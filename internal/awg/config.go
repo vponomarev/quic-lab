@@ -2,6 +2,7 @@
 package awg
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,21 @@ import (
 	"strconv"
 	"strings"
 )
+
+// PeerIdentity identifies one roaming peer without exposing its key material.
+// Clamp the private scalar so equivalent X25519 key encodings share a lease.
+// Configs supplied here have already passed Parse.
+func (c *Config) PeerIdentity() [32]byte {
+	private, _ := hex.DecodeString(c.private)
+	public, _ := hex.DecodeString(c.public)
+	if len(private) != 32 || len(public) != 32 {
+		return [32]byte{}
+	}
+	private[0] &= 248
+	private[31] &= 127
+	private[31] |= 64
+	return sha256.Sum256(append(private, public...))
+}
 
 type Config struct {
 	Endpoint             string   `json:"endpoint"`

@@ -27,7 +27,11 @@ AllowedIPs = 0.0.0.0/0
 const vlessFixture = "vless://01234567-89ab-cdef-0123-456789abcdef@vpn.example:443?security=tls&sni=secure.example&type=tcp"
 
 func TestStandaloneTransportImport(t *testing.T) {
-	for _, x := range []struct{ kind, raw string }{{"awg", awgFixture}, {"vless", vlessFixture}} {
+	for _, x := range []struct{ kind, raw string }{
+		{"awg", awgFixture},
+		{"vless", vlessFixture},
+		{"vless", strings.Replace(vlessFixture, "type=tcp", "type=ws&path=%2Ftunnel&host=cover.example", 1)},
+	} {
 		meta, e := ImportTransport(x.kind, x.raw)
 		if e != nil || meta.Endpoint == "" {
 			t.Fatal(x.kind, e)
@@ -56,7 +60,7 @@ func TestStandaloneTransportImport(t *testing.T) {
 	}
 }
 func TestStandaloneImportRejectsUnsupported(t *testing.T) {
-	for _, x := range []struct{ kind, raw string }{{"awg", awgFixture + `PostUp = anything`}, {"vless", strings.Replace(vlessFixture, "type=tcp", "type=ws", 1)}, {"vless", "{}"}} {
+	for _, x := range []struct{ kind, raw string }{{"awg", awgFixture + `PostUp = anything`}, {"vless", strings.Replace(vlessFixture, "type=tcp", "type=grpc", 1)}, {"vless", "{}"}} {
 		if _, e := ImportTransport(x.kind, x.raw); e == nil {
 			t.Fatal("unsupported accepted")
 		}

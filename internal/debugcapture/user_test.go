@@ -135,36 +135,84 @@ func TestUserAWGInterfaceFilter(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Stop("test")
-	for _, ip := range []string{"127.0.0.2", "127.0.0.3"} {
+	exchange := func(ip, marker string) {
+		t.Helper()
 		l, e := net.ListenPacket("udp4", ip+":0")
 		if e != nil {
 			t.Fatal(e)
 		}
+		defer l.Close()
 		c, e := net.Dial("udp4", l.LocalAddr().String())
 		if e != nil {
 			t.Fatal(e)
 		}
-		c.Write([]byte("marker-" + ip))
-		l.SetReadDeadline(time.Now().Add(time.Second))
-		buf := make([]byte, 64)
+		defer c.Close()
+		if e := c.SetDeadline(time.Now().Add(time.Second)); e != nil {
+			t.Fatal(e)
+		}
+		if e := l.SetDeadline(time.Now().Add(time.Second)); e != nil {
+			t.Fatal(e)
+		}
+		if _, e := c.Write([]byte(marker)); e != nil {
+			t.Fatal(e)
+		}
+		buf := make([]byte, 256)
 		n, peer, e := l.ReadFrom(buf)
 		if e != nil {
 			t.Fatal(e)
 		}
-		l.WriteTo(buf[:n], peer)
-		c.SetReadDeadline(time.Now().Add(time.Second))
-		c.Read(buf)
-		c.Close()
-		l.Close()
+		if string(buf[:n]) != marker {
+			t.Fatalf("unexpected UDP request: %q", buf[:n])
+		}
+		reply := "reply-" + marker
+		if _, e := l.WriteTo([]byte(reply), peer); e != nil {
+			t.Fatal(e)
+		}
+		n, e = c.Read(buf)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if string(buf[:n]) != reply {
+			t.Fatalf("unexpected UDP reply: %q", buf[:n])
+		}
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for s.Snapshot().Bytes < 200 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	s.Stop("test")
-	bs, _ := s.Blocks(0)
-	all := bytes.Join(bs, nil)
-	if !bytes.Contains(all, []byte("marker-127.0.0.2")) || bytes.Contains(all, []byte("marker-127.0.0.3")) {
-		t.Fatal("interface user filter failed")
+	// Observe this run's packets, not a byte threshold that unrelated loopback
+	// traffic could satisfy. A final allowed exchange follows the excluded one
+	// so the assertion waits until capture has processed traffic beyond it.
+	nonce := random()
+	allowed, excluded, final := "allowed-"+nonce, "excluded-"+nonce, "final-"+nonce
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for {
+		exchange("127.0.0.2", allowed)
+		exchange("127.0.0.3", excluded)
+		exchange("127.0.0.2", final)
+		// Live packet capture may drop UDP packets. Retry the fixture within a
+		// bounded deadline, waking as soon as the requested packets arrive.
+		round, stop := context.WithTimeout(ctx, 20*time.Millisecond)
+		for {
+			bs, ended := s.Blocks(0)
+			all := bytes.Join(bs, nil)
+			if bytes.Contains(all, []byte(excluded)) {
+				stop()
+				t.Fatal("interface capture leaked another user's packet")
+			}
+			if ended {
+				stop()
+				t.Fatalf("interface capture stopped before completion: %+v", s.Snapshot())
+			}
+			if bytes.Contains(all, []byte("reply-"+allowed)) && bytes.Contains(all, []byte("reply-"+final)) {
+				stop()
+				return
+			}
+			if ctx.Err() != nil {
+				stop()
+				t.Fatalf("interface capture missing markers: allowed=%t final=%t blocks=%d session=%+v", bytes.Contains(all, []byte("reply-"+allowed)), bytes.Contains(all, []byte("reply-"+final)), len(bs), s.Snapshot())
+			}
+			if s.Wait(round) != nil {
+				break
+			}
+		}
+		stop()
 	}
 }

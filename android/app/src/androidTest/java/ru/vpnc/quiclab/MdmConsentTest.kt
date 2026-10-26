@@ -38,7 +38,8 @@ class MdmConsentTest {
     fun all(v:View):List<View> = listOf(v)+(if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList())
     val views=all(activity.window.decorView)
     assertTrue(views.filterIsInstance<TextView>().any{it.text.contains("mdm-consent.invalid")})
-    val boxes=views.filterIsInstance<CheckBox>();assertEquals(6,boxes.size)
+    val boxes=views.filterIsInstance<CheckBox>()
+    assertEquals(setOf("Изменять конфигурацию приложения","Включать и выключать VPN","Собирать телеметрию","Разрешить исследование трафика","Анализ трафика вне VPN","Передавать данные Wi-Fi и сот, связанные с местоположением","Передавать координаты при включении трекинга"),boxes.map{it.text.toString()}.toSet())
     assertTrue(boxes.none{it.isChecked})
    }
    assertEquals(before,MdmStore(context).read())

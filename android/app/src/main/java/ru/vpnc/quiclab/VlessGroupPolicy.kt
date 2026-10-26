@@ -1,8 +1,8 @@
 package ru.vpnc.quiclab
 
 /** Serialized by VpnSession worker. Candidate selection never changes active identity. */
-internal class VlessGroupPolicy(private val size:Int){
- init{require(size in 1..32)}
+internal class VlessGroupPolicy(private val size:Int,private val connections:List<String> = List(size){"subscription"}){
+ init{require(size in 1..4096 && connections.size==size && connections.none{it.isBlank()})}
  var current=0;private set
  private var cursor=0
  private var failures=0
@@ -16,7 +16,11 @@ internal class VlessGroupPolicy(private val size:Int){
  fun failed(now:Long):Int? {failures++;if(failures<2)return null;failedInRound[current]=true;retryAfter[current]=now+30000;return retry(now)}
  fun retry(now:Long):Int? {
   if(failures<2)return null
-  for(step in 1..size){val index=(cursor+step)%size;if(retryAfter[index]<=now){cursor=index;return index}}
+  // Retry another logical connection before consuming another node of a large source.
+  for(other in listOf(true,false))for(step in 1..size){
+   val index=(cursor+step)%size
+   if((connections[index]!=connections[cursor])==other && retryAfter[index]<=now){cursor=index;return index}
+  }
   return null
  }
 }

@@ -10,6 +10,7 @@ import org.json.JSONObject;
 
 // Debug-only companion with its own UID. Contains no VPN credentials.
 public class ProbeActivity extends Activity {
+ private void progress(String id,int count)throws Exception{try(FileOutputStream out=openFileOutput(id+".progress.json",MODE_PRIVATE)){out.write(new JSONObject().put("id",id).put("exchanges",count).put("time",android.os.SystemClock.elapsedRealtime()).toString().getBytes(StandardCharsets.UTF_8));}}
  private static byte[] readN(InputStream in,int limit)throws IOException{ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[limit];while(out.size()<limit){int n=in.read(buf,0,limit-out.size());if(n<0)break;out.write(buf,0,n);}return out.toByteArray();}
  private static byte[] tlsHello(boolean ech)throws IOException{
  ByteArrayOutputStream ex=new ByteArrayOutputStream();DataOutputStream e=new DataOutputStream(ex);byte[] name="probe.example.org".getBytes(StandardCharsets.US_ASCII);
@@ -20,7 +21,7 @@ public class ProbeActivity extends Activity {
  ByteArrayOutputStream record=new ByteArrayOutputStream();DataOutputStream r=new DataOutputStream(record);r.writeByte(22);r.writeShort(0x0301);r.writeShort(body.size()+4);r.writeByte(1);r.writeByte(0);r.writeShort(body.size());r.write(body.toByteArray());return record.toByteArray();
  }
  @Override public void onCreate(Bundle b){super.onCreate(b);TextView text=new TextView(this);text.setText("TCP/UDP test probe");setContentView(text);
- final String host=getIntent().getStringExtra("host"),kind=getIntent().getStringExtra("kind"),id=getIntent().getStringExtra("id");final int port=getIntent().getIntExtra("port",39081);
+ final String host=getIntent().getStringExtra("host"),kind=getIntent().getStringExtra("kind"),id=getIntent().getStringExtra("id");final int port=getIntent().getIntExtra("port",39081);final long duration=Math.max(5000,Math.min(180000,getIntent().getLongExtra("duration_ms",45000)));
  if(host==null||id==null||!id.matches("[a-zA-Z0-9_-]{1,64}")){finish();return;}
  if("soak".equals(kind)){android.content.Intent i=new android.content.Intent(this,SoakService.class);i.putExtras(getIntent());startForegroundService(i);return;}
  new Thread(()->{JSONObject result=new JSONObject();try{
@@ -32,20 +33,20 @@ public class ProbeActivity extends Activity {
  if("tls-sni".equals(kind)||"tls-ech".equals(kind))payload=tlsHello("tls-ech".equals(kind));
  if("https-long".equals(kind)){try(SSLSocket s=(SSLSocket)SSLSocketFactory.getDefault().createSocket(host,port)){
  SSLParameters params=s.getSSLParameters();params.setEndpointIdentificationAlgorithm("HTTPS");s.setSSLParameters(params);s.setSoTimeout(10000);s.startHandshake();
- InputStream in=s.getInputStream();long end=android.os.SystemClock.elapsedRealtime()+45000,maxRtt=0;int count=0;
+ InputStream in=s.getInputStream();long end=android.os.SystemClock.elapsedRealtime()+duration,maxRtt=0;int count=0;
  while(android.os.SystemClock.elapsedRealtime()<end){long start=android.os.SystemClock.elapsedRealtime();
  s.getOutputStream().write(("GET /bond-connectivity-test HTTP/1.1\r\nHost: "+host+"\r\nConnection: keep-alive\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
  ByteArrayOutputStream headers=new ByteArrayOutputStream();int state=0;
  while(state<4){int b0=in.read();if(b0<0)throw new EOFException("HTTP headers");headers.write(b0);if(headers.size()>16384)throw new IOException("headers too large");int expected=(state==0||state==2)?13:10;state=b0==expected?state+1:(b0==13?1:0);}
  String hs=headers.toString("US-ASCII");int length=-1;for(String line:hs.split("\r\n")){if(line.toLowerCase(java.util.Locale.ROOT).startsWith("content-length:"))length=Integer.parseInt(line.substring(15).trim());}
  if(length<0||length>65536)throw new IOException("Expected bounded Content-Length");if(readN(in,length).length!=length)throw new EOFException("HTTP body");
- maxRtt=Math.max(maxRtt,android.os.SystemClock.elapsedRealtime()-start);count++;Thread.sleep(100);}
+ maxRtt=Math.max(maxRtt,android.os.SystemClock.elapsedRealtime()-start);count++;if(count==1)progress(id,count);Thread.sleep(100);}
  result.put("exchanges",count).put("max_rtt_ms",maxRtt).put("connections",1);reply=new String(payload,StandardCharsets.UTF_8);
  }}
  else if("tcp-long".equals(kind)){try(Socket s=new Socket()){
  s.connect(new InetSocketAddress(host,port),5000);s.setSoTimeout(10000);
- long end=android.os.SystemClock.elapsedRealtime()+45000,maxRtt=0;int count=0;
- while(android.os.SystemClock.elapsedRealtime()<end){long start=android.os.SystemClock.elapsedRealtime();s.getOutputStream().write(payload);byte[] response=readN(s.getInputStream(),payload.length);if(!java.util.Arrays.equals(payload,response))throw new IOException("TCP bytes differ");maxRtt=Math.max(maxRtt,android.os.SystemClock.elapsedRealtime()-start);count++;Thread.sleep(100);}
+ long end=android.os.SystemClock.elapsedRealtime()+duration,maxRtt=0;int count=0;
+ while(android.os.SystemClock.elapsedRealtime()<end){long start=android.os.SystemClock.elapsedRealtime();s.getOutputStream().write(payload);byte[] response=readN(s.getInputStream(),payload.length);if(!java.util.Arrays.equals(payload,response))throw new IOException("TCP bytes differ");maxRtt=Math.max(maxRtt,android.os.SystemClock.elapsedRealtime()-start);count++;if(count==1)progress(id,count);Thread.sleep(100);}
  result.put("exchanges",count).put("max_rtt_ms",maxRtt).put("connections",1);reply=new String(payload,StandardCharsets.UTF_8);
  }}
  else if("dns".equals(kind)){try(DatagramSocket s=new DatagramSocket()){

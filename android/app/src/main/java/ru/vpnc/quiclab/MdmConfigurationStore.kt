@@ -76,6 +76,12 @@ internal class MdmConfigurationStore(
    beforeWrite();profiles.put("current",id)
   }
  }
+ fun selectManagedTransport(id:String,kind:String){
+  store.edit{j->
+   val runtime=j.optJSONObject("externalRuntime")?:j.getJSONObject("personalRuntime")
+   MdmProfileSelection.selectTransport(runtime,id,kind);beforeWrite()
+  }
+ }
  fun configEpoch():Long=store.document().optLong("configEpoch")
  fun editRuntime(change:(JSONObject)->Unit){
   store.edit{j->
@@ -87,7 +93,7 @@ internal class MdmConfigurationStore(
  fun detach() {
   store.edit{j->
    beforeWrite()
-   j.optJSONObject("personalRuntime")?.let{it.remove("profileSelection");it.remove("serverSelectedProfile")}
+   j.optJSONObject("personalRuntime")?.let{it.remove("profileSelection");it.remove("serverSelectedProfile");it.remove("localTransports")}
    j.optJSONObject("personal")?.remove("profileSelection")
    j.put("configEpoch",Math.addExact(j.optLong("configEpoch"),1));j.remove("externalRuntime");j.remove("external");j.remove("owner");j.remove("revision");j.remove("mode")
   }

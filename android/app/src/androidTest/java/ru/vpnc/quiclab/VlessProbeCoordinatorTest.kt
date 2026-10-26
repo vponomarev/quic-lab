@@ -10,6 +10,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 @RunWith(AndroidJUnit4::class)
 class VlessProbeCoordinatorTest{
+ @Test fun staleLegacyCancelCannotClearNewLocalOwner(){
+  org.junit.Assume.assumeFalse(VlessProbeCoordinator.busy())
+  val legacy=VlessProbeEngine{};legacy.start(run("old-remote",1)){JSONObject().put("outcome","success")};legacy.awaitStopped()
+  val fields=listOf("engine","sequence","activeRun").map{VlessProbeCoordinator::class.java.getDeclaredField(it).apply{isAccessible=true}}
+  val saved=fields.map{it.get(VlessProbeCoordinator)}
+  try{
+   fields[0].set(VlessProbeCoordinator,legacy);fields[1].set(VlessProbeCoordinator,null);fields[2].set(VlessProbeCoordinator,"new-local")
+   assertFalse(VlessProbeCoordinator.cancel("old-remote"))
+   assertEquals("new-local",fields[2].get(VlessProbeCoordinator))
+  }finally{fields.forEachIndexed{i,field->field.set(VlessProbeCoordinator,saved[i])}}
+ }
  private fun run(id:String,count:Int)=JSONObject().put("runId",id).put("sourceId","group").put("state","running").put("sequence",1).put("rows",JSONArray((0 until count).map{JSONObject().put("id","n$it").put("outcome","queued")}))
  @Test fun boundedWorkAndCancelIsolation(){
  val gate=CountDownLatch(1);val two=CountDownLatch(2);val active=AtomicInteger();val max=AtomicInteger();val finished=CountDownLatch(1)

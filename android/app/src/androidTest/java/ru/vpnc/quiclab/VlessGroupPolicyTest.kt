@@ -20,6 +20,6 @@ class VlessGroupPolicyTest {
  }
  @Test fun singleCandidateAndBounds(){
   val p=VlessGroupPolicy(1);assertNull(p.failed(0));assertNull(p.failed(1));assertEquals(0,p.retry(30001))
-  try{VlessGroupPolicy(33);fail("unbounded")}catch(_:IllegalArgumentException){}
+  try{VlessGroupPolicy(4097);fail("unbounded")}catch(_:IllegalArgumentException){}
  }
 }
