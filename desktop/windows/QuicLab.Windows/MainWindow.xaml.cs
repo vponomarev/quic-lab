@@ -29,6 +29,7 @@ public partial class MainWindow : Window
         if (cancelPending) ToggleButton.Content = "Отмена…";
         else if (startPending || latest?.State == "starting") ToggleButton.Content = "Отменить";
         else ToggleButton.Content = latest?.State == "running" ? "Отключить" : latest?.State == "failed" ? "Сбросить ошибку" : "Подключить";
+        if (latest?.Runtime?.Mode == "unconfigured") ToggleButton.Content = "Настроить подключение";
         SettingsButton.IsEnabled = !busy && !cancelPending && connectedToService && latest?.Capabilities?.Contains("settings-v1")==true && client is ISettingsClient;
         SettingsButton.ToolTip = SettingsButton.IsEnabled ? "Подключение и подсети" : "Для редактора требуется новая версия службы";
         RefreshButton.IsEnabled = ImportButton.IsEnabled = !busy && !cancelPending;
@@ -46,6 +47,11 @@ public partial class MainWindow : Window
         ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{(string.IsNullOrWhiteSpace(r.Runtime.Name) ? "" : r.Runtime.Name+" · ")}{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\n{(r.Runtime.RoutingMode=="all_ipv4"?"Весь IPv4-трафик":$"Подсетей через VPN: {r.Runtime.RouteCount}")}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
         ModeBanner.Visibility = Visibility.Visible; ModeText.Text = vpn ? "IPv4: " + (r.Runtime?.Targets is { Length: >0 } targets ? string.Join(", ",targets) : "список подсетей служба не сообщает") + "\nОстальной трафик и системный DNS не перенастраиваются. В preview нет kill switch: после аварии службы выбранный трафик может пойти напрямую." : fixture ? "Тестовый движок: сеть не изменяется, трафик не передаётся." : "Служба не сообщает тип движка. Работа VPN не подтверждена.";
         if(vpn && r.Runtime?.RoutingMode=="all_ipv4") ModeText.Text="Весь IPv4 через VPN, кроме локальных сетей, специальных системных маршрутов и адреса сервера. DNS — через VPN. IPv6 не изменяется. При остановке туннеля трафик может идти напрямую.";
+        if(r.Runtime?.Mode=="unconfigured") {
+            StateText.Text="Нужно настроить подключение";
+            ProfileText.Text="Откройте настройки и загрузите ссылку-приглашение или введите параметры сервера.";
+            ModeBanner.Visibility=Visibility.Collapsed;
+        }
         ConfigText.ToolTip = vpn ? "Профиль MVP задаётся администратором в engine.json. Импорт через окно доступен только тестовому движку." : null;
         RenderTraffic(r); UpdateButtons();
     }
@@ -76,6 +82,7 @@ public partial class MainWindow : Window
     static string ErrorText(string code) => code switch { "config_required" => "Сначала откройте и примените конфигурацию.", "stop_before_apply" => "Отключите VPN перед применением настроек.", "invalid_config" => "Конфигурация не поддерживается или содержит ошибку.", "cleanup_required" => "Не удалось завершить очистку. Повторите отключение.", "backend_start_failed" => "Подключение не удалось. Проверьте профиль и сеть.", _ => "Команда не выполнена. Обновите статус и повторите." };
     async void ToggleClick(object sender, RoutedEventArgs e)
     {
+        if (latest?.Runtime?.Mode == "unconfigured") { SettingsClick(sender,e); return; }
         if (startPending) { await CancelStart(); return; }
         await Command(latest?.State is "running" or "failed" or "starting" ? "stop" : "start");
     }

@@ -9,6 +9,34 @@ import (
 	"testing"
 )
 
+func TestNativeFirstRunRequiresBothStoresAbsent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "store")
+	base, err := NewEncryptedStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewSettingsFileStore(base)
+	d, err := store.Load(context.Background())
+	if err != nil || d != nil {
+		t.Fatalf("fresh store: %v, %v", d, err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "engine.json"), []byte("broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Load(context.Background()); err == nil {
+		t.Fatal("bad legacy treated as first run")
+	}
+	if err = os.Remove(filepath.Join(dir, "engine.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "settings-v1.dpapi"), []byte("broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Load(context.Background()); err == nil {
+		t.Fatal("bad encrypted store treated as first run")
+	}
+}
+
 func TestNativeSettingsMigrationAndEncryptedRoundtrip(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "store")
 	base, e := NewEncryptedStore(dir)

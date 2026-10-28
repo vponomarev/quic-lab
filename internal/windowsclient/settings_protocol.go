@@ -44,7 +44,7 @@ func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
 			r.FieldError = field
 		} else {
 			switch err.Error() {
-			case "revision_conflict", "stop_before_apply", "config_store_failed", "invalid_config", "cleanup_required", "stop_pending", "already_running", "backend_start_failed", "unsupported_command":
+			case "config_required", "revision_conflict", "stop_before_apply", "config_store_failed", "invalid_config", "cleanup_required", "stop_pending", "already_running", "backend_start_failed", "unsupported_command":
 				r.Error = err.Error()
 			default:
 				r.Error = "operation_failed"

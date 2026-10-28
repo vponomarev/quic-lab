@@ -23,6 +23,9 @@ func (s *SettingsFileStore) Load(ctx context.Context) (*SettingsDocument, error)
 	f, e := os.Open(filepath.Join(s.base.dir, "settings-v1.dpapi"))
 	if os.IsNotExist(e) {
 		old, e := os.Open(filepath.Join(s.base.dir, "engine.json"))
+		if os.IsNotExist(e) {
+			return nil, nil
+		}
 		if e != nil {
 			return nil, ErrSecrets
 		}

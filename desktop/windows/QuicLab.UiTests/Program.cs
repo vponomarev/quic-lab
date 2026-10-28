@@ -13,6 +13,7 @@ partial class UiTests
             {
                 if (args.Length == 1 && (args[0] == "--live-settings" || args[0] == "--live-settings-256")) {await SettingsAcceptance.RunLive(args[0].EndsWith("256"));exit=0;return;}
                 if (args.Length == 2 && args[0] == "--live") { await LiveAcceptance(args[1]); exit = 0; return; }
+                await OnboardingAcceptance();
                 await ServiceRecoveryAcceptance();
                 await CompactLayoutAcceptance();
                 await ApplicationSelectionAcceptance();

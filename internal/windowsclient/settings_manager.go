@@ -41,12 +41,20 @@ type SettingsManager struct {
 }
 
 func cloneSettings(s windowsengine.Settings) windowsengine.Settings {
-	s.Targets = append([]string(nil), s.Targets...)
+	s.Targets = append([]string{}, s.Targets...)
 	return s
 }
 func NewSettingsManager(store SettingsStore, factory BackendFactory) (*SettingsManager, error) {
 	d, e := store.Load(context.Background())
-	if e != nil || d == nil || d.Revision == 0 || d.Settings.Validate() != nil {
+	if e != nil {
+		return nil, errors.New("config_store_failed")
+	}
+	if d == nil {
+		return &SettingsManager{gate: make(chan struct{}, 1), store: store, factory: factory,
+			doc:        SettingsDocument{Settings: windowsengine.Settings{Transport: "quic", RoutingMode: "all_ipv4", UplinkMode: "auto", DNS: "1.1.1.1", Targets: []string{}}},
+			controller: vpnclient.NewController(unconfiguredBackend{})}, nil
+	}
+	if d.Revision == 0 || d.Settings.Validate() != nil {
 		return nil, errors.New("config_store_failed")
 	}
 	b, c, e := factory(cloneSettings(d.Settings))
@@ -134,6 +142,10 @@ func (m *SettingsManager) Start(ctx context.Context) error {
 	}
 	defer done()
 	m.mu.Lock()
+	if m.doc.Revision == 0 {
+		m.mu.Unlock()
+		return errors.New("config_required")
+	}
 	ctrl, c := m.controller, m.config
 	m.active = m.doc.Revision
 	m.mu.Unlock()
