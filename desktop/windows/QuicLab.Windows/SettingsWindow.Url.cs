@@ -5,6 +5,7 @@ namespace QuicLab.Windows;
 public partial class SettingsWindow {
  readonly Func<string,CancellationToken,Task<UrlProfileBundle>> download;
  CancellationTokenSource? downloadCancellation;
+ bool selectingDownloadedTransport;
  static async Task<UrlProfileBundle> DownloadProfile(string url,CancellationToken ct){using var http=UrlProfileLoader.CreateHttpClient();return await new UrlProfileLoader(http).Load(url,ct);}
  async void LoadUrlClick(object sender,RoutedEventArgs e){
   if(busy||!loaded)return;
@@ -28,10 +29,34 @@ public partial class SettingsWindow {
  }
  void CancelDownloadClick(object sender,RoutedEventArgs e)=>downloadCancellation?.Cancel();
  void DownloadedTransportChanged(object sender,SelectionChangedEventArgs e){
-  if(DownloadedTransportBox.SelectedItem is not EngineSettings s)return;
+  if(!loaded||selectingDownloadedTransport||DownloadedTransportBox.SelectedItem is not EngineSettings s)return;
+  selectingDownloadedTransport=true;
+  try {
   TransportBox.SelectedIndex=s.Transport switch{"https"=>1,"awg"=>2,"vless"=>3,_=>0};
   int colon=s.Endpoint.LastIndexOf(':');HostBox.Text=colon<0?s.Endpoint:s.Endpoint[..colon];PortBox.Text=colon<0?"443":s.Endpoint[(colon+1)..];
   NameBox.Text=s.Name;HostnameBox.Text=s.Hostname;CertificateBox.Text=s.Certificate;CABox.Text=s.CA;ServerNameBox.Text=s.ServerName;VerifyNameBox.Text=s.VerifyName;
   KeyBox.Password=s.Key;ReplaceKeyBox.IsChecked=true;ImportHint.Text="Загружено по URL. Подсети и физический адаптер оставлены прежними.";
+  } finally {selectingDownloadedTransport=false;}
+ }
+ void SelectTransportProfile(){
+  if(!loaded||selectingDownloadedTransport)return;
+  var kind=(TransportBox.SelectedItem as ComboBoxItem)?.Tag.ToString();
+  var profile=DownloadedTransportBox.Items.OfType<EngineSettings>().FirstOrDefault(s=>s.Transport==kind);
+  if(profile!=null){
+   DownloadedTransportBox.SelectedItem=profile;
+  } else if(DownloadedTransportBox.Items.Count>0){
+   DownloadedTransportBox.SelectedItem=null;
+   KeyBox.Clear();ReplaceKeyBox.IsChecked=true;
+   HostBox.Clear();CertificateBox.Clear();HostnameBox.Clear();ServerNameBox.Clear();VerifyNameBox.Clear();
+   Feedback.Text="В загруженном наборе нет этого транспорта. Импортируйте отдельный профиль или выберите транспорт из набора.";
+  }
+ }
+ void RememberSavedProfile(SettingsChange change){
+  var saved=change.Settings;
+  var profile=DownloadedTransportBox.Items.OfType<EngineSettings>().FirstOrDefault(p=>p.Transport==saved.Transport);
+  if(profile==null)return;
+  profile.Name=saved.Name;profile.Endpoint=saved.Endpoint;profile.Hostname=saved.Hostname;
+  profile.Certificate=saved.Certificate;profile.CA=saved.CA;profile.ServerName=saved.ServerName;profile.VerifyName=saved.VerifyName;
+  if(change.ReplaceKey)profile.Key=saved.Key;
  }
 }

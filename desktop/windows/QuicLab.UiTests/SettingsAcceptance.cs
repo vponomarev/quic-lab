@@ -55,6 +55,7 @@ static class SettingsAcceptance {
   var ca=(TextBox)w.FindName("CABox");ca.Text="old QUIC trust";((ComboBox)w.FindName("TransportBox")).SelectedIndex=3;
   if(ca.Text!=""||((FrameworkElement)w.FindName("CaFields")).Visibility!=Visibility.Visible)throw new Exception("transport change retained hidden trust or hid VLESS CA");
   ((ComboBox)w.FindName("TransportBox")).SelectedIndex=1;ca.Text="";
+  ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(200);
   w.Close();
   var conflicting=new FakeSettings{Conflict=true};var stale=new SettingsWindow(conflicting);stale.Show();await Task.Delay(200);
   var staleName=(TextBox)stale.FindName("NameBox");string originalName=staleName.Text;staleName.Text="stale edit";

@@ -9,12 +9,19 @@ import (
 )
 
 func (WindowsPlatform) Resolve(ctx context.Context, s Settings) (Settings, error) {
+	if err := ctx.Err(); err != nil {
+		return s, err
+	}
 	var u Uplink
 	if s.FullIPv4() || s.UplinkMode == "auto" {
-		var e error
-		u, e = DiscoverWindowsUplink(ctx, s)
-		if e != nil {
-			return s, e
+		var ok bool
+		u, ok = ctx.Value(uplinkSnapshotKey{}).(Uplink)
+		if !ok || u.Index == 0 || u.Index != s.InterfaceIndex {
+			var e error
+			u, e = DiscoverWindowsUplink(ctx, s)
+			if e != nil {
+				return s, e
+			}
 		}
 		s.InterfaceIndex = u.Index
 	}

@@ -5,7 +5,7 @@ param(
  [Parameter(Mandatory)][string]$WintunLicense,
  [Parameter(Mandatory)][string]$ThirdPartyLicenses,
  [Parameter(Mandatory)][string]$Output,
- [string]$Version='0.1.0-beta.2',
+ [string]$Version='0.1.0-beta.3',
  [string]$Revision='development'
 )
 $ErrorActionPreference='Stop'

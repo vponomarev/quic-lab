@@ -16,6 +16,10 @@ type Uplink struct {
 	Gateway string   `json:"gateway"`
 	Local   []string `json:"local"`
 }
+
+// Only the current start attempt may reuse its discovery result. It is never
+// serialized into settings or reused after a network change/retry.
+type uplinkSnapshotKey struct{}
 type ManagedEngine interface {
 	vpnclient.Backend
 	Config() vpnclient.Config
@@ -174,7 +178,8 @@ func (b *Automatic) loop(ctx context.Context, done chan struct{}) {
 		s.UplinkMode = "manual"
 		engine = b.factory(s)
 		index = u.Index
-		start, cancel := context.WithCancel(ctx)
+		u.Local = append([]string(nil), u.Local...)
+		start, cancel := context.WithCancel(context.WithValue(ctx, uplinkSnapshotKey{}, u))
 		engineCancel = cancel
 		timer := time.AfterFunc(25*time.Second, cancel)
 		err = engine.Start(start, engine.Config())
