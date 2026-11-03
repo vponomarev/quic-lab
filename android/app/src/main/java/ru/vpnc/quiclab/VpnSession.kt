@@ -77,6 +77,14 @@ internal class VpnSession(
     private val groupURIs=canonicalGroup ?: config.optJSONArray("vless_uris")
     private val vlessGroup=if(!isBond && groupURIs!=null && (canonicalGroup!=null || isVLESS))VlessGroupPolicy(groupURIs.length(),
         (0 until groupURIs.length()).map{canonicalGroup?.getJSONObject(it)?.getString("connection_id") ?: "subscription"}) else null
+    private val groupHealth = vlessGroup?.let { NormalGroupHealth((0 until requireNotNull(groupURIs).length()).map {
+        canonicalGroup?.getJSONObject(it)?.getString("connection_id") ?: "subscription"
+    }) }
+    private val groupProber = vlessGroup?.let { NormalGroupProber { action -> submit(action) } }
+    private var nextGroupCheckAt = 0L
+    private var groupChecksEnabled = false
+    private data class GroupStartRequest(val kind: Int, val network: Network, val index: Int, val reason: String)
+    private var pendingGroupStart: GroupStartRequest? = null
     private data class GroupGateway(val gateway: Gateway, val configuration: JSONObject, val endpoint: String)
     private val mixedGroup = vlessGroup?.let { group -> MixedGroupSession<GroupGateway>(group,
         attach = { acquired -> synchronized(worker) {
@@ -99,11 +107,78 @@ internal class VpnSession(
             .put("transport",activeConfig.optString("transport")).put("time",System.currentTimeMillis()))
     }
     private fun groupCandidate(index:Int):String=canonicalGroup?.getJSONObject(index)?.getString("config") ?: Mobile.importVLESSConfig(groupURIs!!.getString(index))
-    private fun rotateGroup(index:Int){
+    private fun rotateGroup(index:Int, reason:String="switched"){
         if(closed || !alive || !automatic)return
         val network=activeNetwork?:return
         if(activeKind==CELLULAR && !cellAllowed())return
-        startGroup(activeKind,network,index,"switched")
+        startGroup(activeKind,network,index,reason)
+    }
+
+    private fun resetGroupChecks() {
+        groupProber?.cancel()
+        groupHealth?.reset(requireNotNull(vlessGroup).current, now())
+        nextGroupCheckAt = now() + 30000
+        groupChecksEnabled = false
+    }
+
+    private fun groupProbeAllowed(kind: Int, network: Network): Boolean {
+        if (closed || (kind == CELLULAR && !cellAllowed())) return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        if (!caps.hasTransport(kind)) return false
+        return service?.let { VpnReserveSettings.allowed(it, kind,
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) } ?: true
+    }
+
+    private fun pathMeasurement(gateway: Gateway, owned: Boolean): GroupPathMeasurement {
+        val probe = gateway.newPathProbe()
+        return object : GroupPathMeasurement {
+            override fun measure() = probe.measure().toDouble()
+            override fun cancel() { probe.stop() }
+            override fun close() { probe.stop(); if (owned) gateway.stop() }
+        }
+    }
+
+    /** Diagnostics run on one separate worker and never attach a candidate to the router. */
+    private fun checkGroupHealth(time: Long) {
+        val health = groupHealth ?: return
+        val prober = groupProber ?: return
+        val network = activeNetwork ?: return
+        val kind = activeKind
+        if (!automatic || !alive || failedNetwork != null || !groupProbeAllowed(kind, network)) {
+            if (groupChecksEnabled) resetGroupChecks()
+            return
+        }
+        groupChecksEnabled = true
+        val gateway = client?.takeIf { it.isConnected() } ?: return
+        if (time < nextGroupCheckAt) return
+        nextGroupCheckAt = time + 30000
+        val index = health.nextCandidate(time) ?: return
+        val candidate = canonicalGroup?.getJSONObject(index) ?: JSONObject()
+            .put("connection_id", "subscription").put("config", groupCandidate(index))
+        val projected = AdaptiveGroups.gateway(candidate, config)
+        val token = epoch
+        prober.start(
+            allowed = { groupProbeAllowed(kind, network) },
+            active = { pathMeasurement(gateway, false) },
+            candidate = { valid ->
+                val resolved = resolveEndpoint(projected.getString("endpoint"), network)
+                check(valid()) { "Проверка отменена" }
+                projected.put("endpoint", resolved.address).put("initial_path", physicalName(kind))
+                if (projected.optString("hostname").isBlank()) projected.put("hostname", resolved.hostname)
+                val temporary = Mobile.newGateway(object : EventSink { override fun onEvent(eventJSON: String) {} })
+                try {
+                    temporary.setRTT(false, 5000)
+                    temporary.start(projected.toString(), binder(network, valid))
+                    pathMeasurement(temporary, true)
+                } catch (failure: Exception) { temporary.stop(); throw failure }
+            },
+        ) { activeMs, candidateMs ->
+            if (!alive || !automatic || token != epoch || client !== gateway || activeNetwork != network || !groupProbeAllowed(kind, network)) return@start
+            // Round start is conservative: slow acquisition must not refresh old evidence.
+            health.active(time, activeMs)
+            health.candidate(index, time, candidateMs)
+            health.replacement(now())?.let { rotateGroup(it, "sustained_degradation") }
+        }
     }
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val networks = mutableMapOf<Int, Network>()
@@ -300,6 +375,11 @@ internal class VpnSession(
 
     fun setAutomatic(enabled: Boolean) = submit {
         automatic = enabled
+        if (!enabled && pendingGroupStart != null) {
+            pendingGroupStart = null
+            if (client == null) alive = false
+        }
+        resetGroupChecks()
         refreshReserve()
         event(
             "auto_mode",
@@ -415,7 +495,15 @@ internal class VpnSession(
 
     /** Each candidate owns its native transport; only the surrounding router owns the TUN. */
     private fun startGroup(kind: Int, network: Network, preferred: Int, reason: String): Boolean {
+        resetGroupChecks()
         val group = mixedGroup ?: return false
+        // A canceled AWG check still owns its peer until dispose finishes. Keep the
+        // current route while draining; do not misclassify lease contention as failure.
+        if (groupProber?.isBusy() == true) {
+            pendingGroupStart = GroupStartRequest(kind, network, preferred, reason)
+            return true
+        }
+        pendingGroupStart = null
         var index: Int? = preferred
         var attempts = 0
         while (index != null && attempts++ < requireNotNull(groupURIs).length() && !closed) {
@@ -440,6 +528,7 @@ internal class VpnSession(
                 } catch (failure: Exception) { gateway.stop(); throw failure }
             }
             if (switched) {
+                resetGroupChecks()
                 activeKind = kind; activeNetwork = network; failedNetwork = null
                 selected(network,kind)
                 reconnectRequired = false; awgPingSeen = false
@@ -558,7 +647,6 @@ internal class VpnSession(
         if(network!=activeNetwork)vlessGroup?.resetNetwork()
         event("migration_started", "$reason → ${label(kind)}")
         if (mixedGroup != null) {
-            activeKind = kind; activeNetwork = network
             check(startGroup(kind,network,requireNotNull(vlessGroup).current,"switched")) { "Нет рабочего подключения группы" }
             manualCellUntil = 0; refreshReserve()
             return
@@ -648,6 +736,16 @@ internal class VpnSession(
         }
         refreshReserve()
         if (!alive) return
+        pendingGroupStart?.let { pending ->
+            if (networks[pending.kind] != pending.network || (pending.kind == CELLULAR && !cellAllowed())) {
+                pendingGroupStart = null
+                failedNetwork = activeNetwork
+                recover("Сеть ожидающего подключения недоступна")
+            } else if (groupProber?.isBusy() != true) {
+                startGroup(pending.kind, pending.network, pending.index, pending.reason)
+            }
+            return
+        }
         if (!cellAllowed()) {
             pendingCellStart = null
             if (!budgetReported) { budgetReported = true; event("budget_blocked", "Общий лимит LTE исчерпан. Доступен только Wi-Fi. ${budget?.snapshot()}") }
@@ -677,6 +775,7 @@ internal class VpnSession(
             recover("Все серверы группы недоступны в текущей сети");return
         }
         mixedGroup?.check(time,client?.isConnected()==true)?.let { rotateGroup(it) }
+        checkGroupHealth(time)
         if (vlessGroup==null && !isAWG && (client?.isConnected() != true || time - lastReplyAt > maxOf(15000, intervalMS * 4))) {
             reconnectRequired = true
             failedNetwork = activeNetwork
@@ -838,6 +937,8 @@ internal class VpnSession(
     }
 
     private fun stopInternal() {
+        pendingGroupStart = null
+        resetGroupChecks()
         epoch++
         finishExitEcho("VPN-выход остановлен")
         bondNetworks.clear(); bondRetry.clear()
@@ -869,6 +970,7 @@ internal class VpnSession(
         synchronized(worker) {
             if (closed) return
             closed = true
+            groupProber?.close()
             researchSubscription?.close();researchSubscription=null
             service?.let {
                 it.unregisterReceiver(rttReceiver)
@@ -883,10 +985,11 @@ internal class VpnSession(
         }
     }
 
-    private fun binder(network: Network): SocketBinder {
+    private fun binder(network: Network, allowed: () -> Boolean = { true }): SocketBinder {
         val raw =
         object : SocketBinder {
             override fun bind(fd: Long) {
+                check(allowed()) { "Проверка отменена" }
                 check(service?.protect(fd.toInt()) ?: (attached != null)) { "Cannot protect tunnel socket" }
                 ParcelFileDescriptor.fromFd(fd.toInt()).use {
                     network.bindSocket(it.fileDescriptor)

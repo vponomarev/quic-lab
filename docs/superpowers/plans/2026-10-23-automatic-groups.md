@@ -83,3 +83,6 @@ Ruling: Use private envelope logical IDs rather than portable vpnmodel fields to
 - Full native suite is not declared green: selected-file run recorded the inherited IPv6 assertion mismatch and one continuity reset timeout; isolated continuity reset rerun passed. Normal package test on Windows is blocked by Linux-only AWG reload implementation. Focused changed-runtime tests and pathpolicy/vpnmodel passed.
 
 Final verification: native targeted regression passed; full-suite platform/baseline failures remain documented above. Latest 23 group/runtime Android tests passed after deduplication; source identity, personal-layer persistence and logical-source cap regressions passed. Debug APK installed on Note9. Wider adapters, physical HA acceptance and ordinary latency degradation remain explicitly pending in docs/testing/adaptive-groups-probe-map-2026-10-24.md.
+
+## Продолжение 2026-11-04
+Устойчивое ухудшение обычной группы и ограниченные фоновые проверки реализованы в отдельной итерации. 51 регрессионный тест на Note9 и реальное переключение QUIC → HTTPS без TUN прошли; полный Go-набор на Linux также прошёл. См. [проверки и ограничения](../../testing/android-group-stability-2026-11-04.md). Это закрывает соответствующий остаток реализации; перенос состава через экспорт/MDM и полная физическая приёмка остаются открытыми.
