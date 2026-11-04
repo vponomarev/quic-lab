@@ -27,6 +27,7 @@ function phoneStatus(){
  const failures=(state?.events||[]).filter(e=>e.kind==='config_result'&&e.revision===revision&&e.result!=='applied');
  const text=!state?.userConfigEdit?.enabled?'Администратор не разрешил редактирование настроек.':revision>applied?(failures.length?'Телефон не применил новую версию. Перечитайте состояние или обратитесь к администратору.':'Сервер сохранил ревизию '+revision+'. Ожидаем применения на телефоне.'):'Применена ревизия '+applied+'. Сохранение отправит изменения через MDM-сервер.';
  $('#status').textContent=text;$('#apply').disabled=busy||!can('config')||!doc;$('#preview').disabled=!doc;
+ $('#phone-import').disabled=busy||!can('config')||!doc;$('#reload').disabled=busy;
  for(const control of document.querySelectorAll('#configuration input,#configuration select,#configuration textarea,#configuration button,#app-list input'))control.disabled=busy||!can('config');
 }
 async function post(path,fields){if(phone){if(path!=='mdm/config')throw Error('Операция недоступна.');return phoneCall('save',{policyRevision,expectedRevision:revision,expectedGeneration:generation,requestId:fields.requestID,document:doc});}const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,id:temporary?ticket?.id:id,token:temporary?ticket?.browserToken:undefined,...fields})});if(!r.ok){const error=Error(r.status===409?'Конфликт или MDM приостановлено. Перечитайте состояние перед повтором.':r.status===403?'Нет разрешения на эту операцию.':'Сервер отклонил запрос ('+r.status+').');error.status=r.status;throw error;}return r.json();}
@@ -160,6 +161,15 @@ $('#import-config').onclick=async()=>{if(!doc)return;try{
  doc=out.candidate;changed();renderConfig();renderApps();preview();message('Черновик подготовлен.'+(out.missingCredentials?.length?' Есть подключения без ключей: заполните данные доступа до применения.':''));
  }catch(e){message(e.message,true);}};
 window.mdmEditorDirty=()=>dirty;
+if(phone)$('#phone-import').onclick=async()=>{
+ if(busy||!can('config')||!doc)return;
+ busy=true;status();
+ try{
+  const out=await phoneCall('import',{document:copy(doc)});
+  doc=copy(out.candidate);changed();renderConfig();renderApps();preview();
+  message('Импорт подготовлен в черновике. Проверьте изменения и нажмите «Отправить».'+(out.missingCredentials?.length?' Новым подключениям нужны ключи.':''));
+ }catch(e){message(e.message,true);}finally{busy=false;status();}
+};
 if(phone)root.addEventListener('input',e=>{if(e.target.closest('#configuration,#app-list'))changed();});
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});load(true);setInterval(()=>{if(!busy)load(false);if(!$('#telemetry').hidden)loadTelemetry();},10000);
 })();

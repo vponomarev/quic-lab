@@ -15,7 +15,7 @@ internal class MdmUserEditorSession(
  private val closed=AtomicBoolean(false)
  private val initial=state()
  private val binding=initial.binding
- private fun checkCurrent(){
+ internal fun checkCurrent(){
   val now=state()
   check(!closed.get() && initial.active && initial.rights.config && binding!=null &&
    now.active && now.rights.config && !now.cleanupPending && now.localGeneration==initial.localGeneration &&

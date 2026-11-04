@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name=".MdmImportTestActivity" android:exported="true" android:permission="android.permission.DUMP" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <provider android:name=".MdmImportTestProvider" android:authorities="ru.vpnc.quiclab.import-test" android:exported="false" />
+    </application>
+</manifest>

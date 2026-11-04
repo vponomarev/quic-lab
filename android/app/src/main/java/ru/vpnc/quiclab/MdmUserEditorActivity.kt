@@ -19,6 +19,7 @@ class MdmUserEditorActivity:Activity(){
  private val busy=AtomicBoolean(false)
  private val transferLock=Any()
  private var transfer:MdmTransport?=null
+ private var importFlow:MdmUserImportFlow?=null
  @SuppressLint("SetJavaScriptEnabled","AddJavascriptInterface")
  override fun onCreate(savedInstanceState:Bundle?){
   super.onCreate(savedInstanceState)
@@ -56,6 +57,17 @@ class MdmUserEditorActivity:Activity(){
    @JavascriptInterface fun request(id:String,operation:String,body:String){
     if(closed.get() || !id.matches(Regex("[0-9]{1,9}")))return
     if(!busy.compareAndSet(false,true)){respond(id,JSONObject().put("ok",false).put("error","Дождитесь завершения текущего запроса."));return}
+    if(operation=="import"){
+     runOnUiThread{
+      if(closed.get()){busy.set(false);return@runOnUiThread}
+      val flow=MdmUserImportFlow(this@MdmUserEditorActivity,worker,session::checkCurrent){value,error->
+       importFlow=null;busy.set(false)
+       respond(id,if(value!=null)JSONObject().put("ok",true).put("value",value) else JSONObject().put("ok",false).put("error",error))
+      }
+      importFlow=flow;flow.start(body)
+     }
+     return
+    }
     try{worker.execute{
      val result=try{JSONObject().put("ok",true).put("value",session.request(operation,body))}
       catch(e:Exception){JSONObject().put("ok",false).put("error",MdmUserEditorAssets.error(e))}
@@ -68,6 +80,10 @@ class MdmUserEditorActivity:Activity(){
   web.loadUrl(MdmUserEditorAssets.URL)
  }
  private fun respond(id:String,result:JSONObject){runOnUiThread{if(!closed.get())web.evaluateJavascript("window.mdmEditorResult(${JSONObject.quote(id)},${JSONObject.quote(result.toString())})",null)}}
+ @Deprecated("Activity result") override fun onActivityResult(request:Int,result:Int,data:android.content.Intent?){
+  super.onActivityResult(request,result,data)
+  if(request==MdmUserImportFlow.REQUEST)importFlow?.result(result,data)
+ }
  private fun leave(){
   if(busy.get()){AlertDialog.Builder(this).setMessage("Запрос ещё выполняется. При закрытии сервер мог уже сохранить изменения.").setPositiveButton("Закрыть"){_,_->finish()}.setNegativeButton("Подождать",null).show();return}
   web.evaluateJavascript("Boolean(window.mdmEditorDirty && window.mdmEditorDirty())"){dirty->
@@ -78,6 +94,7 @@ class MdmUserEditorActivity:Activity(){
  @Deprecated("Legacy back dispatch") override fun onBackPressed(){leave()}
  override fun onDestroy(){
   closed.set(true);if(::session.isInitialized)session.close()
+  importFlow?.close();importFlow=null
   synchronized(transferLock){transfer?.close()};worker.shutdownNow()
   if(::web.isInitialized){web.removeJavascriptInterface("MdmNative");web.stopLoading();web.destroy()}
   super.onDestroy()

@@ -33,7 +33,11 @@ class MdmUserEditorUiTest {
    }}
    web.addJavascriptInterface(object{
     @JavascriptInterface fun request(id:String,op:String,raw:String){
-     val value=if(op=="read"){reads.incrementAndGet();JSONObject(state.toString())} else {saved.set(JSONObject(raw));JSONObject().put("revision",6)}
+     val value=when(op){
+      "read"->{reads.incrementAndGet();JSONObject(state.toString())}
+      "import"->{val imported=JSONObject(raw).getJSONObject("document");imported.getJSONArray("profiles").getJSONObject(0).put("name","Из файла");JSONObject().put("candidate",imported).put("missingCredentials",org.json.JSONArray())}
+      else->{saved.set(JSONObject(raw));JSONObject().put("revision",6)}
+     }
      val response=JSONObject().put("ok",true).put("value",value)
      // The test WebView is deliberately unattached. View.post queues until an
      // attachment that never occurs; match Activity.runOnUiThread in production.
@@ -49,6 +53,9 @@ class MdmUserEditorUiTest {
    assertTrue("Editor did not render: errors=$errors reads=${reads.get()} document="+evaluate("JSON.stringify({url:location.href,ready:document.readyState,message:document.querySelector('#message')?.textContent,bridge:typeof window.mdmEditorResult})"),ready)
    assertEquals("false",evaluate("document.querySelector('#apply').disabled"))
    assertEquals("false",evaluate("document.body.innerText.includes('Разрешить пользователю выбирать подключение')"))
+   evaluate("document.querySelector('#phone-import').click();true")
+   var imported=false;repeat(50){if(!imported){Thread.sleep(100);imported=evaluate("document.querySelector('#diff').textContent.includes('Из файла')")=="true"}}
+   assertTrue("Import did not prepare a draft",imported);assertNull(saved.get());assertEquals("Основной",configuration.getJSONArray("profiles").getJSONObject(0).getString("name"))
    evaluate("document.querySelector('[data-tab=config]').click();var label=Array.from(document.querySelectorAll('#configuration label')).find(x=>x.textContent==='Название подключения');var input=label.querySelector('input');input.value='Изменено на телефоне';input.dispatchEvent(new Event('change'));true")
    assertEquals("true",evaluate("window.mdmEditorDirty()"))
    inst.runOnMainSync{

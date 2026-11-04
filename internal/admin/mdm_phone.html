@@ -6,7 +6,7 @@
 <h1 id="title">MDM-настройки</h1><p id="message" role="status">Получаем настройки с сервера…</p>
 <div class="tabs"><button data-tab="overview" aria-selected="true">Состояние</button><button data-tab="config">Настройки</button><button data-tab="apps">Приложения</button></div>
 <section id="overview" class="card"><div id="status" aria-live="polite"></div><button id="reload">Перечитать настройки</button><p>Изменения отправляются MDM-серверу. Телефон применяет полученную от сервера версию. Во время применения VPN может переподключиться.</p></section>
-<section id="config" hidden><div id="configuration"></div></section>
+<section id="config" hidden><button id="phone-import" disabled>Импортировать из файла</button><p>JSON без ключей или зашифрованный .age. Импорт готовит черновик; отправка на сервер выполняется отдельно.</p><div id="configuration"></div></section>
 <section id="apps" class="card" hidden><label>Список для<select id="apps-profile"></select></label><label>Поиск<input id="app-search" placeholder="Название или package ID"></label><p id="inventory-note"></p><div id="app-list" class="apps"></div></section>
 <section class="apply-bar"><div class="toolbar"><button id="preview">Изменения</button><button id="apply" disabled>Отправить</button></div><p id="draft-note">Черновик не меняет действующие настройки.</p><pre id="diff"></pre></section>
 <div hidden><button id="start"></button><button id="stop"></button><button id="export-config"></button><button id="import-config"></button><section id="telemetry" hidden></section></div>
