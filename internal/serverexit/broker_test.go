@@ -9,12 +9,82 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 type brokerProvider struct{ fakeProvider }
+
+// Close interrupts reads, but a write already in progress must finish before
+// revocation can acknowledge that the old provider is no longer used.
+type pausedExitConn struct {
+	net.Conn
+	entered, resume chan struct{}
+}
+
+func (c *pausedExitConn) Write(b []byte) (int, error) {
+	close(c.entered)
+	<-c.resume
+	return 0, net.ErrClosed
+}
+
+type pausedExitProvider struct {
+	fakeProvider
+	conn net.Conn
+}
+
+func (p *pausedExitProvider) DialContext(context.Context, string, string) (net.Conn, error) {
+	return p.conn, nil
+}
+
+func TestBrokerRevocationJoinsOutboundWrite(t *testing.T) {
+	dir := t.TempDir()
+	os.Chmod(dir, 0700)
+	a, peer := net.Pipe()
+	defer peer.Close()
+	out := &pausedExitConn{Conn: a, entered: make(chan struct{}), resume: make(chan struct{})}
+	var resume sync.Once
+	unpause := func() { resume.Do(func() { close(out.resume) }) }
+	defer unpause()
+	registered := make(chan func(), 1)
+	b := Broker{Acquire: func(_, _ string, revoke func()) (Lease, error) {
+		registered <- revoke
+		return Lease{Provider: &pausedExitProvider{conn: out}, Release: func() {}}, nil
+	}}
+	stop, err := b.Serve(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Release the paused writer before stopping, including on test failure.
+	defer func() { unpause(); stop() }()
+	c, err := (Client{Dir: dir}).Dial(context.Background(), "vless", "valid", "tcp4", "192.0.2.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write([]byte("old exit"))
+	select {
+	case <-out.entered:
+	case <-time.After(time.Second):
+		t.Fatal("write not entered")
+	}
+	revoke := <-registered
+	done := make(chan struct{})
+	go func() { revoke(); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("revocation acknowledged while old exit write is running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	unpause()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("revocation did not finish after write cleanup")
+	}
+}
 
 func (*brokerProvider) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	left, right := net.Pipe()

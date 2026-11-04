@@ -89,6 +89,8 @@ func (b *Broker) Serve(ctx context.Context, dir string) (func(), error) {
 	return stop, nil
 }
 func (b *Broker) serve(parent context.Context, c net.Conn) {
+	finished := make(chan struct{})
+	defer close(finished) // Acknowledge revocation only after all flow cleanup.
 	c.SetDeadline(time.Now().Add(10 * time.Second))
 	raw, err := readFrame(c, 4096)
 	if err != nil {
@@ -114,7 +116,7 @@ func (b *Broker) serve(parent context.Context, c net.Conn) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	lease, err := b.Acquire(req.Protocol, req.Identity, func() { cancel(); c.Close() })
+	lease, err := b.Acquire(req.Protocol, req.Identity, func() { cancel(); c.Close(); <-finished })
 	if err != nil {
 		writeJSONFrame(c, brokerReply{})
 		return

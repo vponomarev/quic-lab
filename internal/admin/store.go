@@ -86,6 +86,7 @@ type Store struct {
 	key               *ecdsa.PrivateKey
 	active            map[string]map[string]func()
 	awgReload         func() error
+	awgAccessPending  map[string]bool // Protocol revocations not acknowledged by the configured worker.
 	syncDir           func(string) error
 }
 

@@ -8,7 +8,7 @@ static class TransportSwitchAcceptance {
   var profiles=new List<EngineSettings>{
    new(){Transport="quic",Endpoint="quic.example:443",Hostname="quic.example",Certificate="cert",Key="quic-key"},
    new(){Transport="https",Endpoint="https.example:8443",Hostname="https.example",Certificate="cert",Key="https-key",CA="https-ca"},
-   new(){Transport="awg",Endpoint="awg.example:51820",Key="awg-profile"}
+   new(){Transport="awg",Endpoint="awg.example:51820",Key="awg-profile",ServerControl=new(){DeviceID="device-a",ConfigURL="https://control.example/api/v1/devices/device-a/config",Token=new string('a',64)}}
   };
   var w=new SettingsWindow(client,(_,_)=>Task.FromResult(new UrlProfileBundle(profiles)));w.Show();await Task.Delay(200);
   ((TextBox)w.FindName("UrlBox")).Text="https://example.test/profile";
@@ -22,6 +22,7 @@ static class TransportSwitchAcceptance {
   client.FailNextStart=true;
   ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(100);
   Check(client.Saved?.Settings.Key=="edited-awg-profile"&&client.Saved.Settings.Transport=="awg","wrong AWG save");
+  Check(client.Saved!.ReplaceServerControl&&client.Saved.Settings.ServerControl==null,"manual key replacement retained another device's exit token");
   Check(client.Saved!.Settings.Targets.SequenceEqual(new[]{"1.1.1.0/30"})&&client.Saved.Settings.InterfaceIndex==5,"switch changed local routing");
   transport.SelectedIndex=1;
   Check(((PasswordBox)w.FindName("KeyBox")).Password=="https-key"&&((TextBox)w.FindName("PortBox")).Text=="8443","saved profile lost alternatives");
@@ -34,6 +35,7 @@ static class TransportSwitchAcceptance {
   // Return to a valid supplied profile and save so closing does not prompt.
   transport.SelectedIndex=2;
   Check(((PasswordBox)w.FindName("KeyBox")).Password=="edited-awg-profile","switch reverted saved credential edit");
+  Check(profiles[2].ServerControl==null,"reselection resurrected another device's exit token");
   ((Button)w.FindName("SaveButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(100);
   client.RejectProfile=true;
   ((Button)w.FindName("CheckButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(100);

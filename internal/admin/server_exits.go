@@ -62,8 +62,9 @@ func (s *Store) ServerExitWorkers(ids []string) (awg, vless bool) {
 	defer s.mu.Unlock()
 	for _, id := range ids {
 		d := s.state.Devices[id]
-		awg = awg || d.AWG != nil
-		vless = vless || (d.VLESSUUID != "" && !d.VLESSRevoked)
+		u := s.state.Users[d.UserID]
+		awg = awg || (s.awgConfig != nil && d.AWG != nil && (u.Allows("awg") || s.awgAccessPending[u.ID]))
+		vless = vless || (s.vlessClient != nil && d.VLESSUUID != "" && ((!d.VLESSRevoked && u.Allows("vless")) || s.vlessError || s.state.VLESSPending != nil))
 	}
 	return
 }
@@ -240,6 +241,8 @@ func (s *Store) applyServerExits(ids []string, closers []func(), apply func([]st
 		s.mu.Lock()
 		for _, id := range ids {
 			delete(s.serverExitPending, id)
+			// The apply callback also acknowledged the current native peer map.
+			delete(s.awgAccessPending, s.state.Devices[id].UserID)
 		}
 		s.mu.Unlock()
 	}

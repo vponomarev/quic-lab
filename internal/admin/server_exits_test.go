@@ -25,6 +25,48 @@ func grantExits(t *testing.T, s *Store, user string, p *serverexit.Policy) {
 		t.Fatal(err)
 	}
 }
+
+func TestServerExitWorkersIgnoreInactiveCredentials(t *testing.T) {
+	s, _, d, _ := updateFixture(t)
+	d.AWG = &awgserver.Peer{Address: "10.44.0.2"}
+	s.state.Devices[d.ID] = d
+	u := s.state.Users[d.UserID]
+	u.Protocols = []string{"quic", "awg"}
+	s.state.Users[u.ID] = u
+	if awg, _ := s.ServerExitWorkers([]string{d.ID}); awg {
+		t.Fatal("removed AWG ingress still required")
+	}
+	s.awgConfig = &awgserver.Config{}
+	if awg, _ := s.ServerExitWorkers([]string{d.ID}); !awg {
+		t.Fatal("configured authorized AWG worker not required")
+	}
+	s.SetAWGReload(func() error { return errors.New("worker unavailable") })
+	if err := s.SetProtocols(u.ID, []string{"quic"}, false); err == nil {
+		t.Fatal("revocation failure hidden")
+	}
+	if awg, _ := s.ServerExitWorkers([]string{d.ID}); !awg {
+		t.Fatal("unacknowledged revocation skipped worker")
+	}
+	if err := s.applyServerExits([]string{d.ID}, nil, func([]string) error { return errors.New("unavailable") }, nil); err == nil {
+		t.Fatal("failed exit apply acknowledged revocation")
+	}
+	if awg, _ := s.ServerExitWorkers([]string{d.ID}); !awg {
+		t.Fatal("failed retry lost pending revocation")
+	}
+	if err := s.applyServerExits([]string{d.ID}, nil, func([]string) error { return nil }, nil); err != nil {
+		t.Fatal(err)
+	}
+	if awg, _ := s.ServerExitWorkers([]string{d.ID}); awg {
+		t.Fatal("successful exit apply retained acknowledged revocation")
+	}
+	s.SetAWGReload(func() error { return nil })
+	if err := s.SetProtocols(u.ID, []string{"quic"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if awg, _ := s.ServerExitWorkers([]string{d.ID}); awg {
+		t.Fatal("acknowledged AWG disable still requires worker")
+	}
+}
 func TestServerExitDeviceSelectionAndRevocation(t *testing.T) {
 	s, _, d, token := updateFixture(t)
 	if err := s.ConfigureServerExits(exitDefinitions()); err != nil {

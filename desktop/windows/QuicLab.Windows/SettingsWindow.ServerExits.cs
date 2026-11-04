@@ -4,9 +4,10 @@ namespace QuicLab.Windows;
 public partial class SettingsWindow {
  ServerControlConfig? serverControl;
  bool replaceServerControl;
+ string? importedControlKey;
  ServerExitView? serverExitView;
  void LoadServerControl(EngineSettings settings,string[]? capabilities){
-  serverControl=settings.ServerControl?.Clone();replaceServerControl=false;serverExitView=null;
+  serverControl=settings.ServerControl?.Clone();replaceServerControl=false;importedControlKey=null;serverExitView=null;
   ServerExitBox.ItemsSource=null;ApplyServerExitButton.IsEnabled=false;
   RefreshServerExitsButton.IsEnabled=serverControl!=null&&client is IServerExitClient&&capabilities?.Contains("server-exits-v1")==true;
   ServerExitState.Text=serverControl==null?"Для выбора выхода нужен профиль, полученный по приглашению сервера.":"Остановите VPN, сохраните изменения и обновите список выходов.";

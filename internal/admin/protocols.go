@@ -86,6 +86,8 @@ func (s *Store) SetProtocols(id string, protocols []string, disabled bool) error
 // setUserAccess persists the name and protocol selection together, then applies
 // revocations. A worker failure can mean the durable edit was only partly applied.
 func (s *Store) setUserAccess(id string, protocols []string, disabled *bool, name *string) error {
+	s.serverExitMu.Lock()
+	defer s.serverExitMu.Unlock()
 	s.mu.Lock()
 	old, ok := s.state.Users[id]
 	if !ok {
@@ -164,11 +166,23 @@ func (s *Store) setUserAccess(id string, protocols []string, disabled *bool, nam
 		}
 	}
 	reload := s.awgReload
+	if needsAWG && s.awgConfig != nil {
+		if s.awgAccessPending == nil {
+			s.awgAccessPending = map[string]bool{}
+		}
+		s.awgAccessPending[id] = true
+	}
 	s.mu.Unlock()
 	closeAll(closers)
 	saveErr = errors.Join(saveErr, s.SyncVLESS(context.Background()))
 	if needsAWG {
-		return errors.Join(saveErr, reloadAWG(reload))
+		err := reloadAWG(reload)
+		if err == nil && reload != nil {
+			s.mu.Lock()
+			delete(s.awgAccessPending, id)
+			s.mu.Unlock()
+		}
+		return errors.Join(saveErr, err)
 	}
 	return saveErr
 }

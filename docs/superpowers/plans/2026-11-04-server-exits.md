@@ -49,9 +49,12 @@ and device selection, authenticated control API and provider/ingress adapters.
 - [x] 4. Android/Windows/Linux client selection: authenticated catalogue/selection,
   persisted metadata, explicit reconnect of changed selection; expose errors and
   empty/legacy server states; keep local per-app/profile exit IDs separate.
-- [ ] 5. Private namespace two-exit acceptance, all ingress protocols, legacy suite,
+- [x] 5. Isolated userspace-netstack two-exit acceptance, all ingress adapters, legacy suite,
   relevant race/vet, platform builds/UI checks, docs/migration/backup integration,
   one fresh final review and one RED/GREEN fix pass, scoped local commits/artifacts.
+
+Verification and accepted deployment/test limitations are recorded in
+[the verification journal](../../server-exits-verification.md).
 
 ## Review Focus
 - Forged device/exit identifiers or revoked user ACL cannot select an exit.

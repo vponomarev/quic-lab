@@ -114,12 +114,14 @@ func (s *Server) ServeQUIC(ctx context.Context, ln QUICListener) error {
 		}
 		wg.Add(1)
 		go func() {
+			finished := make(chan struct{})
+			defer close(finished)
 			defer wg.Done()
 			defer c.CloseWithError(0, "gateway closed")
 			stop := context.AfterFunc(ctx, func() { c.CloseWithError(0, "server stopped") })
 			defer stop()
 			if s.Register != nil || s.RegisterProtocol != nil {
-				release, e := s.register(c.ConnectionState().TLS, "quic", func() { c.CloseWithError(1, "client revoked") })
+				release, e := s.register(c.ConnectionState().TLS, "quic", func() { c.CloseWithError(1, "client revoked"); <-finished })
 				if e != nil {
 					return
 				}
@@ -146,6 +148,8 @@ func (s *Server) ServeQUIC(ctx context.Context, ln QUICListener) error {
 	}
 }
 func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
+	finished := make(chan struct{})
+	defer close(finished)
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
 		http.Error(w, "client certificate required", 403)
 		return
@@ -156,7 +160,7 @@ func (s *Server) WebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.CloseNow()
 	if s.Register != nil || s.RegisterProtocol != nil {
-		release, e := s.register(*r.TLS, "https", func() { c.CloseNow() })
+		release, e := s.register(*r.TLS, "https", func() { c.CloseNow(); <-finished })
 		if e != nil {
 			return
 		}

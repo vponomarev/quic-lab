@@ -9,9 +9,87 @@ import (
 	"net"
 	"quiclab/internal/bond"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type pausedBondExit struct {
+	net.Conn
+	entered, resume chan struct{}
+}
+
+func (c *pausedBondExit) Write([]byte) (int, error) {
+	close(c.entered)
+	<-c.resume
+	return 0, net.ErrClosed
+}
+
+func TestBondRevocationWaitsForOutboundWrite(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s, _ := New("0.0.0.0/0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a, peer := net.Pipe()
+	defer peer.Close()
+	out := &pausedBondExit{Conn: a, entered: make(chan struct{}), resume: make(chan struct{})}
+	var resume sync.Once
+	defer resume.Do(func() { close(out.resume) })
+	s.Egress = func(tls.ConnectionState) (*Egress, error) {
+		return &Egress{Resolver: &net.Resolver{}, DialContext: func(context.Context, string, string) (net.Conn, error) { return out, nil }}, nil
+	}
+	var revoke func()
+	s.Register = func(_ tls.ConnectionState, close func()) (func(), error) { revoke = close; return func() {}, nil }
+	cert := &x509.Certificate{Raw: []byte("bond-revocation-device")}
+	cs := tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}, VerifiedChains: [][]*x509.Certificate{{cert}}}
+	entry, _, err := s.joinBond(ctx, ctx, cs, BondHello{Token: strings.Repeat("ab", 32), Path: "wifi", Create: true}, "quic", "127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer entry.mux.Close()
+	client := bond.NewMux(ctx, true)
+	defer client.Close()
+	up, down := make(chan []byte, 256), make(chan []byte, 256)
+	if err = entry.mux.Session.AddPath("wifi", &exitBondPath{ctx, up, down}); err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Session.AddPath("wifi", &exitBondPath{ctx, down, up}); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	stream.SetDeadline(time.Now().Add(2 * time.Second))
+	if err = WriteJSON(stream, Request{Network: "tcp", Address: "192.0.2.1:443"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply Reply
+	if err = ReadJSON(stream, &reply); err != nil || reply.Error != "" {
+		t.Fatal(reply, err)
+	}
+	if _, err = stream.Write([]byte("old exit")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-out.entered:
+	case <-ctx.Done():
+		t.Fatal("write not entered")
+	}
+	done := make(chan struct{})
+	go func() { revoke(); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("bond acknowledged revocation with an outstanding write")
+	case <-time.After(50 * time.Millisecond):
+	}
+	resume.Do(func() { close(out.resume) })
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("revocation did not finish after write cleanup")
+	}
+}
 
 type exitBondPath struct {
 	ctx     context.Context

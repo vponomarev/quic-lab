@@ -35,7 +35,7 @@ public partial class SettingsWindow {
   TransportBox.SelectedIndex=s.Transport switch{"https"=>1,"awg"=>2,"vless"=>3,_=>0};
   int colon=s.Endpoint.LastIndexOf(':');HostBox.Text=colon<0?s.Endpoint:s.Endpoint[..colon];PortBox.Text=colon<0?"443":s.Endpoint[(colon+1)..];
   NameBox.Text=s.Name;HostnameBox.Text=s.Hostname;CertificateBox.Text=s.Certificate;CABox.Text=s.CA;ServerNameBox.Text=s.ServerName;VerifyNameBox.Text=s.VerifyName;
-  serverControl=s.ServerControl?.Clone();replaceServerControl=true;KeyBox.Password=s.Key;ReplaceKeyBox.IsChecked=true;ImportHint.Text="Загружено по URL. Подсети и физический адаптер оставлены прежними.";
+  serverControl=s.ServerControl?.Clone();replaceServerControl=true;importedControlKey=s.Key;KeyBox.Password=s.Key;ReplaceKeyBox.IsChecked=true;ImportHint.Text="Загружено по URL. Подсети и физический адаптер оставлены прежними.";
   } finally {selectingDownloadedTransport=false;}
  }
  void SelectTransportProfile(){
@@ -58,5 +58,6 @@ public partial class SettingsWindow {
   profile.Name=saved.Name;profile.Endpoint=saved.Endpoint;profile.Hostname=saved.Hostname;
   profile.Certificate=saved.Certificate;profile.CA=saved.CA;profile.ServerName=saved.ServerName;profile.VerifyName=saved.VerifyName;
   if(change.ReplaceKey)profile.Key=saved.Key;
+  if(change.ReplaceServerControl)profile.ServerControl=saved.ServerControl?.Clone();
  }
 }

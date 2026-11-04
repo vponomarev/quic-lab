@@ -59,7 +59,11 @@ func startServerExits(ctx context.Context, cfg admin.Config, store *admin.Store)
 	if err != nil {
 		return nil, nil, err
 	}
-	runtime, err := serverexit.StartOwned(ctx, catalog, cfg.DataDir)
+	var legacyDirs []string
+	if cfg.Transit != nil && len(cfg.ServerExits) > 0 {
+		legacyDirs = append(legacyDirs, filepath.Dir(cfg.Transit.ProbeSocket))
+	}
+	runtime, err := serverexit.StartOwned(ctx, catalog, cfg.DataDir, legacyDirs...)
 	if err != nil {
 		stop()
 		return nil, nil, err

@@ -35,10 +35,10 @@ type BondWelcome struct {
 type bondEntry struct {
 	authMu        sync.Mutex
 	registrations map[string]func()
-	authCleanup   sync.Once
 	mux           *bond.Mux
 	owner         [32]byte
 	ready         chan struct{}
+	finished      chan struct{}
 	err           error
 }
 type bondRegistry struct {
@@ -77,7 +77,7 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 		}
 	}
 	if entry == nil && h.Create && ownerCount < 4 && len(s.bonds.entries) < 32 {
-		entry = &bondEntry{mux: bond.NewMuxWithOptions(root, false, s.BondOptions), owner: owner, ready: make(chan struct{})}
+		entry = &bondEntry{mux: bond.NewMuxWithOptions(root, false, s.BondOptions), owner: owner, ready: make(chan struct{}), finished: make(chan struct{})}
 		s.bonds.entries[h.Token] = entry
 		entry.mux.Session.SetTerminationHandler(func() {
 			s.bonds.mu.Lock()
@@ -97,6 +97,14 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 		return nil, "", errors.New("session unavailable")
 	}
 	s.bonds.mu.Unlock()
+	started := false
+	if fresh {
+		defer func() {
+			if !started {
+				close(entry.finished)
+			}
+		}()
+	}
 	if (h.Network == "cell" || h.Path == "cell") && !entry.mux.Session.CellAllowed() {
 		if fresh {
 			entry.err = errors.New("LTE session budget exhausted")
@@ -111,7 +119,7 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 	if fresh {
 		release := func() {}
 		if s.Register != nil || s.RegisterProtocol != nil {
-			release, e = s.register(cs, protocol, func() { entry.mux.Close() })
+			release, e = s.register(cs, protocol, entry.closeAndWait)
 		}
 		if e != nil {
 			entry.err = e
@@ -139,7 +147,9 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 		}
 		count, done := s.track(cs, "Bond / "+protocol, func() string { return remote })
 		close(entry.ready)
+		started = true
 		go func() {
+			defer close(entry.finished)
 			defer multiplexedDone()
 			defer entry.releaseRegistrations()
 			defer done()
@@ -159,7 +169,7 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 		}
 		// Authorize every path, including joins after the original TLS handshake.
 		if s.Register != nil || s.RegisterProtocol != nil {
-			release, err := s.register(cs, protocol, func() { entry.mux.Close() })
+			release, err := s.register(cs, protocol, entry.closeAndWait)
 			if err != nil {
 				return nil, "", errors.New("access denied")
 			}
@@ -228,11 +238,17 @@ func (entry *bondEntry) retainRegistration(protocol string, release func()) {
 	if !owned && entry.mux.Context().Err() == nil {
 		entry.registrations[protocol] = release
 		entry.authMu.Unlock()
-		entry.authCleanup.Do(func() { go func() { <-entry.mux.Context().Done(); entry.releaseRegistrations() }() })
 		return
 	}
 	entry.authMu.Unlock()
 	release()
+}
+
+func (entry *bondEntry) closeAndWait() {
+	entry.mux.Close()
+	if entry.finished != nil {
+		<-entry.finished
+	}
 }
 func (entry *bondEntry) releaseRegistrations() {
 	entry.authMu.Lock()
