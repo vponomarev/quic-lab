@@ -62,7 +62,7 @@ func (s *SettingsFileStore) Load(ctx context.Context) (*SettingsDocument, error)
 	decoder.DisallowUnknownFields()
 	var d SettingsDocument
 	var extra any
-	if decoder.Decode(&d) != nil || decoder.Decode(&extra) != io.EOF || d.Revision == 0 || d.Settings.Validate() != nil {
+	if decoder.Decode(&d) != nil || decoder.Decode(&extra) != io.EOF || !validDocument(d) {
 		return nil, ErrSecrets
 	}
 	return &d, nil
@@ -76,7 +76,7 @@ func (s *SettingsFileStore) saveLocked(ctx context.Context, d SettingsDocument) 
 	if e := ctx.Err(); e != nil {
 		return e
 	}
-	if d.Revision == 0 || d.Settings.Validate() != nil {
+	if !validDocument(d) {
 		return ErrSecrets
 	}
 	raw, e := json.Marshal(d)

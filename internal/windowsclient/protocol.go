@@ -21,6 +21,7 @@ var ErrProtocol = errors.New("invalid_request")
 var requestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type Request struct {
+	Profile  *ProfileChange          `json:"profile,omitempty"`
 	Import   *TransportImportRequest `json:"import,omitempty"`
 	Version  int                     `json:"version"`
 	ID       string                  `json:"id"`
@@ -33,6 +34,7 @@ type TransportImportRequest struct {
 	Content   string `json:"content"`
 }
 type Response struct {
+	Profiles      *ProfileList                   `json:"profiles,omitempty"`
 	Import        *windowsengine.TransportImport `json:"import,omitempty"`
 	Version       int                            `json:"version"`
 	ID            string                         `json:"id"`
@@ -49,6 +51,19 @@ func validRequest(r Request) bool {
 	if r.Version != 1 || !requestID.MatchString(r.ID) {
 		return false
 	}
+	if r.Command == "save_profile" || r.Command == "delete_profile" || r.Command == "activate_profile" {
+		p := r.Profile
+		if p == nil || r.Settings != nil || r.Config != nil || r.Import != nil {
+			return false
+		}
+		if r.Command == "save_profile" {
+			return p.Settings != nil && !p.Reconnect && (p.ID == "" || profileID.MatchString(p.ID))
+		}
+		return profileID.MatchString(p.ID) && p.Settings == nil && !p.ReplaceKey && (r.Command == "activate_profile" || !p.Reconnect)
+	}
+	if r.Profile != nil {
+		return false
+	}
 	if r.Command == "preview_import" {
 		return r.Config == nil && r.Settings == nil && r.Import != nil && len(r.Import.Content) <= 32768
 	}
@@ -56,7 +71,7 @@ func validRequest(r Request) bool {
 		return false
 	}
 	switch r.Command {
-	case "status", "start", "stop", "read_settings":
+	case "status", "start", "stop", "read_settings", "list_profiles":
 		return r.Config == nil && r.Settings == nil
 	case "validate_settings", "apply_settings":
 		return r.Config == nil && r.Settings != nil
@@ -133,7 +148,7 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 	}
 	var err error
 	switch q.Command {
-	case "read_settings", "validate_settings", "apply_settings", "preview_import":
+	case "read_settings", "validate_settings", "apply_settings", "preview_import", "list_profiles", "save_profile", "delete_profile", "activate_profile":
 		err = errors.New("unsupported_command")
 	case "status":
 	case "stop":

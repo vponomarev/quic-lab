@@ -94,3 +94,34 @@ func TestNativeSettingsCancelledSavePreservesDisk(t *testing.T) {
 		t.Fatal("old data lost")
 	}
 }
+
+func TestNativeProfileLibraryEncryptedRoundtrip(t *testing.T) {
+	base, err := NewEncryptedStore(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewSettingsFileStore(base)
+	s := editorSettings()
+	s.Key = "LIBRARY-PRIVATE-KEY"
+	d := SettingsDocument{Revision: 2, Settings: editorSettings(), Profiles: []SavedProfile{{ID: "0123456789abcdef0123456789abcdef", Settings: s}}}
+	if err = store.Save(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(base.dir, "settings-v1.dpapi"))
+	if err != nil || bytes.Contains(raw, []byte(s.Key)) {
+		t.Fatal("library plaintext", err)
+	}
+	got, err := store.Load(context.Background())
+	if err != nil || len(got.Profiles) != 1 || got.Profiles[0].Settings.Key != s.Key {
+		t.Fatal("library roundtrip", err)
+	}
+	d.Profiles = append(d.Profiles, d.Profiles[0])
+	d.Revision++
+	if store.Save(context.Background(), d) == nil {
+		t.Fatal("duplicate IDs accepted")
+	}
+	got, err = store.Load(context.Background())
+	if err != nil || got.Revision != 2 || len(got.Profiles) != 1 {
+		t.Fatal("bad save replaced disk", err)
+	}
+}

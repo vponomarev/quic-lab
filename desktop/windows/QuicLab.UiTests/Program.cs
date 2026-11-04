@@ -17,6 +17,8 @@ partial class UiTests
                 if(args.Length==1&&args[0]=="--transport-switch"){exit=0;return;}
                 await AppRoutingAcceptance.Run();
                 if(args.Length==1&&args[0]=="--app-routing"){exit=0;return;}
+                await ProfileLibraryAcceptance.Run();
+                if(args.Length==1&&args[0]=="--profile-library"){exit=0;return;}
                 await OnboardingAcceptance();
                 await ServiceRecoveryAcceptance();
                 await CompactLayoutAcceptance();

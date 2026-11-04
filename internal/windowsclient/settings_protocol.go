@@ -8,9 +8,18 @@ import (
 
 func NewSettingsHandler(m *SettingsManager) *Handler { return &Handler{settings: m} }
 func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
-	r := Response{Version: 1, ID: q.ID, Capabilities: []string{"settings-v1", "app-routing-tun-v2", "app-routing-live-v1"}}
+	r := Response{Version: 1, ID: q.ID, Capabilities: []string{"settings-v1", "app-routing-tun-v2", "app-routing-live-v1", "profile-library-v1"}}
 	var err error
 	switch q.Command {
+	case "list_profiles":
+		v := h.settings.Profiles()
+		r.Profiles = &v
+	case "save_profile":
+		err = h.settings.SaveProfile(ctx, *q.Profile)
+	case "delete_profile":
+		err = h.settings.DeleteProfile(ctx, *q.Profile)
+	case "activate_profile":
+		err = h.settings.ActivateProfile(ctx, *q.Profile)
 	case "status":
 	case "preview_import":
 		var meta windowsengine.TransportImport
@@ -44,7 +53,7 @@ func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
 			r.FieldError = field
 		} else {
 			switch err.Error() {
-			case "config_required", "revision_conflict", "stop_before_apply", "config_store_failed", "invalid_config", "cleanup_required", "stop_pending", "already_running", "backend_start_failed", "unsupported_command":
+			case "config_required", "revision_conflict", "stop_before_apply", "config_store_failed", "invalid_config", "cleanup_required", "stop_pending", "already_running", "backend_start_failed", "unsupported_command", "profile_not_found", "profile_limit":
 				r.Error = err.Error()
 			default:
 				r.Error = "operation_failed"

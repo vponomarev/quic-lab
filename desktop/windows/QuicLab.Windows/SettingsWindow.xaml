@@ -3,7 +3,17 @@
  <DockPanel Margin="16">
   <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"><TextBlock x:Name="Feedback" TextWrapping="Wrap" Margin="0,0,0,8"/><ProgressBar x:Name="Progress" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,8"/><WrapPanel><Button x:Name="SaveButton" Content="Сохранить" Click="SaveClick" Background="#00877F" Foreground="White" BorderThickness="0" IsEnabled="False"/><Button x:Name="CheckButton" Content="Проверить" Click="CheckClick" IsEnabled="False"/><Button x:Name="CancelDownloadButton" Content="Отменить загрузку" Click="CancelDownloadClick" Visibility="Collapsed"/><Button Content="Закрыть" Click="CloseClick"/></WrapPanel></StackPanel>
   <TabControl x:Name="Tabs">
-   <TabItem Header="Подключение"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
+   <TabItem x:Name="ProfilesTab" Header="Профили"><DockPanel Margin="12">
+    <StackPanel DockPanel.Dock="Top"><TextBlock x:Name="ProfileLibraryHint" TextWrapping="Wrap" Margin="0,0,0,12"/><TextBlock x:Name="ProfileCount" Margin="0,0,0,8"/></StackPanel>
+    <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+     <WrapPanel Margin="0,0,0,8"><Button x:Name="ActivateProfileButton" Content="Выбрать профиль" Click="ActivateProfileClick" IsEnabled="False"/><Button x:Name="DeleteProfileButton" Content="Удалить" Click="DeleteProfileClick" IsEnabled="False"/></WrapPanel>
+     <TextBlock Text="Параметры из вкладки «Подключение»" Margin="0,8,0,8"/>
+     <WrapPanel><Button x:Name="SaveNewProfileButton" Content="Сохранить как новый" Click="SaveNewProfileClick" IsEnabled="False"/><Button x:Name="ReplaceProfileButton" Content="Заменить выбранный" Click="ReplaceProfileClick" IsEnabled="False"/></WrapPanel>
+     <TextBlock Text="Сохранение в библиотеку не меняет работающий VPN. При выборе другого профиля работающий VPN переподключается. Удаление снимка не удаляет уже выбранные параметры подключения." TextWrapping="Wrap" Foreground="#607783" Margin="0,12,0,0"/>
+    </StackPanel>
+    <ListBox x:Name="SavedProfilesList" DisplayMemberPath="Label" SelectionChanged="ProfileSelectionChanged" Padding="6"/>
+   </DockPanel></TabItem>
+   <TabItem Header="Подключение" IsSelected="True"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
     <Expander Header="Загрузить параметры по URL" IsExpanded="True" Margin="0,0,0,12"><StackPanel Margin="0,6,0,0">
     <TextBlock Text="HTTPS-ссылка на профиль или приглашение QUIC Lab" TextWrapping="Wrap"/><TextBox x:Name="UrlBox" MaxLength="8192"/>
     <Button x:Name="LoadUrlButton" Content="Загрузить" Click="LoadUrlClick" HorizontalAlignment="Left"/>

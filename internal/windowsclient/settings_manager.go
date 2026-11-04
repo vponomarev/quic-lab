@@ -10,6 +10,7 @@ import (
 )
 
 type SettingsDocument struct {
+	Profiles []SavedProfile         `json:"profiles,omitempty"`
 	Revision uint64                 `json:"revision"`
 	Settings windowsengine.Settings `json:"settings"`
 }
@@ -65,20 +66,21 @@ func NewSettingsManager(store SettingsStore, factory BackendFactory, validators 
 			doc:        SettingsDocument{Settings: windowsengine.Settings{Transport: "quic", RoutingMode: "all_ipv4", UplinkMode: "auto", DNS: "1.1.1.1", Targets: []string{}}},
 			controller: vpnclient.NewController(unconfiguredBackend{})}, nil
 	}
-	if d.Revision == 0 || d.Settings.Validate() != nil {
+	if !validDocument(*d) {
 		return nil, errors.New("config_store_failed")
 	}
 	b, c, e := factory(cloneSettings(d.Settings))
 	if e != nil {
 		return nil, errors.New("invalid_config")
 	}
-	d.Settings = cloneSettings(d.Settings)
+	*d = cloneDocument(*d)
 	return &SettingsManager{gate: make(chan struct{}, 1), doc: *d, store: store, factory: factory, validate: validate, controller: vpnclient.NewController(b), backend: b, config: c}, nil
 }
 func (m *SettingsManager) Read() SettingsView {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	d := m.doc
+	d.Profiles = nil // Credentials in saved snapshots never leave the service.
 	d.Settings = cloneSettings(d.Settings)
 	has := d.Settings.Key != ""
 	d.Settings.Key = ""
@@ -197,6 +199,9 @@ func (m *SettingsManager) Apply(ctx context.Context, c SettingsChange) error {
 		return e
 	}
 	defer func() { <-m.gate }()
+	return m.applyLocked(ctx, c)
+}
+func (m *SettingsManager) applyLocked(ctx context.Context, c SettingsChange) error {
 	run, done, e := m.begin(ctx)
 	if e != nil {
 		return e
@@ -222,7 +227,7 @@ func (m *SettingsManager) Apply(ctx context.Context, c SettingsChange) error {
 			if updater, ok := backend.(interface {
 				ApplyAppRouting(context.Context, *approuting.TUNPolicy, func() error) error
 			}); ok {
-				d := SettingsDocument{Revision: c.ExpectedRevision + 1, Settings: s}
+				d := m.documentWith(s, c.ExpectedRevision+1)
 				if d.Revision == 0 {
 					return errors.New("revision_conflict")
 				}
@@ -248,7 +253,7 @@ func (m *SettingsManager) Apply(ctx context.Context, c SettingsChange) error {
 	if e = ctrl.Stop(run); e != nil {
 		return e
 	}
-	d := SettingsDocument{Revision: c.ExpectedRevision + 1, Settings: s}
+	d := m.documentWith(s, c.ExpectedRevision+1)
 	if d.Revision == 0 {
 		return errors.New("revision_conflict")
 	}
