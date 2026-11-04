@@ -3,6 +3,7 @@ package admin
 import (
 	"crypto/tls"
 	"errors"
+	"net"
 	"quiclab/internal/debugcapture"
 	"sync"
 )
@@ -38,6 +39,19 @@ func (s *Store) ConfigureCapture(m *debugcapture.Manager) {
 			}
 		}
 	}
+}
+
+// WrapDeviceConnection applies the same capture eligibility to brokered native
+// flows as to gateway streams. The selected provider remains the socket owner.
+func (s *Store) WrapDeviceConnection(id, network, address string, c net.Conn) net.Conn {
+	user := s.captureTarget(id)
+	state := s.captureState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.manager == nil || state.eligible(user) != nil {
+		return c
+	}
+	return state.manager.Wrap(user, network, address, c)
 }
 
 func (s *Store) captureTarget(target string) string {

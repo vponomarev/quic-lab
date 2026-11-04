@@ -140,7 +140,7 @@ func TestServerWrongIdentity(t *testing.T) {
 }
 func TestServerRealityVision(t *testing.T)      { testServerRealityVision(t, false) }
 func TestServerRealityVisionProxy(t *testing.T) { testServerRealityVision(t, true) }
-func testServerRealityVision(t *testing.T, proxy bool) {
+func testServerRealityVision(t *testing.T, proxy bool, exits ...func(context.Context, string, string, string) (net.Conn, error)) {
 
 	cert, key := fixtureCertificate(t)
 	pair, e := tls.X509KeyPair(cert, key)
@@ -171,7 +171,11 @@ func testServerRealityVision(t *testing.T, proxy bool) {
 	}
 	addr := port.Addr().String()
 	port.Close()
-	s, e := StartServer(context.Background(), ServerOptions{AcceptProxyProtocol: proxy, Listen: addr, Mode: "standalone", Security: "reality", RealityTarget: camouflage.Addr().String(), RealityServerNames: []string{"fixture.invalid"}, RealityPrivateKey: k.Bytes(), RealityShortIDs: []string{"aabb"}, Clients: []ServerClient{{UUID: serverID, Flow: "xtls-rprx-vision"}}})
+	options := ServerOptions{AcceptProxyProtocol: proxy, Listen: addr, Mode: "standalone", Security: "reality", RealityTarget: camouflage.Addr().String(), RealityServerNames: []string{"fixture.invalid"}, RealityPrivateKey: k.Bytes(), RealityShortIDs: []string{"aabb"}, Clients: []ServerClient{{UUID: serverID, Flow: "xtls-rprx-vision"}}}
+	if len(exits) > 0 {
+		options.ExitDial = exits[0]
+	}
+	s, e := StartServer(context.Background(), options)
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -33,6 +33,7 @@ const ResearchHandshakeStreams = MaxFlows
 const MaxIncomingStreams = MaxFlows + ResearchControlStreams + ResearchHandshakeStreams
 
 type Server struct {
+	Egress           func(tls.ConnectionState) (*Egress, error)
 	Research         *ResearchReceiver
 	Multiplexed      func(tls.ConnectionState) (func(), error)
 	BondContext      context.Context
@@ -269,6 +270,14 @@ func (s *Server) handleDatagrams(ctx context.Context, st Stream, id string, log 
 	s.handleRequest(ctx, st, req, id, log, datagrams, counters...)
 }
 func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id string, log *slog.Logger, datagrams *DatagramMux, counters ...func(int, int)) {
+	if req.Network != "echo" && req.Network != "research-v1" {
+		var err error
+		ctx, err = s.selectedEgress(ctx)
+		if err != nil {
+			WriteJSON(st, Reply{Error: "server exit unavailable"})
+			return
+		}
+	}
 	if req.Network == "icmp-echo-v2" {
 		if len(counters) > 0 && counters[0] != nil {
 			st = countedStream{Stream: st, count: counters[0]}
@@ -304,12 +313,13 @@ func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id s
 		return
 	}
 	if req.Network == "transit-probe" {
-		if s.Probe == nil {
+		probe := s.egress(ctx).Probe
+		if probe == nil {
 			WriteJSON(st, Reply{Error: "transit disabled"})
 			return
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
-		e := s.Probe(probeCtx)
+		e := probe(probeCtx)
 		cancel()
 		if e != nil {
 			WriteJSON(st, Reply{Error: "transit gateway unavailable"})
@@ -345,7 +355,7 @@ func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id s
 	// still performs TLS and reads the response through its existing tunnel.
 	if req.Network == "exit-ip" {
 		resolveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		resolver := s.Resolver
+		resolver := s.egress(ctx).Resolver
 		if resolver == nil {
 			resolver = net.DefaultResolver
 		}
@@ -379,11 +389,7 @@ func (s *Server) handleRequest(ctx context.Context, st Stream, req Request, id s
 	if req.Network == "dns" {
 		network = "udp4"
 	}
-	dial := s.DialContext
-	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
-	}
-	dst, e := dial(dctx, network, req.Address)
+	dst, e := s.dial(dctx, network, req.Address)
 	if e != nil {
 		WriteJSON(st, Reply{Error: "destination unavailable"})
 		return

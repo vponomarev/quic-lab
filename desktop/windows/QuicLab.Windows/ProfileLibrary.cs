@@ -8,6 +8,7 @@ public sealed class ProfileSummary {
 }
 public sealed class ProfileList {public ulong Revision{get;set;}public ProfileSummary[] Profiles{get;set;}=[];}
 public sealed class ProfileChange {
+ [JsonPropertyName("replace_server_control")]public bool ReplaceServerControl{get;set;}
  public string ID{get;set;}="";
  [JsonPropertyName("expected_revision")]public ulong ExpectedRevision{get;set;}
  [JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]public EngineSettings? Settings{get;set;}

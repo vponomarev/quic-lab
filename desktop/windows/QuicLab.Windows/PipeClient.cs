@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -31,7 +31,7 @@ public sealed partial class PipeClient : IStatusClient, ISettingsClient, ITransp
     }
     public async Task<TransportImport> PreviewImport(string transport,string content,CancellationToken ct=default){using var doc=await SendDocument("preview_import",null,null,ct,new{transport,content});if(!doc.RootElement.GetProperty("ok").GetBoolean())throw new InvalidDataException("Неподдерживаемые параметры профиля.");return JsonSerializer.Deserialize<TransportImport>(doc.RootElement.GetProperty("import"),SettingsDraft.Json)??throw new InvalidDataException();}
     static Reply ParseStatus(JsonElement r){var status=r.GetProperty("status");return new(r.GetProperty("ok").GetBoolean(),status.GetProperty("state").GetString()??"unknown",r.TryGetProperty("error",out var error)?error.GetString()??"operation_failed":"",status.GetProperty("revision").GetUInt64(),status.TryGetProperty("runtime",out var runtime)?JsonSerializer.Deserialize<RuntimeInfo>(runtime,SettingsDraft.Json):null,r.TryGetProperty("capabilities",out var caps)?JsonSerializer.Deserialize<string[]>(caps):null,r.TryGetProperty("saved_revision",out var rev)?rev.GetUInt64():0);}
-    async Task<JsonDocument> SendDocument(string command, JsonElement? config,SettingsChange? change,CancellationToken cancellationToken,object? import=null,ProfileChange? profile=null)
+    async Task<JsonDocument> SendDocument(string command, JsonElement? config,SettingsChange? change,CancellationToken cancellationToken,object? import=null,ProfileChange? profile=null,ServerExitRequest? serverExit=null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken); deadline.CancelAfter(TimeSpan.FromSeconds(30)); var ct = deadline.Token;
         uint expected = fixturePid ?? ServicePid(); if (expected == 0) throw new UnauthorizedAccessException("No trusted service process");
@@ -42,7 +42,7 @@ public sealed partial class PipeClient : IStatusClient, ISettingsClient, ITransp
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var actual) || actual != expected || (!fixturePid.HasValue && ServicePid() != expected)) throw new UnauthorizedAccessException("Untrusted pipe server");
         string id = Guid.NewGuid().ToString("N"); var request = new Dictionary<string, object?> { { "version", 1 }, { "id", id }, { "command", command } }; if (config.HasValue) request["config"] = config.Value; if(import!=null)request["import"]=import; if(change!=null)request["settings"]=JsonSerializer.SerializeToElement(change,SettingsDraft.Json);
         if(profile!=null)request["profile"]=JsonSerializer.SerializeToElement(profile,SettingsDraft.Json);
-        await Frames.WriteAsync(pipe, request, ct); var doc = await Frames.ReadAsync(pipe, ct); var r = doc.RootElement;
+        if(serverExit!=null)request["server_exit"]=JsonSerializer.SerializeToElement(serverExit,SettingsDraft.Json); await Frames.WriteAsync(pipe, request, ct); var doc = await Frames.ReadAsync(pipe, ct); var r = doc.RootElement;
         if (r.GetProperty("version").GetInt32() != 1 || r.GetProperty("id").GetString() != id) {doc.Dispose();throw new InvalidDataException("Response mismatch");}
         return doc;
     }

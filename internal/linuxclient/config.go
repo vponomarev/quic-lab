@@ -8,25 +8,27 @@ import (
 	"net"
 	"net/netip"
 	"quiclab/internal/approuting"
+	"quiclab/internal/exitcontrol"
 	"regexp"
 )
 
 type Config struct {
-	AppRouting  *approuting.TUNPolicy `json:"app_routing,omitempty"`
-	Transport   string                `json:"transport"`
-	Endpoint    string                `json:"endpoint"`
-	Hostname    string                `json:"hostname"`
-	Certificate string                `json:"certificate"`
-	Key         string                `json:"key"`
-	CA          string                `json:"ca"`
-	ServerName  string                `json:"server_name,omitempty"`
-	VerifyName  string                `json:"verify_name,omitempty"`
-	DNS         string                `json:"dns,omitempty"`
-	HealthDNS   string                `json:"health_dns,omitempty"`
-	Targets     []string              `json:"targets"`
-	Interface   string                `json:"interface,omitempty"`
-	AWGConfig   string                `json:"awg_config,omitempty"`
-	VLESSURI    string                `json:"vless_uri,omitempty"`
+	ServerControl *exitcontrol.Config   `json:"server_control,omitempty"`
+	AppRouting    *approuting.TUNPolicy `json:"app_routing,omitempty"`
+	Transport     string                `json:"transport"`
+	Endpoint      string                `json:"endpoint"`
+	Hostname      string                `json:"hostname"`
+	Certificate   string                `json:"certificate"`
+	Key           string                `json:"key"`
+	CA            string                `json:"ca"`
+	ServerName    string                `json:"server_name,omitempty"`
+	VerifyName    string                `json:"verify_name,omitempty"`
+	DNS           string                `json:"dns,omitempty"`
+	HealthDNS     string                `json:"health_dns,omitempty"`
+	Targets       []string              `json:"targets"`
+	Interface     string                `json:"interface,omitempty"`
+	AWGConfig     string                `json:"awg_config,omitempty"`
+	VLESSURI      string                `json:"vless_uri,omitempty"`
 }
 
 func Decode(raw []byte) (Config, error) {
@@ -46,6 +48,11 @@ func Decode(raw []byte) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.ServerControl != nil {
+		if err := c.ServerControl.Validate(); err != nil {
+			return err
+		}
+	}
 	if c.AppRouting != nil {
 		if _, e := approuting.CompileLinuxTUN(*c.AppRouting); e != nil {
 			return errors.New("invalid Linux application routing policy")

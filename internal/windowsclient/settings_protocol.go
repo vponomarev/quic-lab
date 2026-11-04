@@ -3,14 +3,21 @@ package windowsclient
 import (
 	"context"
 	"errors"
+	"quiclab/internal/exitcontrol"
 	"quiclab/internal/windowsengine"
 )
 
 func NewSettingsHandler(m *SettingsManager) *Handler { return &Handler{settings: m} }
 func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
-	r := Response{Version: 1, ID: q.ID, Capabilities: []string{"settings-v1", "app-routing-tun-v2", "app-routing-live-v1", "profile-library-v1"}}
+	r := Response{Version: 1, ID: q.ID, Capabilities: []string{"settings-v1", "app-routing-tun-v2", "app-routing-live-v1", "profile-library-v1", "server-exits-v1"}}
 	var err error
 	switch q.Command {
+	case "list_server_exits", "select_server_exit":
+		var v exitcontrol.View
+		v, err = h.settings.ServerExits(ctx, *q.ServerExit)
+		if err == nil {
+			r.ServerExit = &v
+		}
 	case "list_profiles":
 		v := h.settings.Profiles()
 		r.Profiles = &v
@@ -47,6 +54,21 @@ func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
 	r.SavedRevision = h.settings.Read().Revision
 	r.OK = err == nil
 	if err != nil {
+		switch {
+		case errors.Is(err, exitcontrol.ErrConflict):
+			r.Error = "exit_revision_conflict"
+		case errors.Is(err, exitcontrol.ErrDenied):
+			r.Error = "exit_denied"
+		case errors.Is(err, exitcontrol.ErrAuth):
+			r.Error = "exit_auth_expired"
+		case errors.Is(err, exitcontrol.ErrUnsupported):
+			r.Error = "exit_unsupported"
+		case errors.Is(err, exitcontrol.ErrUnavailable):
+			r.Error = "exit_unavailable"
+		}
+		if r.Error != "" {
+			return r
+		}
 		var field *windowsengine.FieldError
 		if errors.As(err, &field) {
 			r.Error = "invalid_config"

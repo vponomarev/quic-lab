@@ -58,6 +58,7 @@ func validEndpointHost(h string) bool {
 	return true
 }
 func (s Settings) GatewayJSON() string {
+	s.ServerControl = nil // Management credentials never enter the VPN engine.
 	if s.Transport == "awg" {
 		b, _ := json.Marshal(map[string]any{"transport": "awg", "endpoint": s.Endpoint, "awg_config": s.Key})
 		return string(b)

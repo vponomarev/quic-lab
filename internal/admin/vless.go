@@ -195,6 +195,9 @@ func (s *Store) StartVLESSAdmission(ctx context.Context) (func(), error) {
 			return 0, errVLESS
 		}
 		ttl := min(2*time.Second, time.Until(d.Expires), time.Until(u.Expires))
+		if _, err := s.serverExitAdmissionLocked(id, vlessserver.AdmissionSupportsExits(ctx)); err != nil {
+			return 0, err
+		}
 		if e := s.admission.Renew(id, ttl); e != nil {
 			return 0, e
 		}

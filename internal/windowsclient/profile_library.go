@@ -30,11 +30,12 @@ type ProfileList struct {
 	Profiles []ProfileSummary `json:"profiles"`
 }
 type ProfileChange struct {
-	ID               string                  `json:"id,omitempty"`
-	ExpectedRevision uint64                  `json:"expected_revision"`
-	Settings         *windowsengine.Settings `json:"settings,omitempty"`
-	ReplaceKey       bool                    `json:"replace_key,omitempty"`
-	Reconnect        bool                    `json:"reconnect,omitempty"`
+	ReplaceServerControl bool                    `json:"replace_server_control,omitempty"`
+	ID                   string                  `json:"id,omitempty"`
+	ExpectedRevision     uint64                  `json:"expected_revision"`
+	Settings             *windowsengine.Settings `json:"settings,omitempty"`
+	ReplaceKey           bool                    `json:"replace_key,omitempty"`
+	Reconnect            bool                    `json:"reconnect,omitempty"`
 }
 
 func cloneDocument(d SettingsDocument) SettingsDocument {
@@ -112,7 +113,7 @@ func (m *SettingsManager) editLibrary(ctx context.Context, q ProfileChange, save
 		if q.Settings == nil {
 			return errors.New("invalid_config")
 		}
-		s, err := m.resolve(SettingsChange{ExpectedRevision: q.ExpectedRevision, Settings: *q.Settings, ReplaceKey: q.ReplaceKey})
+		s, err := m.resolve(SettingsChange{ExpectedRevision: q.ExpectedRevision, Settings: *q.Settings, ReplaceKey: q.ReplaceKey, ReplaceServerControl: q.ReplaceServerControl})
 		if err != nil {
 			return err
 		}
@@ -181,5 +182,5 @@ func (m *SettingsManager) ActivateProfile(ctx context.Context, q ProfileChange) 
 	s.InterfaceIndex = d.Settings.InterfaceIndex
 	s.DNS = d.Settings.DNS
 	s.AppRouting = d.Settings.AppRouting.Clone()
-	return m.applyLocked(ctx, SettingsChange{ExpectedRevision: q.ExpectedRevision, Settings: s, ReplaceKey: true, Reconnect: q.Reconnect})
+	return m.applyLocked(ctx, SettingsChange{ExpectedRevision: q.ExpectedRevision, Settings: s, ReplaceKey: true, ReplaceServerControl: true, Reconnect: q.Reconnect})
 }

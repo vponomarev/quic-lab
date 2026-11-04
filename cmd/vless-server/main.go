@@ -44,7 +44,7 @@ func run() error {
 	defer cancel()
 	w, e := vlessserver.OpenWorker(ctx, *dir, func(ctx context.Context, id, uuid string) (time.Duration, error) {
 		return vlessserver.RequestAdmission(ctx, *admission, id, uuid, vless.AuthenticatedPeer(ctx))
-	})
+	}, *admission)
 	if e != nil {
 		return e
 	}

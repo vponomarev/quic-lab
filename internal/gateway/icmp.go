@@ -39,11 +39,7 @@ func (s *Server) serveICMP(ctx context.Context, st Stream, req Request, id strin
 	if e != nil || !icmprelay.ValidMessage(q, 8) {
 		return
 	}
-	dial := s.DialContext
-	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
-	}
-	out, e := dial(ctx, "ip4:icmp", ip.String())
+	out, e := s.dial(ctx, "ip4:icmp", ip.String())
 	if e != nil {
 		return
 	}

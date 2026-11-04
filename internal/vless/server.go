@@ -10,6 +10,7 @@ import (
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
+	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/proxy/freedom"
@@ -32,6 +33,7 @@ const MaxServerClients = 512
 
 type ServerClient struct{ UUID, Flow string }
 type ServerOptions struct {
+	ExitDial                              func(context.Context, string, string, string) (net.Conn, error)
 	AcceptProxyProtocol                   bool
 	Listen, Security, Mode, DemuxEndpoint string
 	Certificate, Key                      []byte
@@ -45,6 +47,7 @@ type ServerOptions struct {
 type serverContextKey struct{}
 type admittedContextKey struct{}
 type serverContext struct {
+	exitDial     func(context.Context, string, string, string) (net.Conn, error)
 	gate         *deviceDispatcher
 	mode, target string
 	users        proxy.UserManager
@@ -59,6 +62,17 @@ type Server struct {
 	err     error
 }
 type serverSockets struct{ net.Dialer }
+
+func (s *serverSockets) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if sc, ok := ctx.Value(serverContextKey{}).(*serverContext); ok && sc.exitDial != nil && sc.mode != "demux-only" {
+		in := session.InboundFromContext(ctx)
+		if ctx.Value(admittedContextKey{}) != true || in == nil || in.Name != "vless" || in.User == nil || !validUUID(in.User.Email) {
+			return nil, ErrDeviceRevoked
+		}
+		return sc.exitDial(ctx, in.User.Email, network, address)
+	}
+	return s.Dialer.DialContext(ctx, network, address)
+}
 
 func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 	fail := errors.New("invalid VLESS server options")
@@ -137,7 +151,7 @@ func StartServer(ctx context.Context, o ServerOptions) (*Server, error) {
 	}
 	gate := newDeviceDispatcher(nil)
 	gate.admission = o.Admission
-	sc := &serverContext{gate: gate, mode: o.Mode, target: o.DemuxEndpoint}
+	sc := &serverContext{gate: gate, mode: o.Mode, target: o.DemuxEndpoint, exitDial: o.ExitDial}
 	ctx = context.WithValue(ctx, serverContextKey{}, sc)
 	cfg := &core.Config{App: []*serial.TypedMessage{serial.ToTypedMessage(&ServerDispatcherConfig{}), serial.ToTypedMessage(&proxyman.OutboundConfig{}), serial.ToTypedMessage(&proxyman.InboundConfig{})},
 		Inbound:  []*core.InboundHandlerConfig{{Tag: "vless-managed", ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{Listen: xnet.NewIPOrDomain(xnet.IPAddress(addr.Addr().AsSlice())), PortList: &xnet.PortList{Range: []*xnet.PortRange{{From: uint32(addr.Port()), To: uint32(addr.Port())}}}, StreamSettings: &internet.StreamConfig{ProtocolName: "tcp", SocketSettings: &internet.SocketConfig{AcceptProxyProtocol: o.AcceptProxyProtocol}, SecurityType: sec.Type, SecuritySettings: []*serial.TypedMessage{sec}}}), ProxySettings: serial.ToTypedMessage(&ServerInboundConfig{VlessConfig: inner})}},

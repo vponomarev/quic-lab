@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"quiclab/internal/awgserver"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,8 @@ func (s *Store) AdmissionReadyAt() time.Time { return s.admission.ReadyAt() }
 func (s *Store) StartAWGAdmission(ctx context.Context) (func(), error) {
 	ready := make(chan struct{})
 	stop, e := awgserver.ServeAdmission(ctx, s.admissionDirectory(), func(id string) (time.Duration, error) {
+		capable := strings.HasPrefix(id, "exits1:")
+		id = strings.TrimPrefix(id, "exits1:")
 		select {
 		case <-ready:
 		case <-ctx.Done():
@@ -27,6 +30,9 @@ func (s *Store) StartAWGAdmission(ctx context.Context) (func(), error) {
 		now := time.Now()
 		if !present || !ok || d.Disabled || u.Disabled || !d.Expires.After(now) || !u.Expires.After(now) || !u.Allows("awg") {
 			return 0, errors.New("device unavailable")
+		}
+		if _, err := s.serverExitAdmissionLocked(id, capable); err != nil {
+			return 0, err
 		}
 		if e := s.admission.Renew(id, awgserver.AdmissionLeaseTTL); e != nil {
 			return 0, e

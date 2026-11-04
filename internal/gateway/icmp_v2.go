@@ -15,9 +15,9 @@ func (s *Server) serveICMPv2(ctx context.Context, st Stream, req Request, id str
 		WriteJSON(st, Reply{Error: "destination denied"})
 		return
 	}
-	probe := s.ProbeICMP
+	probe := s.egress(ctx).ProbeICMP
 	if probe == nil {
-		if s.DialContext != nil {
+		if s.egress(ctx).DialContext != nil {
 			WriteJSON(st, Reply{Error: "ICMP TTL unavailable"})
 			return
 		}

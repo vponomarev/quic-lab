@@ -31,6 +31,10 @@ func privateDirectory(dir string) error {
 
 // Reload acknowledges a serialized disk reconciliation, including peer removal.
 func Reload(dir string) error {
+	return reload(dir, "reload\n")
+}
+func ReloadExits(dir string) error { return reload(dir, "reload-exits\n") }
+func reload(dir, command string) error {
 	if e := privateDirectory(dir); e != nil {
 		return e
 	}
@@ -40,7 +44,7 @@ func Reload(dir string) error {
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(2 * time.Second))
-	if _, e = c.Write([]byte("reload\n")); e != nil {
+	if _, e = c.Write([]byte(command)); e != nil {
 		return e
 	}
 	reply, e := bufio.NewReader(c).ReadString('\n')
@@ -115,7 +119,7 @@ func (w *Worker) listenReload(ctx context.Context) (<-chan net.Conn, func(), err
 			}
 			c.SetDeadline(time.Now().Add(2 * time.Second))
 			command, e := bufio.NewReader(c).ReadString('\n')
-			if e != nil || command != "reload\n" {
+			if e != nil || (command != "reload\n" && !(command == "reload-exits\n" && w.Exits != nil)) {
 				c.Close()
 				continue
 			}

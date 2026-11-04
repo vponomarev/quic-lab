@@ -19,6 +19,9 @@ import (
 const AdmissionLeaseTTL = 2 * time.Second
 
 func admissionPath(dir string) string { return filepath.Join(dir, "awg-admission.sock") }
+func RequestExitAdmission(dir, id string) (time.Duration, error) {
+	return RequestAdmission(dir, "exits1:"+id)
+}
 func RequestAdmission(dir, id string) (time.Duration, error) {
 	if id == "" || len(id) > 128 || strings.ContainsAny(id, "\r\n ") {
 		return 0, errors.New("invalid admission identity")

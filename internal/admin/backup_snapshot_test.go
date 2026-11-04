@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"quiclab/internal/awgserver"
 	"quiclab/internal/backup"
+	"quiclab/internal/serverexit"
 	"quiclab/internal/vlessserver"
 	"testing"
 	"time"
@@ -54,6 +55,46 @@ func TestSnapshotConcurrentRevocation(t *testing.T) {
 	}
 	if !again.state.Devices[u.ID].Disabled {
 		t.Fatal("revocation lost")
+	}
+}
+
+func TestBackupIncludesServerExitCredentialsAndSelection(t *testing.T) {
+	s, _, d, token := updateFixture(t)
+	if err := s.ConfigureServerExits(exitDefinitions()); err != nil {
+		t.Fatal(err)
+	}
+	s.SetServerExitApply(func([]string) error { return nil })
+	grantExits(t, s, d.UserID, &serverexit.Policy{Allowed: []string{"west", "east"}, Default: "west"})
+	v, _ := s.DeviceServerExits(d.ID, token)
+	if _, err := s.SelectServerExit(d.ID, token, "east", v.Revision); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(s.path)
+	if err := backup.EnablePublication(root); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{DataDir: root, ServerExits: exitDefinitions()}
+	c := backup.NewCoordinator(root, []backup.Participant{NewBackupParticipant(cfg, nil)}, "test")
+	snap, err := c.Capture(context.Background(), backup.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Release()
+	raw, err := os.ReadFile(filepath.Join(snap.Dir, "config/admin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if json.Unmarshal(raw, &restored) != nil || len(restored.ServerExits) != 2 || restored.ServerExits[0].AWGConfig != exitAWG {
+		t.Fatal("exit provider credentials lost")
+	}
+	raw, err = os.ReadFile(filepath.Join(snap.Dir, "data/identities.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state diskState
+	if json.Unmarshal(raw, &state) != nil || state.Devices[d.ID].ServerExitID != "east" || state.Users[d.UserID].ServerExitPolicy.Default != "west" {
+		t.Fatal("exit policy or selection lost")
 	}
 }
 

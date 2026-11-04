@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"quiclab/internal/approuting"
+	"quiclab/internal/exitcontrol"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/windowsengine"
 	"sync"
@@ -16,13 +17,15 @@ type SettingsDocument struct {
 }
 type SettingsView struct {
 	SettingsDocument
-	HasKey bool `json:"has_key"`
+	HasKey           bool `json:"has_key"`
+	HasServerControl bool `json:"has_server_control"`
 }
 type SettingsChange struct {
-	ExpectedRevision uint64                 `json:"expected_revision"`
-	Settings         windowsengine.Settings `json:"settings"`
-	ReplaceKey       bool                   `json:"replace_key"`
-	Reconnect        bool                   `json:"reconnect"`
+	ReplaceServerControl bool                   `json:"replace_server_control"`
+	ExpectedRevision     uint64                 `json:"expected_revision"`
+	Settings             windowsengine.Settings `json:"settings"`
+	ReplaceKey           bool                   `json:"replace_key"`
+	Reconnect            bool                   `json:"reconnect"`
 }
 type SettingsStore interface {
 	Load(context.Context) (*SettingsDocument, error)
@@ -30,6 +33,7 @@ type SettingsStore interface {
 }
 type BackendFactory func(windowsengine.Settings) (vpnclient.Backend, vpnclient.Config, error)
 type SettingsManager struct {
+	exitClient exitcontrol.Client
 	gate       chan struct{}
 	mu         sync.RWMutex
 	doc        SettingsDocument
@@ -45,6 +49,7 @@ type SettingsManager struct {
 }
 
 func cloneSettings(s windowsengine.Settings) windowsengine.Settings {
+	s.ServerControl = s.ServerControl.Clone()
 	s.Targets = append([]string{}, s.Targets...)
 	s.AppRouting = s.AppRouting.Clone()
 	return s
@@ -84,7 +89,11 @@ func (m *SettingsManager) Read() SettingsView {
 	d.Settings = cloneSettings(d.Settings)
 	has := d.Settings.Key != ""
 	d.Settings.Key = ""
-	return SettingsView{d, has}
+	hasControl := d.Settings.ServerControl != nil
+	if hasControl {
+		d.Settings.ServerControl.Token = ""
+	}
+	return SettingsView{SettingsDocument: d, HasKey: has, HasServerControl: hasControl}
 }
 func (m *SettingsManager) Snapshot() vpnclient.Snapshot {
 	m.mu.RLock()
@@ -123,6 +132,16 @@ func (m *SettingsManager) resolve(c SettingsChange) (windowsengine.Settings, err
 		return windowsengine.Settings{}, errors.New("revision_conflict")
 	}
 	s := cloneSettings(c.Settings)
+	if !c.ReplaceServerControl {
+		if c.ReplaceKey && s.Key != d.Settings.Key && d.Settings.ServerControl != nil {
+			return s, errors.New("invalid_config")
+		}
+		old, next := d.Settings.ServerControl, s.ServerControl
+		if (old == nil) != (next == nil) || (next != nil && (next.Token != "" || next.ConfigURL != old.ConfigURL || next.DeviceID != old.DeviceID)) {
+			return s, errors.New("invalid_config")
+		}
+		s.ServerControl = old.Clone()
+	}
 	if !c.ReplaceKey {
 		if s.Key != "" {
 			return s, errors.New("invalid_config")

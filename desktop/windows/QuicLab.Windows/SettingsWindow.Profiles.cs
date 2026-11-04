@@ -37,7 +37,7 @@ public partial class SettingsWindow {
   if(replace&&MessageBox.Show(this,$"Заменить сохранённый профиль «{selected!.Name}» параметрами редактора?","Библиотека",MessageBoxButton.OKCancel,MessageBoxImage.Question)!=MessageBoxResult.OK)return;
   bool dirty=HasChanges;Busy(true);
   try{
-   var r=await library.SendProfileAsync("save_profile",new(){ID=replace?selected!.ID:"",ExpectedRevision=revision,Settings=draft.Settings,ReplaceKey=draft.ReplaceKey},lifetime.Token);
+   var r=await library.SendProfileAsync("save_profile",new(){ID=replace?selected!.ID:"",ExpectedRevision=revision,Settings=draft.Settings,ReplaceKey=draft.ReplaceKey,ReplaceServerControl=draft.ReplaceServerControl},lifetime.Token);
    if(!r.Status.Ok){Feedback.Text=ProfileError(r);return;}
    // Status may already include another client's later commit. Retain our fence.
    revision=draft.ExpectedRevision+1;if(!dirty)original=SettingsDraft.Fingerprint(Capture(false));

@@ -2,6 +2,7 @@ package awgserver
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 )
 
 type Worker struct {
+	Exits     *ExitTUN
 	Admission *AdmissionTUN
 	lastProbe map[string]time.Time
 	Device    *device.Device
@@ -51,6 +53,7 @@ func (w *Worker) Apply(state State) error {
 	now := time.Now()
 	desired := map[string]string{}
 	admissionIDs := map[netip.Addr]string{}
+	exitRoutes := map[netip.Addr]ExitRoute{}
 	prefix, _ := netip.ParsePrefix(w.Config.Address)
 	used := map[string]bool{}
 	for _, u := range state.peers() {
@@ -64,6 +67,15 @@ func (w *Worker) Apply(state State) error {
 		}
 		used[p.Address] = true
 		admissionIDs[ip] = u.ID
+		d := state.Devices[u.ID]
+		owner := state.Users[d.UserID]
+		if state.Version < 2 && state.Devices == nil {
+			owner = state.Users[u.ID]
+		}
+		policy := string(owner.ServerExitPolicy)
+		managed := (policy != "" && policy != "null") || d.ServerExitID != ""
+		revision := sha256.Sum256([]byte(fmt.Sprintf("%s/%s/%d", policy, d.ServerExitID, d.ServerExitRevision)))
+		exitRoutes[ip] = ExitRoute{ID: u.ID, Managed: managed, Revision: fmt.Sprintf("%x", revision)}
 		pub, e := KeyHex(p.Public)
 		if e != nil {
 			return e
@@ -76,6 +88,9 @@ func (w *Worker) Apply(state State) error {
 			return errors.New("duplicate AWG public key")
 		}
 		desired[pub] = fmt.Sprintf("public_key=%s\npreshared_key=%s\nreplace_allowed_ips=true\nallowed_ip=%s/32\n", pub, psk, p.Address)
+	}
+	if w.Exits != nil {
+		w.Exits.Update(exitRoutes)
 	}
 	if w.Admission != nil {
 		w.Admission.Update(admissionIDs)

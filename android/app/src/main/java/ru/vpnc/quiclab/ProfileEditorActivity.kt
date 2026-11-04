@@ -244,6 +244,7 @@ class ProfileEditorActivity : Activity() {
         var panel = section("ПОДКЛЮЧЕНИЕ")
         button(panel,"Проверить серверы VLESS"){startActivity(android.content.Intent(this,VlessProbeActivity::class.java).putExtra("source",profileId))}
         if(prefs.getBoolean("managed_profile",false)) button(panel,"Обновить конфигурацию с сервера") { leaveDraft { updateProfile(profileId) } }
+        if(prefs.getBoolean("managed_profile",false)) button(panel,"Выход сервера") { leaveDraft { showServerExits(profileId) } }
         transport =
             choice(
                 panel,
@@ -523,6 +524,55 @@ class ProfileEditorActivity : Activity() {
     }
     }
     private fun refreshEditor() {prefs=PreferenceDraft(VpnProfiles.preferences(this,profileId));buildEditor()}
+
+    private fun showServerExits(id: String, consent: Boolean = false) {
+        val progress = AlertDialog.Builder(this).setMessage("Получаем разрешённые выходы…").setCancelable(false).show()
+        Thread({
+            try {
+                val view = ServerExitSelection.fetch(this, id, consent)
+                handler.post {
+                    progress.dismiss()
+                    if(isDestroyed) return@post
+                    val choices = view.choices.filter { !it.disabled }
+                    val ids = listOf("") + choices.map { it.id }
+                    val labels = listOf("По умолчанию (назначает администратор)") + choices.map { "${it.name} (${it.id})" }
+                    var picked = ids.indexOf(view.selected)
+                    val state = when {
+                        view.pending -> "Применение не завершено"
+                        view.blocked -> "Текущий выход заблокирован"
+                        view.legacy -> "Общий выход сервера"
+                        else -> "Сейчас: ${view.effective}"
+                    }
+                    AlertDialog.Builder(this).setTitle("Выход сервера · $state")
+                        .setSingleChoiceItems(labels.toTypedArray(), picked) { _, n -> picked = n }
+                        .setNegativeButton("Отмена", null)
+                        .setPositiveButton("Применить и переподключить") { _, _ ->
+                            if(picked in ids.indices) selectServerExit(id, ids[picked], view.revision)
+                        }.show()
+                }
+            } catch(e: Exception) { handler.post {
+                progress.dismiss()
+                if(!isDestroyed) { if(e is LabVpnService.UpdateConsentRequired) transferConsent { showServerExits(id, true) } else error(e) }
+            } }
+        }, "server-exits").start()
+    }
+
+    private fun selectServerExit(id: String, selected: String, revision: String, consent: Boolean = false) {
+        val progress = AlertDialog.Builder(this).setMessage("Меняем выход сервера…").setCancelable(false).show()
+        Thread({
+            try {
+                val view = ServerExitSelection.select(this, id, selected, revision, consent)
+                handler.post { progress.dismiss(); if(!isDestroyed) Toast.makeText(this,
+                    if(view.blocked) "Выход заблокирован политикой администратора" else "Выход сервера применён", Toast.LENGTH_LONG).show() }
+            } catch(e: Exception) { handler.post {
+                progress.dismiss()
+                if(!isDestroyed) { if(e is LabVpnService.UpdateConsentRequired) transferConsent { selectServerExit(id, selected, revision, true) }
+                    else AlertDialog.Builder(this).setTitle("Выход не подтверждён")
+                        .setMessage("Обновите список перед повторной попыткой. Выбор мог сохраниться на сервере.")
+                        .setNegativeButton("Закрыть", null).setPositiveButton("Обновить") { _, _ -> showServerExits(id) }.show() }
+            } }
+        }, "server-exit-select").start()
+    }
 
     private fun updateProfile(id:String,allowOverBudget:Boolean=false) {
         val progress=AlertDialog.Builder(this).setMessage("Проверяем конфигурацию…").setCancelable(false).show()

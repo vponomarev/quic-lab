@@ -27,8 +27,10 @@ internal class ServiceTransfer(
     private val active = ConcurrentHashMap<String, mobile.ServiceTransfer>()
 
     fun fetch(operationID: String, profileID: String, kind: String, output: File,
-              network: Network, allowOverBudget: Boolean = false, authenticatedAPKURL: String? = null) {
-        require(kind == "config" || kind == "apk")
+              network: Network, allowOverBudget: Boolean = false, authenticatedAPKURL: String? = null, requestBody: String? = null) {
+        val exitControl = kind == "server-exits" || kind == "select-server-exit"
+        require(kind == "config" || kind == "apk" || exitControl)
+        require(requestBody == null || kind == "select-server-exit")
         val transfer = Mobile.newServiceTransfer(budget, null)
         check(active.putIfAbsent(operationID, transfer) == null) { "Операция уже выполняется" }
         try {
@@ -45,18 +47,19 @@ internal class ServiceTransfer(
             val identity = VpnIdentity.load(context, profileID)
             validateMetadata(identity)
             require(authenticatedAPKURL == null || kind == "apk")
-            val url = authenticatedAPKURL ?: identity.getString(if (kind == "config") "config_url" else "apk_url")
+            val url = if (exitControl) ServerExitSelection.endpoint(identity) else
+                authenticatedAPKURL ?: identity.getString(if (kind == "config") "config_url" else "apk_url")
             if (authenticatedAPKURL != null) validateMetadata(JSONObject().put("apk_url",authenticatedAPKURL))
             require(url.isNotEmpty()) { "В профиле нет проверенного адреса обновления" }
             val token = identity.optString("update_token")
-            if (kind == "config") require(token.isNotEmpty()) { "Нет ключа обновления устройства" }
+            if (kind != "apk") require(token.isNotEmpty()) { "Нет ключа обновления устройства" }
 
             transfer.setTrust(object : ServiceTransferTrust {
                 override fun approvedURL(requestKind: String, raw: String) = requestKind == kind && raw == url
                 override fun credentials(reference: String): String {
                     require(reference == profileID)
                     // Updates use ordinary HTTPS PKI independently of VPN cover SNI.
-                    return JSONObject().put("token", if (kind == "config") token else "").toString()
+                    return JSONObject().put("token", if (kind != "apk") token else "").toString()
                 }
                 override fun resolveAddress(host: String, port: Long): String {
                     val address = network.getAllByName(host).firstOrNull { it is Inet4Address }
@@ -74,6 +77,7 @@ internal class ServiceTransfer(
             val request = JSONObject().put("id", operationID).put("kind", kind)
                 .put("https_url", url).put("output_file", output.absolutePath)
                 .put("device_auth_ref", profileID)
+            requestBody?.let { request.put("body", it) }
             transfer.fetch(request.toString(), budget.bind(binder, physical))
         } finally {
             transfer.cancel(operationID)

@@ -21,6 +21,9 @@ func TestControlAcknowledgesAppliedRevision(t *testing.T) {
 	if e := client.Apply(context.Background(), s); e != nil {
 		t.Fatal(e)
 	}
+	if e := client.CheckExits(context.Background()); e != nil {
+		t.Fatal(e)
+	}
 	conflict := s
 	conflict.Config.Endpoint = "other.example:443"
 	if e := client.Apply(context.Background(), conflict); e == nil {
@@ -52,6 +55,29 @@ func TestControlRejectsForeignSocketFile(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	if string(b) != "keep" {
 		t.Fatal("foreign file modified")
+	}
+}
+
+func TestAdmissionExitCapability(t *testing.T) {
+	dir := t.TempDir()
+	os.Chmod(dir, 0700)
+	stop, err := ServeAdmission(context.Background(), dir, func(ctx context.Context, id, uuid string) (time.Duration, error) {
+		if !AdmissionSupportsExits(ctx) {
+			return 0, errApply
+		}
+		return time.Second, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	uuid := "11111111-1111-4111-8111-111111111111"
+	var reply admissionResponse
+	if err := request(context.Background(), dir, "vless-admission.sock", time.Second, admissionRequest{ID: "device", UUID: uuid}, &reply); err != nil || reply.Milliseconds != 0 {
+		t.Fatal("old worker admitted", reply, err)
+	}
+	if _, err := RequestAdmission(context.Background(), dir, "device", uuid); err != nil {
+		t.Fatal(err)
 	}
 }
 func TestAdmissionBrokerProtocol(t *testing.T) {

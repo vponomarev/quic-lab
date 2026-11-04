@@ -39,7 +39,7 @@ public sealed class UrlProfileLoader {
   try{
    using var doc=JsonDocument.Parse(raw,new JsonDocumentOptions{MaxDepth=16});var p=doc.RootElement;if(p.ValueKind!=JsonValueKind.Object)throw Invalid();
    string Get(string key)=>p.TryGetProperty(key,out var v)&&v.ValueKind==JsonValueKind.String?v.GetString()!:"";
-   EngineSettings Shared(string kind)=>new(){Name=Get("name"),Transport=kind,Hostname=Get("hostname"),Certificate=Get("certificate"),Key=Get("key"),CA=Get("ca"),ServerName=Get("server_name"),VerifyName=Get("verify_name")};
+   ServerControlConfig? control=null;if(Get("config_url").Length+Get("device_id").Length+Get("update_token").Length>0){control=new(){ConfigURL=Get("config_url"),DeviceID=Get("device_id"),Token=Get("update_token")};if(!control.Valid())throw Invalid();} EngineSettings Shared(string kind)=>new(){ServerControl=control?.Clone(),Name=Get("name"),Transport=kind,Hostname=Get("hostname"),Certificate=Get("certificate"),Key=Get("key"),CA=Get("ca"),ServerName=Get("server_name"),VerifyName=Get("verify_name")};
    var profiles=new List<EngineSettings>();
    if(Get("kind")=="vpn"){
     int version=p.GetProperty("version").GetInt32();if(version is not (1 or 2))throw Invalid();

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"quiclab/internal/awgserver"
 	serverbackup "quiclab/internal/backup"
+	"quiclab/internal/serverexit"
 	"quiclab/internal/vlessserver"
 	"sort"
 	"sync"
@@ -26,21 +27,22 @@ import (
 )
 
 type User struct {
-	Enrollments   []Enrollment    `json:"-"`
-	Devices       []Device        `json:"-"`
-	Disabled      bool            `json:"disabled,omitempty"`
-	Protocols     []string        `json:"protocols"`
-	AWG           *awgserver.Peer `json:"awg,omitempty"`
-	LastConnected time.Time       `json:"last_connected,omitempty"`
-	LastTransport string          `json:"last_transport,omitempty"`
-	LastSource    string          `json:"last_source,omitempty"`
-	Stats         UserStats       `json:"-"`
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	Created       time.Time       `json:"created"`
-	Expires       time.Time       `json:"expires"`
-	Certificate   string          `json:"certificate"`
-	Key           string          `json:"key,omitempty"`
+	ServerExitPolicy *serverexit.Policy `json:"server_exit_policy,omitempty"`
+	Enrollments      []Enrollment       `json:"-"`
+	Devices          []Device           `json:"-"`
+	Disabled         bool               `json:"disabled,omitempty"`
+	Protocols        []string           `json:"protocols"`
+	AWG              *awgserver.Peer    `json:"awg,omitempty"`
+	LastConnected    time.Time          `json:"last_connected,omitempty"`
+	LastTransport    string             `json:"last_transport,omitempty"`
+	LastSource       string             `json:"last_source,omitempty"`
+	Stats            UserStats          `json:"-"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	Created          time.Time          `json:"created"`
+	Expires          time.Time          `json:"expires"`
+	Certificate      string             `json:"certificate"`
+	Key              string             `json:"key,omitempty"`
 }
 type diskState struct {
 	VLESSPending  *vlessPendingConfig   `json:"vless_pending,omitempty"`
@@ -56,6 +58,10 @@ type diskState struct {
 	Devices       map[string]Device     `json:"devices"`
 }
 type Store struct {
+	serverExitMu      sync.Mutex
+	serverExits       *serverexit.Catalog
+	serverExitApply   func([]string) error
+	serverExitPending map[string]bool
 	diagnosticEvent   func(string, string)
 	vlessApplyMu      sync.Mutex
 	vlessRoutes       VLESSRouteController
@@ -330,6 +336,7 @@ func (s *Store) List() []User {
 	out := make([]User, 0, len(s.state.Users))
 	for _, u := range s.state.Users {
 		u.Stats = s.snapshot(u.ID, time.Now())
+		u.ServerExitPolicy = u.ServerExitPolicy.Clone()
 		u.Devices = s.devicesLocked(u.ID)
 		u.Enrollments = s.enrollmentsLocked(u.ID)
 		u.Key = ""
@@ -352,6 +359,7 @@ func (s *Store) Profile(id string) (User, error) {
 	if !ok || u.Disabled || s.state.Devices[id].Disabled || time.Now().After(u.Expires) {
 		return User{}, errors.New("user unavailable")
 	}
+	u.ServerExitPolicy = u.ServerExitPolicy.Clone()
 	return u, nil
 }
 func (s *Store) Delete(id string) error {

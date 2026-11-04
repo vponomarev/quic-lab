@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"quiclab/internal/awg"
 	"quiclab/internal/backup"
+	"quiclab/internal/serverexit"
 	"quiclab/internal/transit"
 	"syscall"
 	"time"
@@ -80,6 +81,11 @@ func run() error {
 		return e
 	}
 	defer installation.Close()
+	peerOwner, e := serverexit.LockAWGPeer(filepath.Dir(cfg.Transit.ProbeSocket), parsed)
+	if e != nil {
+		return e
+	}
+	defer peerOwner.Close()
 	owner, e := backup.AcquireProcessLock(filepath.Dir(cfg.Transit.ProbeSocket), ".transit-worker.lock")
 	if e != nil {
 		return e

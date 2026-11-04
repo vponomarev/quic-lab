@@ -362,7 +362,7 @@ class LabVpnService : VpnService() {
         internal fun isActiveDnsExit(context:android.content.Context,id:String):Boolean = updateRuntime?.dnsExitId==id
         internal fun restartUpdatedExit(context:android.content.Context,id:String) {updateRuntime?.restartExit(id)}
         internal fun fetchUpdate(context:android.content.Context,id:String,kind:String,output:java.io.File,
-            allowOverBudget:Boolean=false,authenticatedAPKURL:String?=null) {
+            allowOverBudget:Boolean=false,authenticatedAPKURL:String?=null,requestBody:String?=null) {
             val service=liveService?.takeIf {active}
             val owner=VpnBudgetRun.sharedForContext(context)
             val budget=owner.acquireControl(VpnBudgetSettings.limitBytes(context))
@@ -378,7 +378,7 @@ class LabVpnService : VpnService() {
             if(cell && !allowOverBudget && snapshot.optBoolean("blocked")) throw UpdateConsentRequired()
             try {
                 ServiceTransfer(context,budget,service).fetch(java.util.UUID.randomUUID().toString(),id,kind,output,
-                    selected.first,allowOverBudget,authenticatedAPKURL)
+                    selected.first,allowOverBudget,authenticatedAPKURL,requestBody)
             } catch(e:Exception) {
                 if(cell && !allowOverBudget && e.message?.contains("budget",true)==true) throw UpdateConsentRequired()
                 throw e

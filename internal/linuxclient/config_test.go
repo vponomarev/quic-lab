@@ -2,6 +2,8 @@ package linuxclient
 
 import (
 	"encoding/json"
+	"quiclab/internal/exitcontrol"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +43,17 @@ func TestRouteConflicts(t *testing.T) {
 	}
 	if e := CheckRoutes(targets, []byte(`[{"dst":"default","dev":"eth0"},{"dst":"198.18.0.0/30","dev":"eth0"}]`)); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestServerControlCredentialsValidation(t *testing.T) {
+	c := Config{Transport: "quic", Endpoint: "198.18.0.2:443", Targets: []string{"192.0.2.2/32"}, ServerControl: &exitcontrol.Config{ConfigURL: "https://control.example/api/v1/devices/device/config", DeviceID: "device", Token: strings.Repeat("a", 64)}}
+	raw, _ := json.Marshal(c)
+	if _, err := Decode(raw); err != nil {
+		t.Fatal(err)
+	}
+	c.ServerControl.Token = ""
+	if c.Validate() == nil {
+		t.Fatal("partial control identity accepted")
 	}
 }

@@ -3,6 +3,12 @@
  <DockPanel Margin="16">
   <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"><TextBlock x:Name="Feedback" TextWrapping="Wrap" Margin="0,0,0,8"/><ProgressBar x:Name="Progress" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,0,0,8"/><WrapPanel><Button x:Name="SaveButton" Content="Сохранить" Click="SaveClick" Background="#00877F" Foreground="White" BorderThickness="0" IsEnabled="False"/><Button x:Name="CheckButton" Content="Проверить" Click="CheckClick" IsEnabled="False"/><Button x:Name="CancelDownloadButton" Content="Отменить загрузку" Click="CancelDownloadClick" Visibility="Collapsed"/><Button Content="Закрыть" Click="CloseClick"/></WrapPanel></StackPanel>
   <TabControl x:Name="Tabs">
+   <TabItem Header="Выход сервера"><StackPanel Margin="12">
+    <TextBlock Text="Администратор разрешает выходы, а вы выбираете один для этого устройства. Выбор общий для всех его транспортов." TextWrapping="Wrap" Margin="0,0,0,12"/>
+    <TextBlock x:Name="ServerExitState" TextWrapping="Wrap" Margin="0,0,0,12"/>
+    <ComboBox x:Name="ServerExitBox" DisplayMemberPath="Label" Padding="7" Margin="0,0,0,12"/>
+    <WrapPanel><Button x:Name="RefreshServerExitsButton" Content="Обновить список" Click="RefreshServerExitsClick" IsEnabled="False"/><Button x:Name="ApplyServerExitButton" Content="Применить выход" Click="ApplyServerExitClick" IsEnabled="False"/></WrapPanel>
+   </StackPanel></TabItem>
    <TabItem x:Name="ProfilesTab" Header="Профили"><DockPanel Margin="12">
     <StackPanel DockPanel.Dock="Top"><TextBlock x:Name="ProfileLibraryHint" TextWrapping="Wrap" Margin="0,0,0,12"/><TextBlock x:Name="ProfileCount" Margin="0,0,0,8"/></StackPanel>
     <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">

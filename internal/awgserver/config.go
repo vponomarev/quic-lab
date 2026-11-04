@@ -138,18 +138,21 @@ func (c Config) Client(i Identity, p Peer) string {
 
 // The worker reads the same atomic identity store as the admin, but only these fields.
 type User struct {
-	ID        string    `json:"id"`
-	Disabled  bool      `json:"disabled"`
-	Protocols []string  `json:"protocols"`
-	Expires   time.Time `json:"expires"`
-	AWG       *Peer     `json:"awg"`
+	ServerExitPolicy json.RawMessage `json:"server_exit_policy,omitempty"`
+	ID               string          `json:"id"`
+	Disabled         bool            `json:"disabled"`
+	Protocols        []string        `json:"protocols"`
+	Expires          time.Time       `json:"expires"`
+	AWG              *Peer           `json:"awg"`
 }
 type Device struct {
-	ID       string    `json:"id"`
-	UserID   string    `json:"user_id"`
-	Disabled bool      `json:"disabled"`
-	Expires  time.Time `json:"expires"`
-	AWG      *Peer     `json:"awg"`
+	ServerExitID       string    `json:"server_exit_id,omitempty"`
+	ServerExitRevision uint64    `json:"server_exit_revision,omitempty"`
+	ID                 string    `json:"id"`
+	UserID             string    `json:"user_id"`
+	Disabled           bool      `json:"disabled"`
+	Expires            time.Time `json:"expires"`
+	AWG                *Peer     `json:"awg"`
 }
 type State struct {
 	Version int               `json:"version"`

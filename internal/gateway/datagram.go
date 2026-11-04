@@ -347,13 +347,9 @@ func (s *Server) serveUDP(ctx context.Context, st Stream, req Request, id string
 		WriteJSON(st, Reply{Error: "destination denied"})
 		return
 	}
-	dial := s.DialContext
-	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
-	}
 	dialCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	out, e := dial(dialCtx, "udp4", req.Address)
+	out, e := s.dial(dialCtx, "udp4", req.Address)
 	if e != nil {
 		WriteJSON(st, Reply{Error: "destination unavailable"})
 		return

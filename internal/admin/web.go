@@ -63,6 +63,7 @@ func NewWeb(c Config, s *Store) *Web {
 }
 func (w *Web) Handler() http.Handler {
 	m := http.NewServeMux()
+	w.serverExitRoutes(m)
 	w.editorRoutes(m)
 	w.backupRoutes(m)
 	w.captureRoutes(m)

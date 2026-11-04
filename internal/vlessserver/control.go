@@ -17,6 +17,7 @@ const maxControlMessage = 128 * 1024
 
 type ControlClient struct{ Dir string }
 type controlRequest struct {
+	Exits bool `json:"exits,omitempty"`
 	Snapshot
 	Preflight bool
 	Status    bool
@@ -26,6 +27,7 @@ type controlResponse struct {
 	Applied  bool   `json:"applied"`
 }
 type admissionRequest struct {
+	Exits  bool   `json:"exits,omitempty"`
 	Source string `json:"source,omitempty"`
 	UUID   string `json:"uuid"`
 	ID     string `json:"id"`
@@ -102,6 +104,16 @@ func (c *ControlClient) Apply(ctx context.Context, snapshot Snapshot) error {
 }
 
 type admissionSourceKey struct{}
+type admissionExitsKey struct{}
+
+func AdmissionSupportsExits(ctx context.Context) bool { return ctx.Value(admissionExitsKey{}) == true }
+func (c *ControlClient) CheckExits(ctx context.Context) error {
+	var reply controlResponse
+	if c == nil || request(ctx, c.Dir, "vless-control.sock", 2*time.Second, controlRequest{Status: true, Exits: true}, &reply) != nil || !reply.Applied {
+		return errApply
+	}
+	return nil
+}
 
 func AdmissionSource(ctx context.Context) string {
 	source, _ := ctx.Value(admissionSourceKey{}).(string)
@@ -129,7 +141,7 @@ func RequestAdmission(ctx context.Context, dir, id, uuid string, sources ...stri
 		return 0, errApply
 	}
 	var reply admissionResponse
-	if request(ctx, dir, "vless-admission.sock", 100*time.Millisecond, admissionRequest{ID: id, UUID: uuid, Source: source}, &reply) != nil || reply.Milliseconds <= 0 || reply.Milliseconds > 2000 {
+	if request(ctx, dir, "vless-admission.sock", 100*time.Millisecond, admissionRequest{ID: id, UUID: uuid, Source: source, Exits: true}, &reply) != nil || reply.Milliseconds <= 0 || reply.Milliseconds > 2000 {
 		return 0, errApply
 	}
 	return time.Duration(reply.Milliseconds) * time.Millisecond, nil
@@ -208,6 +220,7 @@ func ServeAdmission(ctx context.Context, dir string, renew AdmissionFunc) (func(
 		var req admissionRequest
 		reply := admissionResponse{}
 		if readMessage(c, &req) == nil && req.ID != "" && len(req.ID) <= 128 && len(req.UUID) == 36 && validAdmissionSource(req.Source) {
+			ctx = context.WithValue(ctx, admissionExitsKey{}, req.Exits)
 			if ttl, e := renew(context.WithValue(ctx, admissionSourceKey{}, req.Source), req.ID, req.UUID); e == nil && ttl > 0 && ttl <= 2*time.Second {
 				reply.Milliseconds = ttl.Milliseconds()
 			}

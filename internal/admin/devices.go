@@ -20,6 +20,8 @@ import (
 // Device owns credentials. Legacy means all clients sharing the original user
 // key are indistinguishable and are revoked together.
 type Device struct {
+	ServerExitID        string          `json:"server_exit_id,omitempty"`
+	ServerExitRevision  uint64          `json:"server_exit_revision,omitempty"`
 	VLESSUUID           string          `json:"vless_uuid,omitempty"`
 	VLESSRevoked        bool            `json:"vless_revoked,omitempty"`
 	UpdateTokenHash     string          `json:"update_token_hash,omitempty"`

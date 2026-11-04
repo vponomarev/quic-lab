@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"quiclab/internal/approuting"
+	"quiclab/internal/exitcontrol"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/vpnmodel"
 	"reflect"
@@ -17,6 +18,7 @@ import (
 const MaxTargets = 256
 
 type Settings struct {
+	ServerControl  *exitcontrol.Config   `json:"server_control,omitempty"`
 	AppRouting     *approuting.TUNPolicy `json:"app_routing,omitempty"`
 	RoutingMode    string                `json:"routing_mode,omitempty"`
 	UplinkMode     string                `json:"uplink_mode,omitempty"`
@@ -35,6 +37,9 @@ type Settings struct {
 }
 
 func (s Settings) Validate() error {
+	if s.ServerControl != nil && s.ServerControl.Validate() != nil {
+		return &FieldError{Field: "server_control", Code: "invalid_credentials"}
+	}
 	if s.AppRouting != nil {
 		if _, e := approuting.CompileTUN(*s.AppRouting); e != nil {
 			return &FieldError{Field: "app_routing", Code: "invalid_policy"}
@@ -101,6 +106,7 @@ type Engine struct {
 }
 
 func New(s Settings, p Platform, g Gateway) *Engine {
+	s.ServerControl = s.ServerControl.Clone()
 	s.Targets = append([]string(nil), s.Targets...)
 	s.AppRouting = s.AppRouting.Clone()
 	e := &Engine{s: s, p: p, g: g}

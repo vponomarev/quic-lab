@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 namespace QuicLab.Windows;
 public sealed class EngineSettings {
+ [JsonPropertyName("server_control"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public ServerControlConfig? ServerControl {get;set;}
  [JsonPropertyName("app_routing"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public AppRoutingPolicy? AppRouting {get;set;}
  public string Name {get;set;}=""; public string Transport {get;set;}="quic"; public string Endpoint {get;set;}="";
  public string Hostname {get;set;}=""; public string Certificate {get;set;}=""; public string Key {get;set;}=""; public string CA {get;set;}="";
@@ -16,6 +17,7 @@ public sealed class EngineSettings {
 }
 public sealed class SettingsView {public ulong Revision {get;set;} public EngineSettings Settings {get;set;}=new(); [JsonPropertyName("has_key")]public bool HasKey {get;set;}}
 public sealed class SettingsChange {
+ [JsonPropertyName("replace_server_control")]public bool ReplaceServerControl {get;set;}
  [JsonPropertyName("expected_revision")]public ulong ExpectedRevision {get;set;}
  public EngineSettings Settings {get;set;}=new();
  [JsonPropertyName("replace_key")]public bool ReplaceKey {get;set;}

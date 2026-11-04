@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	serverbackup "quiclab/internal/backup"
+	"quiclab/internal/serverexit"
 	"quiclab/internal/vless"
 	"reflect"
 	"strings"
@@ -90,13 +91,26 @@ func normalizeSnapshot(s Snapshot) (Snapshot, error) {
 	}
 	return s, nil
 }
-func OpenWorker(ctx context.Context, dir string, admission AdmissionFunc) (*Worker, error) {
+func OpenWorker(ctx context.Context, dir string, admission AdmissionFunc, brokerDirs ...string) (*Worker, error) {
 	if admission == nil || privateDirectory(dir) != nil {
 		return nil, errConfig
+	}
+	brokerDir := filepath.Dir(dir)
+	if len(brokerDirs) > 1 {
+		return nil, errConfig
+	}
+	if len(brokerDirs) == 1 {
+		brokerDir = brokerDirs[0]
+		if !filepath.IsAbs(brokerDir) {
+			return nil, errConfig
+		}
 	}
 	child, cancel := context.WithCancel(ctx)
 	w := &Worker{resolver: net.DefaultResolver, dir: dir, ctx: child, cancel: cancel, admission: admission, record: workerRecord{Revoked: map[string]bool{}}}
 	w.start = func(ctx context.Context, o vless.ServerOptions) (managedServer, error) {
+		o.ExitDial = func(ctx context.Context, id, network, address string) (net.Conn, error) {
+			return (serverexit.Client{Dir: brokerDir}).Dial(ctx, "vless", id, network, address)
+		}
 		return vless.StartServer(ctx, o)
 	}
 	w.persist = w.save

@@ -4,8 +4,10 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"os"
 	"quiclab/internal/awgserver"
+	"quiclab/internal/serverexit"
 	"testing"
 	"time"
 )
@@ -63,5 +65,40 @@ func TestAWGAdmissionBrokerSharedLimit(t *testing.T) {
 	}
 	if info, e := os.Stat(s.admissionDirectory()); e != nil || info.Mode().Perm() != 0700 {
 		t.Fatal("broker directory not private", e)
+	}
+}
+
+func TestAWGNamedExitRequiresWorkerSupportAndAppliedPolicy(t *testing.T) {
+	s, _, d, token := updateFixture(t)
+	os.Chmod(s.admissionDirectory(), 0700)
+	s.ConfigureServerExits(exitDefinitions())
+	s.SetServerExitApply(func([]string) error { return nil })
+	s.mu.Lock()
+	u := s.state.Users[d.UserID]
+	u.Protocols = []string{"awg"}
+	s.state.Users[u.ID] = u
+	s.mu.Unlock()
+	grantExits(t, s, d.UserID, &serverexit.Policy{Allowed: []string{"west", "east"}, Default: "west"})
+	stop, err := s.StartAWGAdmission(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	s.admission.mu.Lock()
+	s.admission.ready = time.Time{}
+	s.admission.mu.Unlock()
+	if _, err := awgserver.RequestAdmission(s.admissionDirectory(), d.ID); err == nil {
+		t.Fatal("old worker admitted named exit")
+	}
+	if _, err := awgserver.RequestExitAdmission(s.admissionDirectory(), d.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.SetServerExitApply(func([]string) error { return errors.New("worker unavailable") })
+	v, _ := s.DeviceServerExits(d.ID, token)
+	if _, err := s.SelectServerExit(d.ID, token, "east", v.Revision); err == nil {
+		t.Fatal("failed apply acknowledged")
+	}
+	if _, err := awgserver.RequestExitAdmission(s.admissionDirectory(), d.ID); err == nil {
+		t.Fatal("unapplied policy admitted")
 	}
 }

@@ -145,7 +145,8 @@ func (s *Server) joinBond(root, handshake context.Context, cs tls.ConnectionStat
 			defer done()
 			defer entry.mux.Close()
 			defer func() { s.bonds.mu.Lock(); delete(s.bonds.entries, h.Token); s.bonds.mu.Unlock() }()
-			s.serve(s.researchContext(entry.mux.Context(), cs), newDatagramMux(entry.mux), "bond", func() (Stream, error) { return entry.mux.AcceptStream(entry.mux.Context()) }, func() { entry.mux.Close() }, count)
+			flowContext := context.WithValue(s.researchContext(entry.mux.Context(), cs), egressIdentityKey{}, cs)
+			s.serve(flowContext, newDatagramMux(entry.mux), "bond", func() (Stream, error) { return entry.mux.AcceptStream(entry.mux.Context()) }, func() { entry.mux.Close() }, count)
 		}()
 	} else {
 		select {

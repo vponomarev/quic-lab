@@ -27,6 +27,7 @@ import (
 	"quiclab/internal/mdm"
 	"quiclab/internal/protocol"
 	"quiclab/internal/research"
+	"quiclab/internal/serverexit"
 	"quiclab/internal/servertls"
 	"quiclab/internal/transit"
 	"quiclab/internal/vlessserver"
@@ -110,6 +111,7 @@ func main() {
 	var captureManager *debugcapture.Manager
 	var researchReceiver *gateway.ResearchReceiver
 	var managed *admin.Store
+	var exits *serverexit.Runtime
 	var vlessRoutes *managedRouteController
 	var uplink *transit.Config
 	var echoProbe func(context.Context) error
@@ -139,6 +141,13 @@ func main() {
 			os.Exit(1)
 		}
 		managed.ConfigureDeviceLimit(cfg.DeviceLimit)
+		var stopExits func()
+		exits, stopExits, e = startServerExits(ctx, cfg, managed)
+		if e != nil {
+			log.Error("server_exits_unavailable", "error", e)
+			os.Exit(1)
+		}
+		defer stopExits()
 		if cfg.VLESS != nil {
 			vlessRoutes, e = newManagedRouteController(*tlsHost, opts.VPNSNINames, opts.TLSRoutes, *cfg.VLESS, []string{*publicHTTPS, *gatewayHTTPS, *fallback})
 			if e != nil {
@@ -279,6 +288,7 @@ func main() {
 		}
 		var mtls *tls.Config
 		if managed != nil {
+			gw.Egress = selectedGatewayExit(managed, exits)
 			mtls = managed.TLS(cert)
 			mtls.NextProtos = []string{gateway.ALPN, gateway.BondALPN}
 			gw.RegisterProtocol = managed.RegisterProtocol

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"quiclab/internal/approuting"
+	"quiclab/internal/exitcontrol"
 	"quiclab/internal/linuxclient"
 	"sync"
 	"syscall"
@@ -49,6 +50,9 @@ func main() { os.Exit(run()) }
 func run() int {
 	path := flag.String("config", "", "private JSON profile (0600)")
 	validate := flag.Bool("validate", false, "validate without network changes")
+	listExits := flag.Bool("server-exits", false, "list administrator-permitted server exits; do not start VPN")
+	exitID := flag.String("server-exit", "", "select a server exit ID, or default to inherit; do not start VPN")
+	exitRevision := flag.String("exit-revision", "", "expected server exit revision (otherwise fetch current revision)")
 	flag.Parse()
 	cfg, e := readConfig(*path)
 	if e != nil {
@@ -69,6 +73,23 @@ func run() int {
 			fmt.Printf("application routing: %s; unknown: %s; capture: %d selected IPv4 subnets; captured DNS: VPN; IPv6/system DNS unchanged; app-only reload: SIGHUP\n", cfg.AppRouting.Mode, unknown, len(cfg.Targets))
 		}
 		return 0
+	}
+	if *listExits || *exitID != "" {
+		if (*listExits && *exitID != "") || (*listExits && *exitRevision != "") {
+			fmt.Fprintln(os.Stderr, "choose one server exit operation")
+			return 2
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := serverExitCommand(ctx, cfg, *exitID, *exitRevision, os.Stdout, exitcontrol.Client{}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+	if *exitRevision != "" {
+		fmt.Fprintln(os.Stderr, "exit-revision requires server-exit")
+		return 2
 	}
 	if os.Geteuid() != 0 {
 		fmt.Fprintln(os.Stderr, "run as root or through the provided service")

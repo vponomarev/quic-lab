@@ -35,7 +35,7 @@ public partial class SettingsWindow {
   TransportBox.SelectedIndex=s.Transport switch{"https"=>1,"awg"=>2,"vless"=>3,_=>0};
   int colon=s.Endpoint.LastIndexOf(':');HostBox.Text=colon<0?s.Endpoint:s.Endpoint[..colon];PortBox.Text=colon<0?"443":s.Endpoint[(colon+1)..];
   NameBox.Text=s.Name;HostnameBox.Text=s.Hostname;CertificateBox.Text=s.Certificate;CABox.Text=s.CA;ServerNameBox.Text=s.ServerName;VerifyNameBox.Text=s.VerifyName;
-  KeyBox.Password=s.Key;ReplaceKeyBox.IsChecked=true;ImportHint.Text="Загружено по URL. Подсети и физический адаптер оставлены прежними.";
+  serverControl=s.ServerControl?.Clone();replaceServerControl=true;KeyBox.Password=s.Key;ReplaceKeyBox.IsChecked=true;ImportHint.Text="Загружено по URL. Подсети и физический адаптер оставлены прежними.";
   } finally {selectingDownloadedTransport=false;}
  }
  void SelectTransportProfile(){
@@ -46,7 +46,7 @@ public partial class SettingsWindow {
    DownloadedTransportBox.SelectedItem=profile;
   } else if(DownloadedTransportBox.Items.Count>0){
    DownloadedTransportBox.SelectedItem=null;
-   KeyBox.Clear();ReplaceKeyBox.IsChecked=true;
+   serverControl=null;replaceServerControl=true;KeyBox.Clear();ReplaceKeyBox.IsChecked=true;
    HostBox.Clear();CertificateBox.Clear();HostnameBox.Clear();ServerNameBox.Clear();VerifyNameBox.Clear();
    Feedback.Text="В загруженном наборе нет этого транспорта. Импортируйте отдельный профиль или выберите транспорт из набора.";
   }

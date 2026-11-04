@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"quiclab/internal/backup"
+	"quiclab/internal/serverexit"
 	"syscall"
 	"time"
 
@@ -62,10 +63,13 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	gate := awgserver.NewAdmissionTUN(t, func(id string) (time.Duration, error) { return awgserver.RequestAdmission(cfg.DataDir, id) }, cfg.AWG.OfflineAfter())
+	exits := awgserver.NewExitTUN(t, func(ctx context.Context, id string) (net.Conn, error) {
+		return (serverexit.Client{Dir: cfg.DataDir}).Dial(ctx, "awg", id, "packet", "")
+	})
+	gate := awgserver.NewAdmissionTUN(exits, func(id string) (time.Duration, error) { return awgserver.RequestExitAdmission(cfg.DataDir, id) }, cfg.AWG.OfflineAfter())
 	d := device.NewDevice(gate, conn.NewStdNetBind(), &device.Logger{Verbosef: func(string, ...any) {}, Errorf: func(string, ...any) {}})
 	defer d.Close()
-	w := &awgserver.Worker{Admission: gate, Device: d, Config: cfg.AWG, Dir: cfg.DataDir}
+	w := &awgserver.Worker{Exits: exits, Admission: gate, Device: d, Config: cfg.AWG, Dir: cfg.DataDir}
 	if e = w.Tick(); e != nil {
 		return e
 	}

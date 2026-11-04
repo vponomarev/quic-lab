@@ -6,6 +6,7 @@ import (
 	"errors"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/windowsengine"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -166,7 +167,7 @@ func TestSettingsIPCAndConcurrentApply(t *testing.T) {
 	ctx := context.Background()
 	r := h.Handle(ctx, Request{Version: 1, ID: "a", Command: "read_settings"})
 	raw, _ := json.Marshal(r)
-	if !r.OK || r.Settings == nil || strings.Contains(string(raw), "SECRET-KEY") || len(r.Capabilities) != 4 {
+	if !r.OK || r.Settings == nil || strings.Contains(string(raw), "SECRET-KEY") || !slices.Contains(r.Capabilities, "server-exits-v1") {
 		t.Fatal("invalid public view")
 	}
 	c := draft(m)

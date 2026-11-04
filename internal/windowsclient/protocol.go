@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"quiclab/internal/exitcontrol"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/windowsengine"
 
@@ -21,19 +22,21 @@ var ErrProtocol = errors.New("invalid_request")
 var requestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type Request struct {
-	Profile  *ProfileChange          `json:"profile,omitempty"`
-	Import   *TransportImportRequest `json:"import,omitempty"`
-	Version  int                     `json:"version"`
-	ID       string                  `json:"id"`
-	Command  string                  `json:"command"`
-	Config   *vpnclient.Config       `json:"config,omitempty"`
-	Settings *SettingsChange         `json:"settings,omitempty"`
+	ServerExit *ServerExitRequest      `json:"server_exit,omitempty"`
+	Profile    *ProfileChange          `json:"profile,omitempty"`
+	Import     *TransportImportRequest `json:"import,omitempty"`
+	Version    int                     `json:"version"`
+	ID         string                  `json:"id"`
+	Command    string                  `json:"command"`
+	Config     *vpnclient.Config       `json:"config,omitempty"`
+	Settings   *SettingsChange         `json:"settings,omitempty"`
 }
 type TransportImportRequest struct {
 	Transport string `json:"transport"`
 	Content   string `json:"content"`
 }
 type Response struct {
+	ServerExit    *exitcontrol.View              `json:"server_exit,omitempty"`
 	Profiles      *ProfileList                   `json:"profiles,omitempty"`
 	Import        *windowsengine.TransportImport `json:"import,omitempty"`
 	Version       int                            `json:"version"`
@@ -51,6 +54,19 @@ func validRequest(r Request) bool {
 	if r.Version != 1 || !requestID.MatchString(r.ID) {
 		return false
 	}
+	if r.Command == "list_server_exits" || r.Command == "select_server_exit" {
+		q := r.ServerExit
+		if q == nil || r.Profile != nil || r.Import != nil || r.Config != nil || r.Settings != nil {
+			return false
+		}
+		if r.Command == "list_server_exits" {
+			return q.Change == nil
+		}
+		return q.Change != nil && q.Change.Validate() == nil
+	}
+	if r.ServerExit != nil {
+		return false
+	}
 	if r.Command == "save_profile" || r.Command == "delete_profile" || r.Command == "activate_profile" {
 		p := r.Profile
 		if p == nil || r.Settings != nil || r.Config != nil || r.Import != nil {
@@ -59,7 +75,7 @@ func validRequest(r Request) bool {
 		if r.Command == "save_profile" {
 			return p.Settings != nil && !p.Reconnect && (p.ID == "" || profileID.MatchString(p.ID))
 		}
-		return profileID.MatchString(p.ID) && p.Settings == nil && !p.ReplaceKey && (r.Command == "activate_profile" || !p.Reconnect)
+		return profileID.MatchString(p.ID) && p.Settings == nil && !p.ReplaceKey && !p.ReplaceServerControl && (r.Command == "activate_profile" || !p.Reconnect)
 	}
 	if r.Profile != nil {
 		return false
@@ -148,7 +164,7 @@ func (h *Handler) Handle(ctx context.Context, q Request) Response {
 	}
 	var err error
 	switch q.Command {
-	case "read_settings", "validate_settings", "apply_settings", "preview_import", "list_profiles", "save_profile", "delete_profile", "activate_profile":
+	case "read_settings", "validate_settings", "apply_settings", "preview_import", "list_profiles", "save_profile", "delete_profile", "activate_profile", "list_server_exits", "select_server_exit":
 		err = errors.New("unsupported_command")
 	case "status":
 	case "stop":

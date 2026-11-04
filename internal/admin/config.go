@@ -9,6 +9,7 @@ import (
 	"quiclab/internal/awgserver"
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/protocol"
+	"quiclab/internal/serverexit"
 	"quiclab/internal/transit"
 	"quiclab/internal/vlessserver"
 	"strconv"
@@ -41,25 +42,26 @@ type Profile struct {
 	Routes          string   `json:"routes,omitempty"`
 }
 type Config struct {
-	ManagementOnly  bool                  `json:"management_only,omitempty"`
-	BackupMiB       int                   `json:"backup_mib,omitempty"`
-	DiagnosticsDays int                   `json:"diagnostics_days,omitempty"`
-	DiagnosticsMiB  int                   `json:"diagnostics_mib,omitempty"`
-	VLESS           *vlessserver.Config   `json:"vless,omitempty"`
-	DeviceLimit     int                   `json:"device_limit,omitempty"`
-	Capabilities    protocol.Capabilities `json:"capabilities,omitempty"`
-	Capture         *debugcapture.Config  `json:"capture,omitempty"`
-	EchoAWG         string                `json:"echo_awg,omitempty"`
-	Transit         *transit.Config       `json:"transit,omitempty"`
-	AWG             *awgserver.Config     `json:"awg,omitempty"`
-	APKPath         string                `json:"apk_path,omitempty"`
-	Listen          string                `json:"listen"`
-	PublicURL       string                `json:"public_url"`
-	Username        string                `json:"username"`
-	Password        string                `json:"password"`
-	DataDir         string                `json:"data_dir"`
-	Echo            Profile               `json:"echo"`
-	VPN             Profile               `json:"vpn"`
+	ServerExits     []serverexit.Definition `json:"server_exits,omitempty"`
+	ManagementOnly  bool                    `json:"management_only,omitempty"`
+	BackupMiB       int                     `json:"backup_mib,omitempty"`
+	DiagnosticsDays int                     `json:"diagnostics_days,omitempty"`
+	DiagnosticsMiB  int                     `json:"diagnostics_mib,omitempty"`
+	VLESS           *vlessserver.Config     `json:"vless,omitempty"`
+	DeviceLimit     int                     `json:"device_limit,omitempty"`
+	Capabilities    protocol.Capabilities   `json:"capabilities,omitempty"`
+	Capture         *debugcapture.Config    `json:"capture,omitempty"`
+	EchoAWG         string                  `json:"echo_awg,omitempty"`
+	Transit         *transit.Config         `json:"transit,omitempty"`
+	AWG             *awgserver.Config       `json:"awg,omitempty"`
+	APKPath         string                  `json:"apk_path,omitempty"`
+	Listen          string                  `json:"listen"`
+	PublicURL       string                  `json:"public_url"`
+	Username        string                  `json:"username"`
+	Password        string                  `json:"password"`
+	DataDir         string                  `json:"data_dir"`
+	Echo            Profile                 `json:"echo"`
+	VPN             Profile                 `json:"vpn"`
 }
 
 func ReadConfig(file string) (Config, error) {
@@ -74,6 +76,12 @@ func ReadConfig(file string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if _, err := serverexit.NewCatalog(c.ServerExits); err != nil {
+		return err
+	}
+	if c.ManagementOnly && len(c.ServerExits) != 0 {
+		return errors.New("management_only conflicts with server exits")
+	}
 	if c.ManagementOnly && (c.AWG != nil || c.VLESS != nil || c.Transit != nil || c.Capture != nil || c.EchoAWG != "") {
 		return errors.New("management_only conflicts with transport workers or capture")
 	}

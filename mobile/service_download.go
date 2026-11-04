@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"quiclab/internal/exitcontrol"
 	"quiclab/internal/trafficbudget"
 	"strconv"
 	"strings"
@@ -90,6 +91,7 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 		URL    string `json:"https_url"`
 		Output string `json:"output_file"`
 		Auth   string `json:"device_auth_ref"`
+		Body   string `json:"body,omitempty"`
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -102,11 +104,22 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 			}
 		}()
 	}
-	if decodeErr != nil || !validTransferID(r.ID) || (r.Kind != "config" && r.Kind != "apk") || r.Output == "" || !filepath.IsAbs(r.Output) {
+	exitControl := r.Kind == "server-exits" || r.Kind == "select-server-exit"
+	if decodeErr != nil || !validTransferID(r.ID) || (r.Kind != "config" && r.Kind != "apk" && !exitControl) || r.Output == "" || !filepath.IsAbs(r.Output) {
 		return errors.New("invalid service transfer request")
 	}
 	if dec.Decode(&struct{}{}) != io.EOF {
 		return errors.New("invalid service transfer request")
+	}
+	if r.Kind == "select-server-exit" {
+		var change exitcontrol.Change
+		d := json.NewDecoder(strings.NewReader(r.Body))
+		d.DisallowUnknownFields()
+		if len(r.Body) > 4096 || d.Decode(&change) != nil || d.Decode(&struct{}{}) != io.EOF || change.Validate() != nil {
+			return exitcontrol.ErrConfig
+		}
+	} else if r.Body != "" {
+		return errors.New("unexpected service request body")
 	}
 	u, e := serviceURL(r.URL)
 	if e != nil {
@@ -119,7 +132,11 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 	if s.budget == nil || !ok || physical.budget != s.budget || (physical.network != "wifi" && physical.network != "cell") || trust == nil || !trust.ApprovedURL(r.Kind, r.URL) {
 		return errors.New("verified profile and physical network required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	timeout := 10 * time.Minute
+	if exitControl {
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	s.mu.Lock()
 	if s.canceled[r.ID] {
@@ -157,7 +174,7 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 	if secret != "" && json.Unmarshal([]byte(secret), &credentials) != nil {
 		return errors.New("invalid device authentication")
 	}
-	if r.Kind == "config" && (r.Auth == "" || credentials.Token == "") {
+	if r.Kind != "apk" && (r.Auth == "" || credentials.Token == "") {
 		return errors.New("configuration requires device authentication")
 	}
 	if strings.ContainsAny(credentials.Token, "\r\n") {
@@ -212,7 +229,7 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 			}
 			if physical.network == "cell" {
 				class := trafficbudget.APK
-				if r.Kind == "config" {
+				if r.Kind != "apk" {
 					class = trafficbudget.Config
 				}
 				return newServiceConn(conn, s.budget, class, granted, ctx), nil
@@ -221,6 +238,9 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 		}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+		if exitControl {
+			return http.ErrUseLastResponse
+		}
 		if len(via) >= 5 {
 			return errors.New("too many redirects")
 		}
@@ -230,12 +250,24 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 		}
 		return nil
 	}}
-	req, e := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
+	method := http.MethodGet
+	var body io.Reader
+	if r.Kind == "select-server-exit" {
+		method = http.MethodPost
+		body = strings.NewReader(r.Body)
+	}
+	req, e := http.NewRequestWithContext(ctx, method, r.URL, body)
 	if e != nil {
 		return errors.New("invalid service request")
 	}
-	if r.Kind == "config" && credentials.Token != "" {
+	if r.Kind != "apk" && credentials.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+credentials.Token)
+	}
+	if exitControl {
+		req.Header.Set("Accept", "application/json")
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	response, e := client.Do(req)
 	if e != nil {
@@ -243,11 +275,28 @@ func (s *ServiceTransfer) Fetch(raw string, binder SocketBinder) (result error) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if exitControl {
+			switch response.StatusCode {
+			case 401:
+				return exitcontrol.ErrAuth
+			case 403:
+				return exitcontrol.ErrDenied
+			case 404:
+				return exitcontrol.ErrUnsupported
+			case 409:
+				return exitcontrol.ErrConflict
+			default:
+				return exitcontrol.ErrUnavailable
+			}
+		}
 		return errors.New("service response rejected")
 	}
 	limit := int64(256 << 20)
 	if r.Kind == "config" {
 		limit = 1 << 20
+	}
+	if exitControl {
+		limit = 64 << 10
 	}
 	if response.ContentLength > limit {
 		return errors.New("service response too large")
