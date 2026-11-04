@@ -15,3 +15,10 @@ Both `/etc/quic-lab/server.json` and `admin.json` must contain `"management_only
 Entry: `/lab/mdm`. Separate invitation QR/link, explicit client consent, current/external configuration, commands and telemetry work independently of VPN provisioning. MDM device API still requires TLS 1.2 or newer. VPN provisioning/capture endpoints return 404. Management devices can remain unassigned to VPN users.
 
 Encrypted GUI/CLI backup and offline restore remain available; see [server-backup.md](server-backup.md). Keep copies off the host. Restoring an archive requires the matching server version.
+
+The device management overview can grant **user configuration editing** per binding
+(disabled by default). On an updated Android client, Settings → «Редактировать
+MDM-настройки» opens a draft editor. Changes are saved on the server and provisioned
+back through MDM; local preferences are not unlocked. Permission revocation and
+concurrent administrator changes invalidate stale drafts. See the
+[implementation and acceptance record](testing/mdm-user-edit-2026-11-04.md).

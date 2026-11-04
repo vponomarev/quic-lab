@@ -61,6 +61,20 @@ func (w *Web) mdmConfig(rw http.ResponseWriter, r *http.Request) {
 	// Never echo the submitted keys, including on successful writes.
 	mdmReply(rw, map[string]any{"revision": out.Revision}, e)
 }
+
+func (w *Web) mdmUserConfigEdit(rw http.ResponseWriter, r *http.Request) {
+	if _, ok := w.authorized(rw, r, true); !ok || !w.mdmReady(rw) {
+		return
+	}
+	revision, err := strconv.ParseInt(r.Form.Get("expectedRevision"), 10, 64)
+	enabled := r.Form.Get("enabled")
+	if err != nil || (enabled != "true" && enabled != "false") {
+		mdmReply(rw, nil, mdm.ErrInvalid)
+		return
+	}
+	out, err := w.MDM.SetUserConfigEdit(r.Form.Get("id"), revision, enabled == "true")
+	mdmReply(rw, out, err)
+}
 func (w *Web) mdmCommand(rw http.ResponseWriter, r *http.Request) {
 	if _, ok := w.authorized(rw, r, true); !ok || !w.mdmReady(rw) {
 		return

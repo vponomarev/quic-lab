@@ -24,7 +24,7 @@ func NewHandler(store *Store) http.Handler {
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/mdm/v1/")
-		if path != "enroll" && path != "activate" && path != "sync" && path != "pause" && path != "telemetry" && path != "report" {
+		if path != "enroll" && path != "activate" && path != "sync" && path != "pause" && path != "telemetry" && path != "report" && path != "config-editor" && path != "config-submit" {
 			http.NotFound(w, r)
 			return
 		}
@@ -61,6 +61,47 @@ func NewHandler(store *Store) http.Handler {
 			}
 			b, e := store.Redeem(req, now)
 			respond(b, e)
+			return
+		}
+		if path == "config-editor" || path == "config-submit" {
+			if strictJSONValue(raw) != nil {
+				respond(nil, ErrInvalid)
+				return
+			}
+			var request UserConfigRequest
+			dec := json.NewDecoder(bytes.NewReader(raw))
+			dec.DisallowUnknownFields()
+			if path == "config-editor" {
+				var view struct {
+					Version   int    `json:"version"`
+					BindingID string `json:"bindingId"`
+					Epoch     int64  `json:"epoch"`
+				}
+				if dec.Decode(&view) != nil {
+					respond(nil, ErrInvalid)
+					return
+				}
+				request.Version, request.BindingID, request.Epoch = view.Version, view.BindingID, view.Epoch
+			} else if dec.Decode(&request) != nil {
+				respond(nil, ErrInvalid)
+				return
+			}
+			if request.Version != 1 {
+				respond(nil, ErrInvalid)
+				return
+			}
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") || !store.Authenticate(request.BindingID, strings.TrimPrefix(auth, "Bearer ")) {
+				respond(nil, ErrUnauthorized)
+				return
+			}
+			if path == "config-editor" {
+				view, err := store.UserConfig(request.BindingID, request.Epoch)
+				respond(view, err)
+			} else {
+				out, err := store.SubmitUserConfig(request)
+				respond(map[string]int64{"revision": out.Revision}, err)
+			}
 			return
 		}
 		if path == "report" {

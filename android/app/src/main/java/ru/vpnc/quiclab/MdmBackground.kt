@@ -11,6 +11,14 @@ internal interface MdmBackgroundPort {
  fun startContinuous();fun stopContinuous();fun stopCollector()
 }
 internal object MdmBackground {
+
+ fun configurationSubmitted(c:Context){
+  // An explicit edit must not wait for the next two-hour quiet poll or the
+  // foreground-open throttle. Provisioning still uses the existing job/session.
+  if(mode(c)=="quiet"){
+   check(c.getSystemService(JobScheduler::class.java).schedule(job(c,false))==JobScheduler.RESULT_SUCCESS)
+  }else reconcile(c,true)
+ }
  const val CAPABILITY="mdm_quiet_v1"
  const val SERVER_FLAG="server_mdm_quiet_v1"
  private const val PERIODIC=0x514d4401

@@ -128,6 +128,7 @@ class VpnActivity:Activity() {
   val card=ui.card(content);card.addView(ui.text("Общие настройки",18f,true));card.addView(ui.text("Сети, лимит LTE, DNS и частота измерений действуют для всех подключений."))
   ui.add(card,ui.button("Сети, трафик и измерения"){startActivity(Intent(this,AppSettingsActivity::class.java))})
   ui.add(card,ui.button("Управление устройством (MDM)"){startActivity(Intent(this,MdmEnrollActivity::class.java))})
+  if(MdmConfiguration.managed(this))ui.add(card,ui.button("Редактировать MDM-настройки"){startActivity(Intent(this,MdmUserEditorActivity::class.java))})
   val researchState=MdmStore(this).read()
   val managed=researchState.binding!=null || researchState.pendingEnrollment
   val research=CheckBox(this).apply {

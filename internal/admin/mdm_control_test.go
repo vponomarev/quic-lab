@@ -36,6 +36,19 @@ func TestMDMControlRoutesGuarded(t *testing.T) {
 	login := call(h, "POST", "/login", url.Values{"username": {c.Username}, "password": {c.Password}}.Encode(), nil)
 	cookie := login.Result().Cookies()[0]
 	form := url.Values{"csrf": {w.sessions[cookie.Value].CSRF}, "id": {b.ID}, "requestID": {"one"}, "kind": {"vpn_start"}}
+	permission := url.Values{"csrf": {w.sessions[cookie.Value].CSRF}, "id": {b.ID}, "expectedRevision": {"0"}, "enabled": {"true"}}
+	if result := call(h, "POST", "/mdm/user-config-edit", permission.Encode(), cookie); result.Code != 200 {
+		t.Fatal("permission endpoint", result.Code)
+	}
+	permission.Set("enabled", "false")
+	if result := call(h, "POST", "/mdm/user-config-edit", permission.Encode(), cookie); result.Code != 409 {
+		t.Fatal("stale permission", result.Code)
+	}
+	permission.Set("expectedRevision", "1")
+	permission.Set("csrf", "wrong")
+	if result := call(h, "POST", "/mdm/user-config-edit", permission.Encode(), cookie); result.Code != 403 {
+		t.Fatal("permission csrf", result.Code)
+	}
 	out := call(h, "POST", "/mdm/command", form.Encode(), cookie)
 	if out.Code != 409 {
 		t.Fatal("paused command", out.Code)

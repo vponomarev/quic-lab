@@ -58,14 +58,15 @@ type DeviceReport struct {
 	Inventory         *AppInventory        `json:"inventory,omitempty"`
 }
 type DeviceState struct {
-	Probes     map[string]ProbeSnapshot `json:"probes,omitempty"`
-	Binding    Binding                  `json:"binding"`
-	UserID     string                   `json:"userId"`
-	Report     *DeviceReport            `json:"report,omitempty"`
-	ReceivedAt time.Time                `json:"receivedAt"`
-	Desired    *ConfigRevision          `json:"desired,omitempty"`
-	Commands   []Command                `json:"commands"`
-	Events     []Event                  `json:"events"`
+	UserConfigEdit UserConfigEditPolicy     `json:"userConfigEdit"`
+	Probes         map[string]ProbeSnapshot `json:"probes,omitempty"`
+	Binding        Binding                  `json:"binding"`
+	UserID         string                   `json:"userId"`
+	Report         *DeviceReport            `json:"report,omitempty"`
+	ReceivedAt     time.Time                `json:"receivedAt"`
+	Desired        *ConfigRevision          `json:"desired,omitempty"`
+	Commands       []Command                `json:"commands"`
+	Events         []Event                  `json:"events"`
 }
 type requestRecord struct {
 	Hash    string
@@ -244,12 +245,16 @@ func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) er
 func (s *Store) DeviceState(id string) (DeviceState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.deviceStateLocked(id)
+}
+func (s *Store) deviceStateLocked(id string) (DeviceState, error) {
 	b, ok := s.state.Bindings[id]
 	if !ok {
 		return DeviceState{}, ErrUnauthorized
 	}
 	b = s.clone().Bindings[id]
 	out := DeviceState{Probes: b.Probes, Binding: b.Binding, UserID: b.UserID, Report: b.Report, ReceivedAt: b.ReceivedAt, Desired: b.Desired, Commands: b.Commands, Events: []Event{}}
+	out.UserConfigEdit = b.UserConfigEdit
 	// Credential replacement is write-only in the ordinary admin read model.
 	if out.Desired != nil {
 		var doc ConfigurationDocument
@@ -274,6 +279,9 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.setDesiredCheckedLocked(id, revision, generation, requestID, mode, document, "admin", "")
+}
+func (s *Store) setDesiredCheckedLocked(id string, revision, generation int64, requestID, mode string, document json.RawMessage, actor, requestHash string) (ConfigRevision, error) {
 	b, ok := s.state.Bindings[id]
 	if !ok {
 		return ConfigRevision{}, ErrUnauthorized
@@ -289,6 +297,9 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	}
 	raw, _ := json.Marshal([]any{revision, generation, mode, json.RawMessage(document)})
 	hash := digest(string(raw))
+	if requestHash != "" {
+		hash = requestHash
+	}
 	if old, ok := b.Requests[requestID]; ok {
 		if old.Hash != hash || old.Config == nil {
 			return ConfigRevision{}, ErrConflict
@@ -338,7 +349,7 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	now := time.Now().UTC()
 	b.Desired = &r
 	b.Requests[requestID] = requestRecord{Hash: hash, Config: &r, At: now}
-	b.Audit = append(b.Audit, auditEntry{Event: Event{ID: randomID(), Actor: "admin", Kind: "config_update", Revision: r.Revision, OccurredAt: now}, ReceivedAt: now})
+	b.Audit = append(b.Audit, auditEntry{Event: Event{ID: randomID(), Actor: actor, Kind: "config_update", Revision: r.Revision, OccurredAt: now}, ReceivedAt: now})
 	n.Bindings[id] = b
 	if e := s.save(n); e != nil {
 		return ConfigRevision{}, e

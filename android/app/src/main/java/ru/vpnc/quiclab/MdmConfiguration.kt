@@ -22,7 +22,7 @@ internal object MdmConfiguration {
  internal fun token(c:Context)=synchronized(lock){state(c).localGeneration to store(c).configEpoch()}
  internal fun assertEditable(c:Context,expected:Pair<Long,Long>?=null){
   val s=state(c)
-  check(!s.cleanupPending && !(s.active && s.rights.config)){"Настройками управляет MDM. Приостановите управление для редактирования."}
+  check(!s.cleanupPending && !(s.active && s.rights.config)){"Настройками управляет MDM. Откройте «Редактировать MDM-настройки» в настройках приложения; требуется разрешение администратора."}
   if(expected!=null)check(expected==token(c)){"Настройки изменились. Откройте редактор заново."}
  }
  private fun selectionGranted(c:Context,id:String):Boolean {

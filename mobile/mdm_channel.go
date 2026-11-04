@@ -74,7 +74,7 @@ func (c *MDMChannel) exchange(endpoint, secret, body string, binder SocketBinder
 		if u.RawQuery != "" || (u.Path != "/api/editor/v1/pair" && u.Path != "/api/editor/v1/poll" && u.Path != "/api/editor/v1/report" && u.Path != "/api/editor/v1/ack" && u.Path != "/api/editor/v1/revoke") {
 			return "", errors.New("invalid editor operation")
 		}
-	} else if u.Path != "/mdm/v1/enroll" && u.Path != "/mdm/v1/activate" && u.Path != "/mdm/v1/sync" && u.Path != "/mdm/v1/pause" && u.Path != "/mdm/v1/telemetry" && u.Path != "/mdm/v1/report" {
+	} else if u.Path != "/mdm/v1/enroll" && u.Path != "/mdm/v1/activate" && u.Path != "/mdm/v1/sync" && u.Path != "/mdm/v1/pause" && u.Path != "/mdm/v1/telemetry" && u.Path != "/mdm/v1/report" && u.Path != "/mdm/v1/config-editor" && u.Path != "/mdm/v1/config-submit" {
 		return "", errors.New("invalid MDM operation")
 	}
 	if len(secret) > 4096 || strings.ContainsAny(secret, "\r\n") || len(body) > 1<<20 || !json.Valid([]byte(body)) {
@@ -171,11 +171,16 @@ func (c *MDMChannel) exchange(endpoint, secret, body string, binder SocketBinder
 	if response.StatusCode != http.StatusOK {
 		return "", errors.New("MDM HTTP status " + strconv.Itoa(response.StatusCode))
 	}
-	raw, e := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	responseLimit := 1 << 20
+	if !editor && u.Path == "/mdm/v1/config-editor" {
+		// Sanitized configuration + app inventory + bounded status metadata.
+		responseLimit = 3 << 20
+	}
+	raw, e := io.ReadAll(io.LimitReader(response.Body, int64(responseLimit)+1))
 	if e != nil {
 		return "", errors.New("MDM response interrupted")
 	}
-	if len(raw) > 1<<20 || !json.Valid(raw) {
+	if len(raw) > responseLimit || !json.Valid(raw) {
 		return "", errors.New("invalid MDM response")
 	}
 	return string(raw), nil

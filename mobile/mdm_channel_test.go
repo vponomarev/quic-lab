@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -47,6 +48,41 @@ func TestMDMIndependentAndMetered(t *testing.T) {
 	}
 	if b.ledger.Snapshot().Used <= 30 {
 		t.Fatal("TLS traffic not accounted")
+	}
+}
+
+func TestMDMUserEditorOperations(t *testing.T) {
+	c, b, s, _ := mdmFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer device-secret" {
+			t.Error("missing device authentication")
+		}
+		w.Write([]byte(`{"revision":1}`))
+	}))
+	for _, op := range []string{"config-editor", "config-submit"} {
+		if _, err := c.Exchange(s.URL+"/mdm/v1/"+op, "device-secret", "{}", b.Bind(nil, "wifi")); err != nil {
+			t.Fatal(op, err)
+		}
+	}
+	if _, err := c.Exchange(s.URL+"/mdm/user-config-edit", "device-secret", "{}", b.Bind(nil, "wifi")); err == nil {
+		t.Fatal("device can reach admin operation")
+	}
+}
+
+func TestMDMUserEditorResponseBounds(t *testing.T) {
+	var size atomic.Int64
+	size.Store((1 << 20) + 100)
+	c, b, s, _ := mdmFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"inventory":"`+strings.Repeat("x", int(size.Load()))+`"}`)
+	}))
+	if _, err := c.Exchange(s.URL+"/mdm/v1/config-editor", "device-secret", "{}", b.Bind(nil, "wifi")); err != nil {
+		t.Fatal("combined configuration and inventory rejected", err)
+	}
+	if _, err := c.Exchange(s.URL+"/mdm/v1/config-submit", "device-secret", "{}", b.Bind(nil, "wifi")); err == nil {
+		t.Fatal("write response bound relaxed")
+	}
+	size.Store(3 << 20)
+	if _, err := c.Exchange(s.URL+"/mdm/v1/config-editor", "device-secret", "{}", b.Bind(nil, "wifi")); err == nil {
+		t.Fatal("unbounded editor response")
 	}
 }
 func TestMDMBudgetBeforeDNS(t *testing.T) {

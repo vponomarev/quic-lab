@@ -20,6 +20,8 @@
 
 ## Источники текущего состояния
 
+- MDM: [разрешаемое администратором редактирование с телефона](testing/mdm-user-edit-2026-11-04.md) реализовано; физическая приёмка нового APK ожидает разрешения Android на установку.
+
 - Android: [устойчивость групп](testing/android-group-stability-2026-11-04.md), [перенос](testing/android-group-transfer-2026-11-04.md), [тихий MDM](testing/android-quiet-mdm-2026-11-04.md), [удалённая последовательность](testing/remote-probe-sequence-2026-11-04.md).
 - Windows: [beta.3](release-windows-0.1.0-beta.3.md), [исправления подключения](testing/windows-connection-fixes-2026-10-29.md), [установщик](testing/windows-installer-2026-10-28.md). [Исходный beta-план](superpowers/plans/2026-10-13-windows-beta.md) остаётся историческим перечнем требований; его чекбоксы не являются сводным статусом.
 - Linux: [preview и формат конфигурации](linux-client-preview.md), [первоначальный стенд](subscriptions-linux-verification-2026-10-16.md).

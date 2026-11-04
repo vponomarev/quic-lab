@@ -39,12 +39,15 @@ class MdmQuietJob:JobService(){
      if(active===this)active=null
      if(run===this)run=null
      if(!systemStopped)jobFinished(params,retry && !canceled.get())
+     if(passes.finish())runCatching{MdmBackground.configurationSubmitted(applicationContext)}
+      .onFailure{MdmService.status="MDM · повторная синхронизация отложена"}
     }
    }
   }
  }
  override fun onStartJob(params:JobParameters):Boolean{
-  if(active!=null || owner==null && runCatching{MdmBackground.mode(this)!="quiet"}.getOrDefault(true))return false
+  if(owner==null && runCatching{MdmBackground.mode(this)!="quiet"}.getOrDefault(true))return false
+  if(!passes.start())return false
   val next=Run(params);run=next;active=next
   handler.postDelayed(next.timeout,MAX_PASS_MS)
   next.worker=Thread({next.execute()},"mdm-quiet").also{it.start()}
@@ -54,9 +57,10 @@ class MdmQuietJob:JobService(){
  override fun onDestroy(){run?.stop(true);super.onDestroy()}
  companion object{
   const val MAX_PASS_MS=90000L
+  private val passes=MdmQuietPassGate()
   @Volatile private var active:Run?=null
   @Volatile internal var owner:((android.content.Context)->MdmSession?)?=null
   internal fun busy()=active!=null
-  internal fun cancel(){active?.stop(false)}
+  internal fun cancel(){passes.cancel();active?.stop(false)}
  }
 }

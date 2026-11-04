@@ -75,6 +75,7 @@ func (w *Web) Handler() http.Handler {
 	m.HandleFunc("GET /mdm/device", w.mdmEditor)
 	m.HandleFunc("GET /mdm-editor.js", w.mdmEditorScript)
 	m.HandleFunc("POST /mdm/config", w.mdmConfig)
+	m.HandleFunc("POST /mdm/user-config-edit", w.mdmUserConfigEdit)
 	m.HandleFunc("POST /mdm/command", w.mdmCommand)
 	m.HandleFunc("POST /mdm/probe", w.mdmProbe)
 	m.HandleFunc("GET /mdm/probes", w.mdmProbes)
