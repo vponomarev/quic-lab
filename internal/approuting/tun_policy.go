@@ -24,6 +24,7 @@ func (p *TUNPolicy) Clone() *TUNPolicy {
 }
 
 type TUNCompiled struct {
+	key          func(string) (string, bool)
 	enabled      bool
 	mode         Mode
 	only, except map[string]bool
@@ -48,6 +49,9 @@ func pathKey(s string) (string, bool) {
 }
 
 func CompileTUN(p TUNPolicy) (*TUNCompiled, error) {
+	return compileTUN(p, pathKey)
+}
+func compileTUN(p TUNPolicy, keyForPath func(string) (string, bool)) (*TUNCompiled, error) {
 	if p.Version != 2 || (p.Mode != OnlySelected && p.Mode != AllExceptSelected) {
 		return nil, ErrPolicy
 	}
@@ -65,7 +69,7 @@ func CompileTUN(p TUNPolicy) (*TUNCompiled, error) {
 		m := make(map[string]bool, len(paths))
 		for _, path := range paths {
 			total += len(path)
-			key, ok := pathKey(path)
+			key, ok := keyForPath(path)
 			if !ok || m[key] || total > 256*1024 {
 				return nil, ErrPolicy
 			}
@@ -81,7 +85,7 @@ func CompileTUN(p TUNPolicy) (*TUNCompiled, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &TUNCompiled{p.Enabled, p.Mode, only, except, p.Unknown}, nil
+	return &TUNCompiled{keyForPath, p.Enabled, p.Mode, only, except, p.Unknown}, nil
 }
 
 func (c *TUNCompiled) Decide(a Attribution) Decision {
@@ -96,7 +100,7 @@ func (c *TUNCompiled) Decide(a Attribution) Decision {
 	}
 	var agreed Decision
 	for _, owner := range a.Owners {
-		key, ok := pathKey(owner.Path)
+		key, ok := c.key(owner.Path)
 		if !ok {
 			return c.unknown
 		}

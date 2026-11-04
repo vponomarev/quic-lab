@@ -7,23 +7,25 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"quiclab/internal/approuting"
 	"regexp"
 )
 
 type Config struct {
-	Transport   string   `json:"transport"`
-	Endpoint    string   `json:"endpoint"`
-	Hostname    string   `json:"hostname"`
-	Certificate string   `json:"certificate"`
-	Key         string   `json:"key"`
-	CA          string   `json:"ca"`
-	ServerName  string   `json:"server_name,omitempty"`
-	VerifyName  string   `json:"verify_name,omitempty"`
-	DNS         string   `json:"dns,omitempty"`
-	Targets     []string `json:"targets"`
-	Interface   string   `json:"interface,omitempty"`
-	AWGConfig   string   `json:"awg_config,omitempty"`
-	VLESSURI    string   `json:"vless_uri,omitempty"`
+	AppRouting  *approuting.TUNPolicy `json:"app_routing,omitempty"`
+	Transport   string                `json:"transport"`
+	Endpoint    string                `json:"endpoint"`
+	Hostname    string                `json:"hostname"`
+	Certificate string                `json:"certificate"`
+	Key         string                `json:"key"`
+	CA          string                `json:"ca"`
+	ServerName  string                `json:"server_name,omitempty"`
+	VerifyName  string                `json:"verify_name,omitempty"`
+	DNS         string                `json:"dns,omitempty"`
+	Targets     []string              `json:"targets"`
+	Interface   string                `json:"interface,omitempty"`
+	AWGConfig   string                `json:"awg_config,omitempty"`
+	VLESSURI    string                `json:"vless_uri,omitempty"`
 }
 
 func Decode(raw []byte) (Config, error) {
@@ -43,6 +45,11 @@ func Decode(raw []byte) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.AppRouting != nil {
+		if _, e := approuting.CompileLinuxTUN(*c.AppRouting); e != nil {
+			return errors.New("invalid Linux application routing policy")
+		}
+	}
 	fail := errors.New("invalid Linux client configuration: use QUIC/HTTPS/AWG/VLESS, IPv4 endpoint and 1–256 nonoverlapping IPv4 subnets")
 	if c.Transport != "quic" && c.Transport != "https" && c.Transport != "awg" && c.Transport != "vless" {
 		return fail

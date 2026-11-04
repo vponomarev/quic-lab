@@ -69,6 +69,9 @@ func TestDesktopNamespaceFixture(t *testing.T) {
 		if e = d.Up(); e != nil {
 			t.Fatal(e)
 		}
+		if os.Getenv("VPN_PROBE_SOURCE_ECHO") == "1" {
+			defer startAWGSourceEcho(t, stack)()
+		}
 		tcp, e = stack.ListenTCPAddrPort(netip.MustParseAddrPort("192.0.2.2:9001"))
 		if e != nil {
 			t.Fatal(e)
@@ -152,4 +155,59 @@ func TestDesktopNamespaceFixture(t *testing.T) {
 	case <-time.After(90 * time.Second):
 		t.Fatal("fixture timeout")
 	}
+}
+
+// AWG's fixture terminates IP inside netstack, rather than the namespace's
+// kernel network stack. Return the real inner peer address at the same target.
+func startAWGSourceEcho(t *testing.T, stack *netstack.Net) func() {
+	t.Helper()
+	tcp, err := stack.ListenTCPAddrPort(netip.MustParseAddrPort("192.0.2.2:9011"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packets []net.PacketConn
+	closeAll := func() {
+		tcp.Close()
+		for _, p := range packets {
+			p.Close()
+		}
+	}
+	for _, port := range []uint16{9012, 53} {
+		p, err := stack.ListenUDPAddrPort(netip.AddrPortFrom(netip.MustParseAddr("192.0.2.2"), port))
+		if err != nil {
+			closeAll()
+			t.Fatal(err)
+		}
+		packets = append(packets, p)
+		go func(p net.PacketConn) {
+			b := make([]byte, 4096)
+			for {
+				n, peer, err := p.ReadFrom(b)
+				if err != nil {
+					return
+				}
+				ip, _, _ := net.SplitHostPort(peer.String())
+				p.WriteTo(append([]byte(ip+"|"), b[:n]...), peer)
+			}
+		}(p)
+	}
+	go func() {
+		for {
+			c, err := tcp.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.SetDeadline(time.Now().Add(5 * time.Second))
+				payload := make([]byte, 750)
+				if _, err := io.ReadFull(c, payload); err != nil {
+					return
+				}
+				ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+				c.Write(append([]byte(ip+"|"), payload...))
+			}(c)
+		}
+	}()
+	return closeAll
 }

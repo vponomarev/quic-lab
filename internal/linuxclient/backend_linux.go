@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
+	"quiclab/internal/approuting"
 	"quiclab/mobile"
 	"sync"
 )
@@ -23,11 +24,13 @@ func (b Binder) Bind(fd int64) error {
 
 // A single foreground owner; callers serialize Start/Stop. TUN is nonpersistent.
 type Client struct {
-	mu      sync.Mutex
-	dev     *os.File
-	gateway *mobile.Gateway
-	Name    string
-	Sink    mobile.EventSink
+	mu       sync.Mutex
+	dev      *os.File
+	gateway  *mobile.Gateway
+	router   *mobile.DesktopAppRouter
+	appStats *approuting.Statistics
+	Name     string
+	Sink     mobile.EventSink
 }
 
 func command(ctx context.Context, args ...string) ([]byte, error) {
@@ -46,6 +49,11 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if e := cfg.Validate(); e != nil {
 		return e
 	}
+	policy, e := cfg.PrepareApplications()
+	if e != nil {
+		return e
+	}
+	c.appStats = nil
 	// Policy routing could redirect gateway sockets through unrelated tunnels.
 	raw, e := command(ctx, "-j", "-4", "rule", "show")
 	if e != nil {
@@ -122,7 +130,15 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if e = c.gateway.StartLinuxContext(ctx, payload, Binder(cfg.Interface)); e != nil {
 		return errors.New("VPN transport startup failed")
 	}
-	if e = c.gateway.Attach(int(f.Fd())); e != nil {
+	if policy != nil {
+		c.router, e = mobile.NewDesktopAppRouter(policy, approuting.NewLinuxOwnerResolver(), Binder(cfg.Interface), c.gateway, c.Sink)
+		if e == nil {
+			e = c.router.AttachLinuxFD(int(f.Fd()))
+		}
+	} else {
+		e = c.gateway.Attach(int(f.Fd()))
+	}
+	if e != nil {
 		return errors.New("cannot attach packet engine")
 	}
 	for _, target := range cfg.Targets {
@@ -133,6 +149,12 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	return nil
 }
 func (c *Client) stopLocked() {
+	if c.router != nil {
+		c.router.Close()
+		s := c.router.Snapshot()
+		c.appStats = &s
+		c.router = nil
+	}
 	if c.gateway != nil {
 		c.gateway.Stop()
 		c.gateway = nil
@@ -143,6 +165,33 @@ func (c *Client) stopLocked() {
 	}
 }
 func (c *Client) Stop() { c.mu.Lock(); defer c.mu.Unlock(); c.stopLocked() }
+
+func (c *Client) AppRoutingSnapshot() *approuting.Statistics {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.router != nil {
+		s := c.router.Snapshot()
+		return &s
+	}
+	if c.appStats != nil {
+		s := *c.appStats
+		return &s
+	}
+	return nil
+}
+
+// PrepareApplications performs only local policy/path checks. Call before any
+// TUN/route allocation; disabled stale selections remain usable configuration.
+func (c Config) PrepareApplications() (*approuting.TUNCompiled, error) {
+	p, e := approuting.CanonicalLinuxTUNPolicy(c.AppRouting)
+	if e != nil {
+		return nil, errors.New("application routing: executable unavailable or invalid policy")
+	}
+	if p == nil || !p.Enabled {
+		return nil, nil
+	}
+	return approuting.CompileLinuxTUN(*p)
+}
 
 func (c *Client) Connected() bool {
 	c.mu.Lock()
