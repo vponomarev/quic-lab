@@ -56,7 +56,10 @@ def tcp(s):
   threading.Thread(target=reply,args=(c,peer),daemon=True).start()
 def udp(s):
  while True:
-  payload,peer=s.recvfrom(4096);s.sendto(peer[0].encode()+b'|'+payload,peer)
+  payload,peer=s.recvfrom(4096)
+  if s.getsockname()[1]==53 and 12<len(payload)<512 and payload[2:12]==b'\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00':
+   s.sendto(payload[:2]+b'\x81\x83'+payload[4:],peer)
+  else:s.sendto(peer[0].encode()+b'|'+payload,peer)
 for kind,port in [(socket.SOCK_STREAM,9011),(socket.SOCK_DGRAM,9012),(socket.SOCK_DGRAM,53)]:
  s=socket.socket(socket.AF_INET,kind);s.bind(('192.0.2.2',port))
  if kind==socket.SOCK_STREAM:s.listen(16)
@@ -69,10 +72,11 @@ for i in $(seq 1 100); do [ -f "$work/echo.ready" ] && break; sleep .1; done
 [ -f "$work/echo.ready" ]
 configure(){
  python3 - "$work" "$1" "$2" <<'PY'
-import json,sys
+import json,sys,os
 w,mode,unknown=sys.argv[1:];d=json.load(open(w+'/base.json'))
 d['targets']=['192.0.2.2/32']
 d['app_routing']={'version':2,'enabled':True,'mode':mode,'only':[w+'/app-vpn'],'except':[w+'/app-direct'],'unknown':unknown}
+if os.getenv('VPN_PROBE_HEALTH')=='1' and d['transport'] in ('awg','vless'):d['health_dns']='192.0.2.2'
 json.dump(d,open(w+'/client.json','w'))
 PY
 }
@@ -102,6 +106,10 @@ for transport in ${VPN_PROBE_TRANSPORTS:-quic https awg vless vless-ws}; do
  vpn_source=192.0.2.2; [ "$transport" != awg ] || vpn_source=10.55.0.2
  if [ "${VPN_PROBE_LIVE:-0}" = 1 ]; then
   configure only_selected block; start_client
+  if [ "${VPN_PROBE_HEALTH:-0}" = 1 ]; then
+   for i in $(seq 1 100); do grep -q '"vpn_dns_ready"' "$work/client.log" && break; sleep .05; done
+   grep -q '"vpn_dns_ready"' "$work/client.log"
+  fi
   tun_before=$(ip -n "$client" -o link show | sed -n 's/.*: \(ql[0-9a-f]\{10\}\):.*/\1/p')
   rm -f "$work/hold.count" "$work/hold.stop"
   QUIC_APP_HOLD_DIR="$work" ip netns exec "$client" "$work/app-direct" -test.v -test.run '^TestLinuxPersistentDirectProbe$' -test.timeout=210s > "$work/hold.log" 2>&1 & ap=$!
@@ -128,13 +136,19 @@ PY
   configure only_selected block; kill -HUP "$cp"
   for i in $(seq 1 100); do [ "$(grep -c '"status":"applied"' "$work/client.log")" -gt "$applied" ] && break; sleep .05; done
   [ "$(grep -c '"status":"applied"' "$work/client.log")" -gt "$applied" ]
-  case "$transport" in quic|https)
+  if [[ "$transport" == quic || "$transport" == https || "${VPN_PROBE_HEALTH:-0}" == 1 ]]; then
    kill -STOP "$sp"
    for i in $(seq 1 2200); do grep -q '"event":"network","state":"reconnecting"' "$work/client.log" && break; kill -0 "$ap"; sleep .05; done
    grep -q '"event":"network","state":"reconnecting"' "$work/client.log"
    before_count=$(cat "$work/hold.count");sleep .5
    [ "$(cat "$work/hold.count")" -gt "$before_count" ]
    probe app-vpn block
+   if [ "${VPN_PROBE_HEALTH:-0}" = 1 ]; then
+    grep -q '"event":"readiness","state":"unavailable"' "$work/client.log"
+    # Wait through at least one failed replacement; local engine start cannot publish ready.
+    sleep 3
+    ! grep -q '"event":"network","state":"ready"' "$work/client.log"
+   fi
    if [ "${VPN_PROBE_CANCEL_RECOVERY:-0}" = 1 ]; then
     touch "$work/hold.stop";wait "$ap";ap=
     stop_started=$SECONDS
@@ -148,12 +162,32 @@ PY
    for i in $(seq 1 1200); do grep -q '"event":"network","state":"ready"' "$work/client.log" && break; kill -0 "$ap"; sleep .05; done
    grep -q '"event":"network","state":"ready"' "$work/client.log"
    probe app-vpn "$vpn_source"
-   echo "$transport: same direct TCP/UDP sockets survived VPN outage/recovery PASS";;
-  esac
+   echo "$transport: same direct TCP/UDP sockets survived VPN outage/recovery PASS"
+  fi
   [ "$tun_before" = "$(ip -n "$client" -o link show | sed -n 's/.*: \(ql[0-9a-f]\{10\}\):.*/\1/p')" ]
   touch "$work/hold.stop";wait "$ap";ap=
   stop_client
   echo "$transport: hot policy, rejected non-policy reload, pinned flows and unchanged TUN PASS"
+  if [ "${VPN_PROBE_HEALTH:-0}" = 1 ]; then
+   # Health recovery must also work without per-app routing.
+   configure only_selected block
+   python3 - "$work/client.json" <<'PY'
+import json,sys
+p=sys.argv[1];d=json.load(open(p));d.pop('app_routing');json.dump(d,open(p,'w'))
+PY
+   start_client
+   for i in $(seq 1 100); do grep -q '"vpn_dns_ready"' "$work/client.log" && break; sleep .05; done
+   grep -q '"vpn_dns_ready"' "$work/client.log"
+   kill -STOP "$sp"
+   for i in $(seq 1 600); do grep -q '"event":"network","state":"reconnecting"' "$work/client.log" && break; sleep .05; done
+   grep -q '"event":"network","state":"reconnecting"' "$work/client.log"
+   kill -CONT "$sp"
+   for i in $(seq 1 600); do grep -q '"event":"network","state":"ready"' "$work/client.log" && break; sleep .05; done
+   grep -q '"event":"network","state":"ready"' "$work/client.log"
+   probe app-vpn "$vpn_source"
+   stop_client
+   echo "$transport: opt-in DNS recovery without per-app routing PASS"
+  fi
   kill -TERM "$sp";wait "$sp";sp=
   continue
  fi

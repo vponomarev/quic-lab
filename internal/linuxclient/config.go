@@ -22,6 +22,7 @@ type Config struct {
 	ServerName  string                `json:"server_name,omitempty"`
 	VerifyName  string                `json:"verify_name,omitempty"`
 	DNS         string                `json:"dns,omitempty"`
+	HealthDNS   string                `json:"health_dns,omitempty"`
 	Targets     []string              `json:"targets"`
 	Interface   string                `json:"interface,omitempty"`
 	AWGConfig   string                `json:"awg_config,omitempty"`
@@ -84,6 +85,19 @@ func (c Config) Validate() error {
 			}
 		}
 		prefixes = append(prefixes, p)
+	}
+	if c.HealthDNS != "" {
+		a, err := netip.ParseAddr(c.HealthDNS)
+		if err != nil || !a.Is4() || !a.IsGlobalUnicast() || (c.Transport != "awg" && c.Transport != "vless") {
+			return errors.New("health_dns requires AWG/VLESS and a unicast IPv4 address inside targets")
+		}
+		covered := false
+		for _, p := range prefixes {
+			covered = covered || p.Contains(a)
+		}
+		if !covered {
+			return errors.New("health_dns must be inside targets")
+		}
 	}
 	return c.validateTransport()
 }

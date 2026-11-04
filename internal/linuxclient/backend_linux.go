@@ -27,6 +27,7 @@ type Client struct {
 	op                   sync.Mutex
 	requested, effective Config
 	recovery             bool
+	health               *healthMonitor
 	vpnCancel            context.CancelFunc
 	mu                   sync.Mutex
 	dev                  *os.File
@@ -61,7 +62,7 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	}
 	c.appStats = nil
 	c.requested = cloneConfig(cfg)
-	c.recovery = cfg.AppRouting != nil && cfg.AppRouting.Enabled
+	c.recovery = (cfg.AppRouting != nil && cfg.AppRouting.Enabled) || cfg.HealthDNS != ""
 	// Policy routing could redirect gateway sockets through unrelated tunnels.
 	raw, e := command(ctx, "-j", "-4", "rule", "show")
 	if e != nil {
@@ -154,9 +155,14 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 		}
 	}
 	c.effective = cloneConfig(cfg)
+	c.startHealthLocked(ctx, c.gateway, cfg.HealthDNS, false)
 	return nil
 }
 func (c *Client) stopLocked() {
+	if c.health != nil {
+		c.health.stop()
+		c.health = nil
+	}
 	if c.vpnCancel != nil {
 		c.vpnCancel()
 		c.vpnCancel = nil
@@ -214,5 +220,25 @@ func (c Config) PrepareApplications() (*approuting.TUNCompiled, error) {
 func (c *Client) Connected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.gateway != nil && c.gateway.IsConnected()
+	return c.gateway != nil && c.gateway.IsConnected() && (c.health == nil || c.health.snapshot().State != "unavailable")
+}
+
+func (c *Client) startHealthLocked(ctx context.Context, g *mobile.Gateway, resolver string, verified bool) {
+	if resolver != "" {
+		c.health = newHealthMonitor(ctx, func(ctx context.Context) error {
+			return g.ProbeDesktopDNS(ctx, resolver)
+		}, healthInterval, healthTimeout, verified)
+	}
+}
+
+func (c *Client) Readiness() HealthStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dev == nil {
+		return HealthStatus{State: "stopped"}
+	}
+	if c.health == nil {
+		return HealthStatus{State: "engine_ready"}
+	}
+	return c.health.snapshot()
 }

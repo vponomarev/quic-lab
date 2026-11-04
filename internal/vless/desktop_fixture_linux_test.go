@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/net/dns/dnsmessage"
 	"io"
 	"net"
 	"net/netip"
@@ -185,6 +186,14 @@ func startAWGSourceEcho(t *testing.T, stack *netstack.Net) func() {
 				n, peer, err := p.ReadFrom(b)
 				if err != nil {
 					return
+				}
+				var query dnsmessage.Message
+				if port == 53 && query.Unpack(b[:n]) == nil && !query.Response && len(query.Questions) == 1 {
+					query.Response = true
+					query.RCode = dnsmessage.RCodeNameError
+					reply, _ := query.Pack()
+					p.WriteTo(reply, peer)
+					continue
 				}
 				ip, _, _ := net.SplitHostPort(peer.String())
 				p.WriteTo(append([]byte(ip+"|"), b[:n]...), peer)

@@ -87,7 +87,8 @@ func run() int {
 		fmt.Fprintln(os.Stderr, e)
 		return 1
 	}
-	output.write(map[string]any{"state": "running", "tun": client.Name, "transport": cfg.Transport, "readiness": "engine_ready"})
+	lastHealth := client.Readiness()
+	output.write(map[string]any{"state": "running", "tun": client.Name, "transport": cfg.Transport, "readiness": lastHealth.State})
 	output.appRouting(client.AppRoutingSnapshot())
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -127,6 +128,11 @@ func run() int {
 			output.write(map[string]string{"event": "network", "state": state})
 		case <-ticker.C:
 			output.appRouting(client.AppRoutingSnapshot())
+			health := client.Readiness()
+			if health != lastHealth {
+				output.write(map[string]any{"event": "readiness", "state": health.State, "consecutive_failures": health.Failures})
+				lastHealth = health
+			}
 			if recovering {
 				continue
 			}

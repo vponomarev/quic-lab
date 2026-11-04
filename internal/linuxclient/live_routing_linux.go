@@ -61,10 +61,14 @@ func (c *Client) RecoverVPN(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	r, old, cfg := c.router, c.gateway, cloneConfig(c.effective)
+	health := c.health
 	enabled := c.recovery
 	c.mu.Unlock()
 	if !enabled || r == nil || old == nil {
 		return errors.New("VPN recovery unavailable")
+	}
+	if health != nil {
+		health.retire()
 	}
 	if err := r.ReplaceVPN(nil); err != nil {
 		return err
@@ -82,6 +86,11 @@ func (c *Client) RecoverVPN(ctx context.Context) error {
 	run, cancel := context.WithCancel(ctx)
 	timer := time.AfterFunc(25*time.Second, cancel)
 	err = next.StartLinuxContext(run, payload, Binder(cfg.Interface))
+	if err == nil && cfg.HealthDNS != "" {
+		probe, end := context.WithTimeout(run, healthTimeout)
+		err = next.ProbeDesktopDNS(probe, cfg.HealthDNS)
+		end()
+	}
 	timer.Stop()
 	if err == nil {
 		err = run.Err()
@@ -99,6 +108,7 @@ func (c *Client) RecoverVPN(ctx context.Context) error {
 	c.vpnCancel = cancel
 	c.mu.Lock()
 	c.gateway = next
+	c.startHealthLocked(run, next, cfg.HealthDNS, true)
 	c.mu.Unlock()
 	return nil
 }
