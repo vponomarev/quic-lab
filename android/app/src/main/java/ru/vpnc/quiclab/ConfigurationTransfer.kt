@@ -49,14 +49,17 @@ internal object ConfigurationTransfer {
   val before=snapshot(c,true).toString();val token=MdmConfiguration.token(c)
   val result=JSONObject(Mobile.prepareConfigurationImport(before,raw,JSONObject().put("mode",mode).put("mapping",JSONObject(mapping)).toString()))
   val candidate=result.getJSONObject("candidate")
+  val runtime=MdmConfiguration.compile(candidate,MdmConfiguration.snapshotRuntime(c))
+  ConfigurationReferences.validateGroups(candidate,runtime)
   val sections=result.getJSONArray("sections").let{a->(0 until a.length()).map{a.getString(it)}}
-  val missing=result.getJSONArray("missingCredentials").let{a->(0 until a.length()).map{a.getString(it)}}
+  val missing=(result.getJSONArray("missingCredentials").let{a->(0 until a.length()).map{a.getString(it)}}+
+   ConfigurationReferences.missingCredentials(candidate,runtime)).distinct()
   val old=JSONObject(before).getJSONArray("profiles");val next=candidate.getJSONArray("profiles")
   val names=(0 until next.length()).joinToString("\n"){next.getJSONObject(it).getString("name")}
   val absent=missingApplications(c,candidate)
   val details=describe(JSONObject(before),candidate)+if(absent.isEmpty())"" else "\nНе установлены приложения: ${absent.joinToString()}. Установите их или исправьте исходный конфиг перед применением."
   val summary="Разделы: ${sections.joinToString{sectionName(it)}}\nПодключений: ${old.length()} → ${next.length()}\n$names"+
-   if(missing.isNotEmpty())"\nБез ключей: ${missing.size}. Эти подключения останутся выключенными."else ""
+   if(missing.isNotEmpty())"\nБез ключей: ${missing.size}. Если они нужны активному подключению или группе, VPN не возобновится автоматически."else ""
   TransferPreview(candidate.toString(),before,token,sections,missing,summary+"\n"+details,missingApps=absent)
  }
  fun rollback(c:Context):TransferPreview=synchronized(MdmConfiguration.lock){
@@ -69,19 +72,35 @@ internal object ConfigurationTransfer {
   val lines=mutableListOf<String>()
   val a=before.getJSONArray("profiles");val old=(0 until a.length()).associate{a.getJSONObject(it).let{p->p.getString("id") to p}}
   val b=after.getJSONArray("profiles");val next=(0 until b.length()).associate{b.getJSONObject(it).let{p->p.getString("id") to p}}
+  fun groupNames(settings:JSONObject,profiles:Map<String,JSONObject>):String {
+   val ids=settings.optJSONArray(AdaptiveGroups.MEMBERS)?:return "нет"
+   return (0 until ids.length()).joinToString{profiles[ids.getString(it)]?.getString("name")?:ids.getString(it)}.ifEmpty{"нет"}
+  }
   for((id,p) in old)if(id !in next)lines.add("Удалить: ${p.getString("name")}")
   for((id,p) in next){
    val prev=old[id]
-   if(prev==null){lines.add("Добавить: ${p.getString("name")}");continue}
+   if(prev==null){
+    lines.add("Добавить: ${p.getString("name")}")
+    if(p.getJSONObject("settings").has(AdaptiveGroups.MEMBERS))lines.add("${p.getString("name")} · Состав группы: ${groupNames(p.getJSONObject("settings"),next)}")
+    continue
+   }
    if(prev.getString("name")!=p.getString("name"))lines.add("Название: ${prev.getString("name")} → ${p.getString("name")}")
    val x=prev.getJSONObject("settings");val y=p.getJSONObject("settings")
    for(key in (x.keys().asSequence().toSet()+y.keys().asSequence().toSet()).sorted()){
-    if(x.opt(key).toString()!=y.opt(key).toString())lines.add("${p.getString("name")} · $key: "+if(key=="ca")"сертификат изменён" else "${x.opt(key).toString().take(100)} → ${y.opt(key).toString().take(100)}")
+    if(x.opt(key)?.toString()!=y.opt(key)?.toString()){
+     val label=if(key==AdaptiveGroups.MEMBERS)"Состав группы" else key
+     val change=when(key){
+      "ca"->"сертификат изменён"
+      AdaptiveGroups.MEMBERS->"${groupNames(x,old)} → ${groupNames(y,next)}"
+      else->"${x.opt(key)?.toString()?.take(100)?:"—"} → ${y.opt(key)?.toString()?.take(100)?:"—"}"
+     }
+     lines.add("${p.getString("name")} · $label: $change")
+    }
    }
    if(prev.optJSONObject("identity")?.toString()!=p.optJSONObject("identity")?.toString())lines.add("${p.getString("name")}: ключи изменены")
   }
   for(key in listOf("currentProfileId","enabledProfileIds","multiple","globalApps","dns","budget","reserve","diagnostics")){
-   if(before.opt(key).toString()!=after.opt(key).toString())lines.add("$key: ${before.opt(key).toString().take(200)} → ${after.opt(key).toString().take(200)}")
+   if(before.opt(key)?.toString()!=after.opt(key)?.toString())lines.add("$key: ${before.opt(key)?.toString()?.take(200)?:"—"} → ${after.opt(key)?.toString()?.take(200)?:"—"}")
   }
   return if(lines.isEmpty())"Настройки совпадают" else lines.joinToString("\n")
  } internal fun missingApplications(c:Context,doc:JSONObject):List<String>{

@@ -90,10 +90,8 @@ class ConfigurationTransferActivity:Activity(){
  private fun mapProfiles(raw:String,mode:String){
   try{
    val payload=JSONObject(raw).getJSONObject("payload");val profiles=payload.optJSONArray("profiles")?:JSONArray()
-   val names=linkedMapOf<String,String>();for(i in 0 until profiles.length()){val p=profiles.getJSONObject(i);names[p.getString("id")]=p.getString("name")}
-   val imported=names.keys.toSet()
-   payload.optJSONObject("routing")?.let{r->names.putIfAbsent(r.getString("currentProfileId"),r.getString("currentProfileId"));r.getJSONObject("settings").keys().forEach{names.putIfAbsent(it,it)};val ids=r.getJSONArray("enabledProfileIds");for(i in 0 until ids.length())names.putIfAbsent(ids.getString(i),ids.getString(i))}
-   payload.optJSONObject("network")?.getJSONObject("dns")?.getString("profileId")?.let{names.putIfAbsent(it,it)}
+   val names=ConfigurationReferences.names(payload)
+   val imported=(0 until profiles.length()).map{profiles.getJSONObject(it).getString("id")}.toSet()
    val mapping=linkedMapOf<String,String>();val entries=names.entries.toList()
    fun step(i:Int){
     if(i==entries.size){preview(raw,mode,mapping);return}

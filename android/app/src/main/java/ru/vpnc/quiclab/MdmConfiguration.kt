@@ -30,6 +30,12 @@ internal object MdmConfiguration {
   return !s.cleanupPending && store(c).revision(binding.id)>0 && MdmProfileSelection.allows(store(c).runtime(),id)
  }
  fun canSelectProfile(c:Context,id:String)=synchronized(lock){!managed(c) || selectionGranted(c,id)}
+ internal fun canUseGroupDependency(c:Context,root:String,id:String)=synchronized(lock){
+  if(!managed(c))return@synchronized true
+  val s=state(c);val binding=s.binding?:return@synchronized false
+  val target=store(c);val runtime=target.runtime()?:return@synchronized false
+  !s.cleanupPending && target.revision(binding.id)>0 && MdmGroupCompatibility.allowsDependency(runtime,root,id)
+ }
  internal fun selectProfile(c:Context,id:String):Boolean=synchronized(lock){
   if(!managed(c))return@synchronized false
   check(selectionGranted(c,id)){"MDM не разрешает выбор этого подключения"}
@@ -104,7 +110,7 @@ internal object MdmConfiguration {
   assertEditable(c);if(!hasLayer(c))return@synchronized false
   store(c).editRuntime{it.getJSONObject("identities").remove(id)};true
  }
- private val settingsKeys=setOf("relay_exit_profile_id","transport","endpoint","quic_endpoint","https_endpoint","awg_endpoint","vless_endpoint",
+ private val settingsKeys=setOf(AdaptiveGroups.MEMBERS,"relay_exit_profile_id","transport","endpoint","quic_endpoint","https_endpoint","awg_endpoint","vless_endpoint",
   "hostname","dns","mode","routes","apps","global_apps","ca","server_name","verify_name","control_url","data_version",
   "transit_endpoint","max_availability","bond_copy_budget","bond_cell_budget","bond_copy_kib","cell_mib",
   "available_transports","demux_enabled","quic_mode","https_mode","quic_pool_size","https_pool_size","quic_check_reserve","https_check_reserve")
@@ -137,15 +143,22 @@ internal object MdmConfiguration {
   }
   return JSONObject().put("preferences",prefs).put("identities",identities).put("serverOverlay",true).also{r->store(c).runtime()?.optJSONObject("subscriptions")?.let{r.put("subscriptions",it)}}
  }
+ /** Pure preflight under lock; the coordinator calls this before stopping VPN. */
+ internal fun prepareIncoming(c:Context,desired:MdmConfigRevision):MdmConfigRevision {
+  val compatible=MdmGroupCompatibility.incoming(desired,snapshotLocal(c),MdmStore(c).document().optBoolean(MdmGroupCompatibility.SERVER_FLAG))
+  mobile.Mobile.validateMDMConfiguration(compatible.document.toString())
+  ConfigurationReferences.validateGroups(compatible.document,compile(compatible.document,snapshotRuntime(c)))
+  return compatible
+ }
  /** The caller must stop the VPN first. Live transition orchestration is separate. */
  fun apply(c:Context,desired:MdmConfigRevision,generation:Long):Boolean=synchronized(lock){
   val s=state(c)
   check(s.active && !s.cleanupPending && s.rights.config && s.localGeneration==generation){"Нет действующего разрешения на конфигурацию MDM"}
   check(!LabVpnService.active){"Перед применением конфигурации остановите VPN"}
-  mobile.Mobile.validateMDMConfiguration(desired.document.toString())
+  val compatible=prepareIncoming(c,desired)
   val target=store(c)
   if(!hasLayer(c))target.initialize(snapshotLocal(c),snapshotRuntime(c))
-  val applied=target.apply(s.binding!!.id,desired,::compile)
+  val applied=target.apply(s.binding!!.id,compatible,::compile)
   repairResearchScope(c)
   applied
  }

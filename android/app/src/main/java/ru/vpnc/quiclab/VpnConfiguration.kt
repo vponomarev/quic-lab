@@ -70,7 +70,7 @@ internal object VpnConfiguration {
             if(targetId.isNotBlank()) {
                 require(prefs.getString("transport","") in AdaptiveGroups.SUPPORTED) {"Транспорт не поддерживает общий выход"}
                 require(targetId!=id && VpnProfiles.list(context).any{it.id==targetId}) {"Профиль общего выхода отсутствует"}
-                require(MdmConfiguration.canSelectProfile(context,targetId)){"MDM не разрешает профиль общего выхода"}
+                require(MdmConfiguration.canUseGroupDependency(context,id,targetId)){"MDM не разрешает профиль общего выхода"}
                 val targetPrefs=effectivePreferences(context,targetId)
                 require(targetPrefs.getString("transport","quic") in listOf("quic","https") && targetPrefs.getString("relay_exit_profile_id","").isNullOrBlank()) {"Несовместимый профиль общего выхода"}
                 val target=VpnIdentity.load(context,targetId)

@@ -18,7 +18,7 @@ internal object MdmDeviceReport {
   check(state.active && !state.cleanupPending)
   val store=MdmStore(context)
   val result=JSONObject().put("version",1).put("name",("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").take(100))
-   .put("appVersion",BuildConfig.VERSION_NAME).put("capabilities",JSONArray(listOf("web-control-v1","research_scope_v1","vless_group_v1","profile_selection_v1","vless_relay_v1","vless_probe_v1")))
+   .put("appVersion",BuildConfig.VERSION_NAME).put("capabilities",JSONArray(listOf("web-control-v1","research_scope_v1","vless_group_v1","profile_selection_v1","vless_relay_v1","vless_probe_v1",MdmGroupCompatibility.CAPABILITY)))
    .put("appliedRevision",state.appliedRevision)
   if(store.document().optBoolean("server_research_scope_v1")){
   val research=ResearchSettings.effectiveScope(context)
@@ -35,7 +35,7 @@ internal object MdmDeviceReport {
    val fingerprint=hash(document.toString())
    store.edit{j->if(j.optString("report_config_hash")!=fingerprint){j.put("report_config_hash",fingerprint).put("report_config_generation",Math.addExact(j.optLong("report_config_generation"),1))};generation=j.optLong("report_config_generation")}
    if(!store.document().optBoolean("server_research_scope_v1"))document.remove("researchScope")
-   result.put("configuration",document)
+   MdmGroupCompatibility.forServer(document,store.document().optBoolean(MdmGroupCompatibility.SERVER_FLAG))?.let{result.put("configuration",it)}
 
   }
   store.edit{j->j.put("report_sequence",Math.addExact(j.optLong("report_sequence"),1));result.put("sequence",j.getLong("report_sequence"))}

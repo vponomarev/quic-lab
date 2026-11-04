@@ -56,7 +56,7 @@ func (s *Store) SetDesired(id string, expected int64, mode string, document json
 	if !ok {
 		return ConfigRevision{}, ErrUnauthorized
 	}
-	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) {
+	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) || !allowsAutomaticGroups(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	revision := int64(0)
@@ -188,7 +188,7 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 			return SyncResponse{}, e
 		}
 	}
-	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1", "vless_relay_v1", "vless_probe_v1"}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
+	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1", "vless_relay_v1", "vless_probe_v1", AutomaticGroupsCapability}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
 	filtered := out.Commands[:0]
 	for _, c := range out.Commands {
 		if c.Kind != "vless_probe" || probeAllowed(b) {
@@ -196,7 +196,7 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 		}
 	}
 	out.Commands = filtered
-	if b.Desired != nil && b.Desired.Revision > req.AppliedRevision && allowsProfileSelection(b, b.Desired.Document) && allowsVLESSRelay(b, b.Desired.Document) {
+	if b.Desired != nil && b.Desired.Revision > req.AppliedRevision && allowsProfileSelection(b, b.Desired.Document) && allowsVLESSRelay(b, b.Desired.Document) && allowsAutomaticGroups(b, b.Desired.Document) {
 		r := *b.Desired
 		r.Document = append(json.RawMessage(nil), r.Document...)
 		out.DesiredConfig = &r

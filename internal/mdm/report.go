@@ -280,7 +280,7 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 	if !b.Binding.GrantedRights.Config || !supported(b) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
-	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) {
+	if !allowsResearchScope(b, document) || !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) || !allowsAutomaticGroups(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	raw, _ := json.Marshal([]any{revision, generation, mode, json.RawMessage(document)})
@@ -327,7 +327,7 @@ func (s *Store) SetDesiredChecked(id string, revision, generation int64, request
 			return ConfigRevision{}, ErrInvalid
 		}
 	}
-	if !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) {
+	if !allowsVLESSGroup(b, document) || !allowsVLESSRelay(b, document) || !allowsAutomaticGroups(b, document) {
 		return ConfigRevision{}, ErrUnauthorized
 	}
 	r := ConfigRevision{Revision: revision + 1, Mode: mode, Document: append(json.RawMessage(nil), document...), ExpectedGeneration: generation}

@@ -48,6 +48,7 @@ internal object VpnProfiles {
     fun delete(c:Context,id:String=current(c).id){ return synchronized(MdmConfiguration.lock) {
         editable();val profiles=list(c);require(profiles.size>1){"Нельзя удалить последний профиль"}
         val rest=profiles.filter{it.id!=id};require(rest.size<profiles.size)
+        require(rest.none{p->val settings=preferences(c,p.id);id in settings.getStringSet(AdaptiveGroups.MEMBERS,emptySet()).orEmpty() || settings.getString("relay_exit_profile_id","")==id}){"Подключение используется группой или общим выходом. Сначала уберите эти ссылки."}
         val selected=current(c).id
         write(c,rest,if(selected==id)rest.first().id else selected)
         preferences(c,id).edit().clear().commit();VpnIdentity.deleteBundle(c,id)

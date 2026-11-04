@@ -30,9 +30,10 @@ internal object LocalConfigurationApply {
      previous.getJSONObject("identities").optJSONObject(id)?.let{runtime.getJSONObject("identities").put(id,it)}
     }
    }
+   ConfigurationReferences.validateGroups(doc,runtime)
    if(!MdmConfiguration.hasLayer(c))store.initialize(JSONObject(p.before),previous)
    val stop=MdmStore(c).document().optLong("user_stop")
-   val incomplete=p.missing.contains(doc.getString("currentProfileId")) || (doc.getJSONObject("dns").getString("mode")=="tunnel" && p.missing.contains(doc.getJSONObject("dns").getString("profileId")))
+   val incomplete=ConfigurationReferences.incomplete(doc,p.missing.toSet()+ConfigurationReferences.missingCredentials(doc,runtime))
    val op=JSONObject().put("wasRunning",vpn.active()).put("userStop",stop)
     .put("generation",p.token.first).put("boot",android.provider.Settings.Global.getInt(c.contentResolver,android.provider.Settings.Global.BOOT_COUNT,-1))
     .put("incomplete",incomplete).put("epoch",store.configEpoch())

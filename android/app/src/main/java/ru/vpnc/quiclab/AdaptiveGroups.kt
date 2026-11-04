@@ -79,7 +79,7 @@ internal object AdaptiveGroups {
    }
   }
   val pools=owners.map { member ->
-   require(member in all && MdmConfiguration.canSelectProfile(context,member)){"Участник группы отсутствует или запрещён MDM"}
+   require(member in all && MdmConfiguration.canUseGroupDependency(context,id,member)){"Участник группы отсутствует или запрещён MDM"}
    val p=VpnConfiguration.effectivePreferences(context,member)
    require(p.getString("transport","") in SUPPORTED){"Транспорт участника не поддерживает автоматическую группу"}
    require(member==id || p.getStringSet(MEMBERS,emptySet()).isNullOrEmpty()){"Вложенные группы не поддерживаются"}

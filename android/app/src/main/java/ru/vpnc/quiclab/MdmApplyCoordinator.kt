@@ -20,7 +20,7 @@ internal class MdmApplyCoordinator(private val context:Context,private val vpn:M
    val config=MdmConfigurationStore(context);val binding=state.binding!!.id
    if(config.revision(binding)>=desired.revision){ack(desired.revision);return@synchronized MdmApplyResult(desired.revision,true,if(vpn.active())"running" else "stopped")}
    try{
-    mobile.Mobile.validateMDMConfiguration(desired.document.toString())
+    MdmConfiguration.prepareIncoming(context,desired)
     val generation=MdmDeviceReport.configurationGeneration(context)
     check(desired.expectedGeneration<0 || desired.expectedGeneration==generation || store.document().optBoolean("resume_config")){"generation_conflict"}
     val operation=JSONObject().put("binding",binding).put("revision",desired.revision).put("phase","prepared")

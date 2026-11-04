@@ -203,7 +203,7 @@ func ValidateDocument(raw json.RawMessage) error {
 			}
 		}
 	}
-	if validateRelayReferences(d) != nil {
+	if validateRelayReferences(d) != nil || validateGroupReferences(d) != nil {
 		return ErrInvalid
 	}
 	if policy := d.ProfileSelection; policy != nil {
@@ -263,6 +263,18 @@ func apps(a []string) bool {
 func validateSettings(m map[string]json.RawMessage) error {
 	for k, r := range m {
 		switch k {
+		case AutomaticGroupMembers:
+			var ids []string
+			if json.Unmarshal(r, &ids) != nil || ids == nil || len(ids) > 31 {
+				return ErrInvalid
+			}
+			seen := map[string]bool{}
+			for _, id := range ids {
+				if !profileID.MatchString(id) || seen[id] {
+					return ErrInvalid
+				}
+				seen[id] = true
+			}
 		case "max_availability", "demux_enabled", "quic_check_reserve", "https_check_reserve", "global_apps":
 			var v bool
 			if json.Unmarshal(r, &v) != nil {
@@ -426,7 +438,8 @@ func validateRelayReferences(d ConfigurationDocument) error {
 			continue
 		}
 		target, ok := profiles[targetID]
-		if !ok || targetID == p.ID || settingString(p, "transport") != "vless" || target.RemoveIdentity || settingString(target, "relay_exit_profile_id") != "" {
+		_, explicitGroup := p.Settings[AutomaticGroupMembers]
+		if !ok || targetID == p.ID || (settingString(p, "transport") != "vless" && !explicitGroup) || target.RemoveIdentity || settingString(target, "relay_exit_profile_id") != "" {
 			return ErrInvalid
 		}
 		transport := settingString(target, "transport")

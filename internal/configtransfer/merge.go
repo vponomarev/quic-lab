@@ -148,6 +148,9 @@ func Prepare(base, raw []byte, o ImportOptions) (Preview, error) {
 					return fail()
 				}
 			}
+			if remapProfileReferences(p.Settings, mapped) != nil {
+				return fail()
+			}
 			p.ID = id
 			if o.Mode == "update" {
 				old := d.Profiles[oldIndex]

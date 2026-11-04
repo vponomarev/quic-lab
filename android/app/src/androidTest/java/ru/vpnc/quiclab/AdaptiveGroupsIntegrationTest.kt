@@ -80,7 +80,7 @@ class AdaptiveGroupsIntegrationTest {
   val config=source("a.example").put("transport","vless")
   VpnConfiguration.attachRuntime(c,"default",config)
   assertEquals(2,config.getJSONArray(AdaptiveGroups.CANDIDATES).length())
-  assertFalse(MdmConfiguration.snapshotLocal(c).getJSONArray("profiles").getJSONObject(0).getJSONObject("settings").has(AdaptiveGroups.MEMBERS))
+  assertTrue(MdmConfiguration.snapshotLocal(c).getJSONArray("profiles").getJSONObject(0).getJSONObject("settings").has(AdaptiveGroups.MEMBERS))
  }
  @Test fun individualSubscriptionIdentityReachesRuntimeCandidates()=withGroup{c->
   val candidates=importedSubscriptionCandidates(c,2)
