@@ -44,17 +44,19 @@ type ProbeRow struct {
 	MeasuredAt    *time.Time `json:"measuredAt,omitempty"`
 }
 type ProbeSnapshot struct {
-	RunID       string     `json:"runId"`
-	SourceID    string     `json:"sourceId"`
-	Fingerprint string     `json:"fingerprint"`
-	Sequence    int64      `json:"sequence"`
-	Network     string     `json:"network"`
-	Initiator   string     `json:"initiator"`
-	State       string     `json:"state"`
-	StartedAt   time.Time  `json:"startedAt"`
-	FinishedAt  time.Time  `json:"finishedAt"`
-	Rows        []ProbeRow `json:"rows"`
-	ReceivedAt  time.Time  `json:"receivedAt"`
+	Schema      int                   `json:"schema,omitempty"`
+	Phases      map[string]ProbePhase `json:"phases,omitempty"`
+	RunID       string                `json:"runId"`
+	SourceID    string                `json:"sourceId"`
+	Fingerprint string                `json:"fingerprint"`
+	Sequence    int64                 `json:"sequence"`
+	Network     string                `json:"network"`
+	Initiator   string                `json:"initiator"`
+	State       string                `json:"state"`
+	StartedAt   time.Time             `json:"startedAt"`
+	FinishedAt  time.Time             `json:"finishedAt"`
+	Rows        []ProbeRow            `json:"rows"`
+	ReceivedAt  time.Time             `json:"receivedAt"`
 }
 
 func probeAllowed(b bindingState) bool {
@@ -96,6 +98,13 @@ func (s *Store) QueueProbe(id, requestID string, r ProbeRequest, now time.Time) 
 	if r.Action != "start" && !displayName(r.RunID, 128) {
 		return Command{}, ErrInvalid
 	}
+	if r.Action != "start" {
+		for _, p := range b.Probes {
+			if p.RunID == r.RunID && p.Schema > 1 {
+				return Command{}, ErrInvalid
+			}
+		}
+	}
 	raw, _ := json.Marshal(r)
 	hash := digest(string(raw))
 	if old, ok := b.Requests[requestID]; ok {
@@ -126,7 +135,7 @@ func (s *Store) QueueProbe(id, requestID string, r ProbeRequest, now time.Time) 
 	}
 	return c, nil
 }
-func validProbe(p ProbeSnapshot) bool {
+func validLegacyProbe(p ProbeSnapshot) bool {
 	raw, e := json.Marshal(p)
 	if e != nil || len(raw) > 512*1024 || !displayName(p.RunID, 128) || p.Sequence < 1 || len(p.Rows) > 256 || !oneOf(p.Network, "wifi", "cell", "none") || !oneOf(p.Initiator, "local", "mdm") || !oneOf(p.State, "queued", "running", "finished", "interrupted", "canceled", "network_changed", "configuration_changed", "needs_foreground", "permission_denied") || p.StartedAt.IsZero() {
 		return false
@@ -163,6 +172,9 @@ func validProbe(p ProbeSnapshot) bool {
 }
 func mergeProbe(b *bindingState, p ProbeSnapshot, now time.Time) error {
 	if !probeAllowed(*b) {
+		return ErrUnauthorized
+	}
+	if p.Schema == 2 && !probePhasesAllowed(*b) {
 		return ErrUnauthorized
 	}
 	if !validProbe(p) || !probeSource(*b, p.SourceID, p.Fingerprint) {

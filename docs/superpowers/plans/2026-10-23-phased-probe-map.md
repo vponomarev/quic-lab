@@ -55,3 +55,7 @@ Centralize Gradle/ADB in parent (automatic-group agent owns other files). JDK17 
 Run assembleDebug assembleDebugAndroidTest lintDebug; install -r app/test; run selected non-destructive instrumentation classes. Run independent review after integration. Native AAR is rebuilt if group transport changes require it. Keep a ledger in ignored `artifacts/phased-probe/`. Git checkpoints deferred until incoming diff can be separated without committing unrelated changes.
 
 Acceptance record: docs/testing/adaptive-groups-probe-map-2026-10-24.md. Physical Wi-Fi acquisition passed; secondary LTE explicitly skipped because reserve is disabled. Debug preview used synthetic data without persistent source injection. Independent reviews found and verified fixes for retry union, cancellation generation, stale lease, busy release, and stale legacy cancellation.
+
+## Продолжение MDM — 2026-11-04
+
+Передача локальных schema=2 результатов и просмотр Wi-Fi/LTE фаз реализованы через capability `vless_probe_phases_v2`; старый сервер продолжает получать только schema=1. Сервер проверяет права, источники, последовательность и границы фаз. Старые удалённые retry/cancel не применяются к локальным двухсетевым запускам; удалённый start остаётся одно-сетевым. [План продолжения](2026-11-04-probe-phase-reporting.md), [проверки и ограничения](../../testing/probe-phase-reporting-2026-11-04.md). Агрегированный источник и удалённая оркестрация двух фаз остаются последующими задачами.

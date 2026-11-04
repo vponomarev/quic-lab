@@ -18,6 +18,10 @@ internal object MdmProbeControl{
   if(prior!=null)return record(prior.optString("result","interrupted"))
   val p=command.probe?:return record("invalid")
   val action=p.optString("action");if(action !in listOf("start","retry","cancel"))return record("invalid")
+  if(action!="start"){
+   val saved=VlessProbeStore(c).all()
+   if(saved.keys().asSequence().map{saved.getJSONObject(it)}.any{it.optString("runId")==p.optString("runId")&&it.optInt("schema",1)!=1})return record("unsupported")
+  }
   if(!allowStart && action!="cancel")return record("background_restricted")
   store.edit{j->val done=j.optJSONObject("probes_done")?:JSONObject();done.keys().asSequence().toList().forEach{if(done.getJSONObject(it).optLong("until")<now.epochSecond)done.remove(it)};check(done.length()<1000);done.put(command.id,JSONObject().put("result","interrupted").put("until",command.expiresAt.plusSeconds(86400).epochSecond));j.put("probes_done",done)}
   val result=try{if(action=="cancel"){if(VlessProbeCoordinator.cancel(p.optString("runId")))"canceled" else "not_running"}else VlessProbeCoordinator.start(c,p.getString("sourceId"),action,p.optString("runId"),"mdm",command.id,p.getString("fingerprint"))}catch(_:Exception){"probe_failed"}
@@ -26,9 +30,8 @@ internal object MdmProbeControl{
  }
  fun report(c:Context,state:MdmState,out:JSONObject){
   if(!state.rights.vpn||!state.rights.telemetry||!MdmStore(c).document().optBoolean("server_vless_probe_v1"))return
-  val sources=VlessProbeCoordinator.sources(c);out.put("probeSources",org.json.JSONArray(sources.map{it.publicJSON()}))
+  val sources=VlessProbeCoordinator.sources(c).take(32);out.put("probeSources",org.json.JSONArray(sources.map{it.publicJSON()}))
   val all=VlessProbeCoordinator.results(c)
-  val run=all.keys().asSequence().map{all.getJSONObject(it)}.filter{r->VlessProbePolicy.reportableV1(r)&&VlessProbePolicy.owns(r,state)&&sources.any{it.id==r.optString("sourceId")&&it.fingerprint==r.optString("fingerprint")}}.maxByOrNull{it.optString("startedAt")}
-  if(run!=null){val wire=JSONObject(run.toString());for(k in listOf("ownerBinding","ownerEpoch","ownerGeneration"))wire.remove(k);out.put("probeSnapshots",org.json.JSONArray().put(wire))}
+  MdmProbeReport.append(out,MdmProbeReport.select(all,sources,state,MdmStore(c).document().optBoolean(MdmProbeReport.SERVER_FLAG)))
  }
 }
