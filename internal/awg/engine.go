@@ -41,36 +41,43 @@ func (b *protectedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		return nil, 0, e
 	}
 	if b.binder != nil {
-		bound, supported := b.Bind.(conn.BindSocketToInterface)
-		selected, hasIndex := b.binder.(interface{ InterfaceIndex() uint32 })
-		if supported && hasIndex {
-			if e = bound.BindSocketToInterface4(selected.InterfaceIndex(), false); e != nil {
-				b.Bind.Close()
-				return nil, 0, e
-			}
-			if e = bound.BindSocketToInterface6(0, true); e != nil {
+		if sockets, ok := b.Bind.(interface{ ProtectSockets(Binder) error }); ok {
+			if e = sockets.ProtectSockets(b.binder); e != nil {
 				b.Bind.Close()
 				return nil, 0, e
 			}
 		} else {
-			peek, ok := b.Bind.(conn.PeekLookAtSocketFd)
-			if !ok {
-				b.Bind.Close()
-				return nil, 0, errors.New("socket protection unavailable")
-			}
-			fd, e := peek.PeekLookAtSocketFd4()
-			if e == nil {
-				e = b.binder.Bind(int64(fd))
-			}
-			if e != nil {
-				b.Bind.Close()
-				return nil, 0, e
-			}
-			// IPv6 transport is unused, but protect its socket too when present.
-			if fd, e := peek.PeekLookAtSocketFd6(); e == nil {
-				if e = b.binder.Bind(int64(fd)); e != nil {
+			bound, supported := b.Bind.(conn.BindSocketToInterface)
+			selected, hasIndex := b.binder.(interface{ InterfaceIndex() uint32 })
+			if supported && hasIndex {
+				if e = bound.BindSocketToInterface4(selected.InterfaceIndex(), false); e != nil {
 					b.Bind.Close()
 					return nil, 0, e
+				}
+				if e = bound.BindSocketToInterface6(0, true); e != nil {
+					b.Bind.Close()
+					return nil, 0, e
+				}
+			} else {
+				peek, ok := b.Bind.(conn.PeekLookAtSocketFd)
+				if !ok {
+					b.Bind.Close()
+					return nil, 0, errors.New("socket protection unavailable")
+				}
+				fd, e := peek.PeekLookAtSocketFd4()
+				if e == nil {
+					e = b.binder.Bind(int64(fd))
+				}
+				if e != nil {
+					b.Bind.Close()
+					return nil, 0, e
+				}
+				// IPv6 transport is unused, but protect its socket too when present.
+				if fd, e := peek.PeekLookAtSocketFd6(); e == nil {
+					if e = b.binder.Bind(int64(fd)); e != nil {
+						b.Bind.Close()
+						return nil, 0, e
+					}
 				}
 			}
 		}

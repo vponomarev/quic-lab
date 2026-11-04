@@ -114,9 +114,12 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if _, e = command(ctx, "link", "set", "dev", c.Name, "mtu", "1280", "up"); e != nil {
 		return e
 	}
-	payload, _ := json.Marshal(cfg)
+	payload, e := cfg.GatewayJSON()
+	if e != nil {
+		return e
+	}
 	c.gateway = mobile.NewGateway(c.Sink)
-	if e = c.gateway.StartLinuxContext(ctx, string(payload), Binder(cfg.Interface)); e != nil {
+	if e = c.gateway.StartLinuxContext(ctx, payload, Binder(cfg.Interface)); e != nil {
 		return errors.New("VPN transport startup failed")
 	}
 	if e = c.gateway.Attach(int(f.Fd())); e != nil {

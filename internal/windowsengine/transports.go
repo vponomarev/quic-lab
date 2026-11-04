@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/netip"
 	"quiclab/internal/awg"
 	"quiclab/internal/vless"
 	"strings"
@@ -34,7 +33,7 @@ func ImportTransport(kind, raw string) (TransportImport, error) {
 		if e != nil {
 			return TransportImport{}, errors.New("invalid or unsupported VLESS URI")
 		}
-		return TransportImport{Name: p.Name, Endpoint: p.Config.Endpoint, Notice: "VLESS TCP + TLS/REALITY. Список подсетей сохраняется отдельно. ICMP не поддерживается."}, nil
+		return TransportImport{Name: p.Name, Endpoint: p.Config.Endpoint, Notice: "VLESS TCP + TLS/REALITY или WebSocket + TLS. Список подсетей сохраняется отдельно. ICMP не поддерживается."}, nil
 	default:
 		return TransportImport{}, errors.New("unsupported transport import")
 	}
@@ -83,23 +82,13 @@ func (s Settings) validateTransportOptions() error {
 			return e
 		}
 		if s.FullIPv4() {
-			missing, e := subtractAll(c.Allowed)
-			if e != nil || len(missing) != 0 {
+			if !awg.CoversIPv4(c.Allowed, "0.0.0.0/0") {
 				return &FieldError{Field: "routing_mode", Code: "awg_requires_full_allowed_ips"}
 			}
 			return nil
 		}
 		for i, target := range s.Targets {
-			p, e := netip.ParsePrefix(target)
-			if e != nil {
-				return e
-			}
-			covered := false
-			for _, allowed := range c.Allowed {
-				a := netip.MustParsePrefix(allowed)
-				covered = covered || (a.Bits() <= p.Bits() && a.Contains(p.Addr()))
-			}
-			if !covered {
+			if !awg.CoversIPv4(c.Allowed, target) {
 				return &FieldError{Field: "targets", Row: i + 1, Code: "outside_allowed_ips"}
 			}
 		}

@@ -1,0 +1,13 @@
+# Desktop transport parity
+
+Continue autonomously under the user's instruction to develop Android, Windows and Linux. Preserve Go/Kotlin/WPF and the existing isolated worktree, base 390ce1b. Linux currently has QUIC/HTTPS subnet CLI; Windows already imports AWG/VLESS. No new dependencies, real profiles, production or host default-route changes.
+
+Deliver Linux standalone AWG and VLESS TCP TLS/REALITY and WebSocket/TLS using existing engines. Keep numeric IPv4 outer endpoint and 1..256 nonoverlapping selected subnets; reject capture of the endpoint, reserved ranges, custom policy rules and route conflicts. Explicit `awg_config` and `vless_uri` carry credentials; only the selected transport's material is accepted. Validate AWG AllowedIPs coverage and VLESS trust before opening TUN. Project only required engine fields. Profile endpoint may be a hostname resolved by the user into the explicit numeric endpoint; preserve SNI and WS host/path. No implicit DNS, full tunnel, failover, HA or kill-switch promises.
+
+Windows gains correct AWG coverage when adjacent AllowedIPs jointly cover a selected subnet. Share a small IPv4 union-coverage helper in internal/awg; do not merge OS network managers. Fix the shared gateway decoder that currently reconstructs every VLESS profile with type=tcp: validate stored config before conversion, retain WS transport/path/host and legacy empty TCP transport. This affects Android too; rebuild its AAR and run device regressions if tooling permits, otherwise explicitly mark APK as not updated.
+
+Desktop native entry uses common Go-only start helper for four transports and private VLESS TLS roots, with cancellation-before-start and existing no-HA behavior. It does not change Android trust behavior. AWG/VLESS engine readiness is not authenticated liveness; CLI must not claim automatic server-loss detection for those engines.
+
+Linux live verification exposed that upstream StdNetBind exports socket descriptors only on Android. Linux therefore gets an IPv4-only single-packet UDP Bind adapter, protected inside RawConn.Control before receive workers start. Receiver closures retain their socket generation across reopen. No dependency patch or protection bypass; Windows/Android keep their current bind implementation. Throughput/GSO optimization is deferred.
+
+Validate source-only on authorized Linux host, synthetic tests and isolated namespace live fixture for QUIC/HTTPS/AWG/VLESS TCP+WS. Host management route unchanged. Windows cross-build plus actual nonmutating native tests where possible; no service installation, physical route changes or production publishing. Update consolidated roadmap with delivered/remaining work and acceptance gaps for all three clients.

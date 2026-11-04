@@ -31,10 +31,19 @@ func decodeGatewayVLESS(raw, endpoint string) (vless.Config, error) {
 		return fail()
 	}
 	canonical, err := json.Marshal(p)
-	if err != nil || !bytes.Equal(canonical, []byte(raw)) {
+	if err != nil || !bytes.Equal(canonical, []byte(raw)) || vless.ValidateConfig(p.Config) != nil {
 		return fail()
 	}
 	q := url.Values{"security": {p.Config.Security}, "sni": {p.Config.ServerName}, "encryption": {"none"}, "type": {"tcp"}}
+	if p.Config.Transport == "ws" {
+		q.Set("type", "ws")
+		if p.Config.WebSocketPath != "" {
+			q.Set("path", p.Config.WebSocketPath)
+		}
+		if p.Config.WebSocketHost != "" {
+			q.Set("host", p.Config.WebSocketHost)
+		}
+	}
 	if p.Config.Flow != "" {
 		q.Set("flow", p.Config.Flow)
 	}

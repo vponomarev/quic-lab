@@ -22,6 +22,8 @@ type Config struct {
 	DNS         string   `json:"dns,omitempty"`
 	Targets     []string `json:"targets"`
 	Interface   string   `json:"interface,omitempty"`
+	AWGConfig   string   `json:"awg_config,omitempty"`
+	VLESSURI    string   `json:"vless_uri,omitempty"`
 }
 
 func Decode(raw []byte) (Config, error) {
@@ -41,8 +43,8 @@ func Decode(raw []byte) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
-	fail := errors.New("invalid Linux client configuration: use QUIC/HTTPS, IPv4 endpoint and 1–256 nonoverlapping IPv4 subnets")
-	if c.Transport != "quic" && c.Transport != "https" {
+	fail := errors.New("invalid Linux client configuration: use QUIC/HTTPS/AWG/VLESS, IPv4 endpoint and 1–256 nonoverlapping IPv4 subnets")
+	if c.Transport != "quic" && c.Transport != "https" && c.Transport != "awg" && c.Transport != "vless" {
 		return fail
 	}
 	ep, e := netip.ParseAddrPort(c.Endpoint)
@@ -76,7 +78,7 @@ func (c Config) Validate() error {
 		}
 		prefixes = append(prefixes, p)
 	}
-	return nil
+	return c.validateTransport()
 }
 func CheckRoutes(targets []string, raw []byte) error {
 	var rows []struct {

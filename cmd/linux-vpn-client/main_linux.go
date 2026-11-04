@@ -54,7 +54,7 @@ func run() int {
 		return 2
 	}
 	if *validate {
-		fmt.Println("configuration valid (transport credentials checked when connecting)")
+		fmt.Println("configuration valid (server reachability and authentication not tested)")
 		return 0
 	}
 	if os.Geteuid() != 0 {
@@ -71,7 +71,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, e)
 		return 1
 	}
-	output.write(map[string]any{"state": "running", "tun": client.Name, "transport": cfg.Transport})
+	output.write(map[string]any{"state": "running", "tun": client.Name, "transport": cfg.Transport, "readiness": "engine_ready"})
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	running := true

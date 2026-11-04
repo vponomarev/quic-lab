@@ -81,3 +81,17 @@ func TestTransportRejectsUnusableRoutesAndTrust(t *testing.T) {
 		t.Fatal("invalid VLESS trust accepted")
 	}
 }
+
+func TestAWGSelectedSubnetCoveredByAdjacentAllowedIPs(t *testing.T) {
+	s := valid()
+	s.Transport = "awg"
+	s.Targets = []string{"198.51.100.0/24"}
+	s.Key = strings.Replace(awgFixture, "AllowedIPs = 0.0.0.0/0", "AllowedIPs = 198.51.100.0/25,198.51.100.128/25", 1)
+	if e := s.Validate(); e != nil {
+		t.Fatal("union covers route but rejected", e)
+	}
+	s.Key = strings.Replace(s.Key, "198.51.100.128/25", "198.51.100.128/26", 1)
+	if s.Validate() == nil {
+		t.Fatal("uncovered route accepted")
+	}
+}

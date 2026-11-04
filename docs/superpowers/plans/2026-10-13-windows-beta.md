@@ -1,5 +1,7 @@
 # Windows VPN beta Implementation Plan
 
+> Актуальный сводный статус на 2026-11-04: [план трёх клиентов](../../client-roadmap.md). Этот исторический план содержит частично устаревшие чекбоксы; фактические beta.3 и последующие исправления подтверждаются отдельными release/testing отчётами. Следующая функциональная Windows-задача — принятый Wintun/direct per-app дизайн, затем библиотека профилей/несколько выходов.
+
 > **For agentic workers:** Use superpowers:executing-plans to implement this plan task-by-task in the current session. Do not launch parallel agents unless the owner chooses that execution method.
 
 **Goal:** Выпустить устанавливаемый Windows 11 x64 VPN beta с QUIC/HTTPS/AWG/VLESS, GUI, профилями и проверенным восстановлением сети, без выбора приложений.
