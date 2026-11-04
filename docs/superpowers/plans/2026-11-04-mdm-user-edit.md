@@ -22,7 +22,7 @@
 - [x] 2. Admin permission checkbox: internal/admin/mdm_control.go, web.go,
   mdm_editor.js; distinct policy-save action with revision and existing CSRF.
   RED HTTP/UI contract then GREEN; preserve temporary editor behavior.
-- [ ] 3. Android device editor: MdmUserEditorActivity/Session, packaged shared
+- [x] 3. Android device editor: MdmUserEditorActivity/Session, packaged shared
   mdm_editor.js and mdm_phone.html; exact asset allowlist and two-op native bridge.
   Extend mobile/Kotlin operation allowlists; settings entry; immediate existing
   MDM sync after successful submit. No privileged tokens passed to JavaScript.
@@ -38,7 +38,10 @@
 - Admin and temporary web editors retain existing behavior and validation.
 
 ## Execution status
-Tasks 3–4: code/build/automated Linux, JVM and Node checks completed; independent review
-and one RED→GREEN fix pass completed. Note9 instrumentation installation was rejected by Android
-`INSTALL_FAILED_USER_RESTRICTED`; physical acceptance remains unchecked.
+Code/build/automated Linux, JVM and Node checks completed; independent review
+and one RED→GREEN fix pass completed. 2026-11-05 user confirmed full VPN configuration
+scope including profiles/import. After unlocking Note9, direct ADB installation and
+19 instrumentation tests passed. The standalone WebView test response dispatcher was
+fixed RED→GREEN; production code unchanged. Task 4 retains live external-server
+acceptance and rollout; device fixture tests do not claim that end-to-end deployment.
 See [evidence](../../testing/mdm-user-edit-2026-11-04.md).

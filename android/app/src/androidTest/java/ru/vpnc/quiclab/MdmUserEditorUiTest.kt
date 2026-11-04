@@ -20,7 +20,7 @@ class MdmUserEditorUiTest {
    .put("userConfigEdit",JSONObject().put("enabled",true).put("revision",2)).put("editable",true)
    .put("report",JSONObject().put("configuration",configuration).put("configGeneration",9).put("appliedRevision",5).put("capabilities",org.json.JSONArray().put("web-control-v1")))
    .put("desired",JSONObject().put("revision",5).put("mode","external").put("document",configuration))
-  val saved=AtomicReference<JSONObject>();val errors=mutableListOf<String>();lateinit var web:WebView
+  val saved=AtomicReference<JSONObject>();val errors=mutableListOf<String>();val reads=java.util.concurrent.atomic.AtomicInteger();lateinit var web:WebView
   inst.runOnMainSync{
    web=WebView(ctx);web.settings.javaScriptEnabled=true;web.settings.blockNetworkLoads=true;web.settings.allowFileAccess=false;web.settings.allowContentAccess=false
    web.webChromeClient=object:WebChromeClient(){
@@ -33,9 +33,11 @@ class MdmUserEditorUiTest {
    }}
    web.addJavascriptInterface(object{
     @JavascriptInterface fun request(id:String,op:String,raw:String){
-     val value=if(op=="read")JSONObject(state.toString()) else {saved.set(JSONObject(raw));JSONObject().put("revision",6)}
+     val value=if(op=="read"){reads.incrementAndGet();JSONObject(state.toString())} else {saved.set(JSONObject(raw));JSONObject().put("revision",6)}
      val response=JSONObject().put("ok",true).put("value",value)
-     web.post{web.evaluateJavascript("window.mdmEditorResult(${JSONObject.quote(id)},${JSONObject.quote(response.toString())})",null)}
+     // The test WebView is deliberately unattached. View.post queues until an
+     // attachment that never occurs; match Activity.runOnUiThread in production.
+     android.os.Handler(android.os.Looper.getMainLooper()).post{web.evaluateJavascript("window.mdmEditorResult(${JSONObject.quote(id)},${JSONObject.quote(response.toString())})",null)}
     }
    },"MdmNative")
    web.layout(0,0,1080,1800);web.loadUrl(MdmUserEditorAssets.URL)
@@ -44,7 +46,7 @@ class MdmUserEditorUiTest {
   try{
    var ready=false
    repeat(50){if(!ready){Thread.sleep(100);ready=evaluate("Boolean(document.querySelector('#configuration input'))")=="true"}}
-   assertTrue("Editor did not render: $errors",ready)
+   assertTrue("Editor did not render: errors=$errors reads=${reads.get()} document="+evaluate("JSON.stringify({url:location.href,ready:document.readyState,message:document.querySelector('#message')?.textContent,bridge:typeof window.mdmEditorResult})"),ready)
    assertEquals("false",evaluate("document.querySelector('#apply').disabled"))
    assertEquals("false",evaluate("document.body.innerText.includes('Разрешить пользователю выбирать подключение')"))
    evaluate("document.querySelector('[data-tab=config]').click();var label=Array.from(document.querySelectorAll('#configuration label')).find(x=>x.textContent==='Название подключения');var input=label.querySelector('input');input.value='Изменено на телефоне';input.dispatchEvent(new Event('change'));true")

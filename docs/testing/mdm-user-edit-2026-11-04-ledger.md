@@ -18,3 +18,13 @@ Final: Ruling: shared forms do not gain automatic-group authoring in this task �
 Final: Ruling: physical Note9 acceptance remains pending, production rollout outside task — never equate builds with physical verification — cost is remaining device acceptance before release.
 Final: minor (deferred): none.
 Evidence: docs/testing/mdm-user-edit-2026-11-04.md and artifacts/mdm-user-edit-20261104/.
+
+## Follow-up 2026-11-05
+User confirmed full VPN configuration permission including profiles/import and authorized retry on unlocked Note9.
+Direct adb install -r -t succeeded for app and test APKs. Initial device run: 4/5 PASS;
+UI fixture timed out because View.post on unattached WebView never delivered its fake server response.
+Diagnostic RED: document ready=complete, bridge=function, reads=1, loading message unchanged.
+Fix: use main Handler like production Activity.runOnUiThread. No production implementation change.
+Device GREEN: MdmUserEditorTest + MdmUserEditorUiTest + MdmQuietTest + MdmQuietJobTest,
+19/19 PASS, no skips, 24.946 s; real device screenshot inspected.
+Task 3 complete. Task 4 live external-server end-to-end acceptance/rollout remains distinct.
