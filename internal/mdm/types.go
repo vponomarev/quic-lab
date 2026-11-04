@@ -74,6 +74,8 @@ type SyncRequest struct {
 	Events          []Event `json:"events"`
 	Wait            bool    `json:"wait,omitempty"`
 	GrantedRights   *Rights `json:"grantedRights,omitempty"`
+	// Capabilities describe this polling binary, not a possibly stale report.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 type SyncResponse struct {
 	Capabilities  []string        `json:"capabilities,omitempty"`

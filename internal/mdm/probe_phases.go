@@ -6,6 +6,20 @@ import (
 )
 
 const ProbePhasesCapability = "vless_probe_phases_v2"
+const ProbeSequenceCapability = "vless_probe_sequence_v2"
+const ProbeSequenceKind = "vless_probe_sequence"
+
+func probeSequenceAllowed(b bindingState) bool {
+	if !probeAllowed(b) || !probePhasesAllowed(b) {
+		return false
+	}
+	for _, c := range b.Report.Capabilities {
+		if c == ProbeSequenceCapability {
+			return true
+		}
+	}
+	return false
+}
 
 type ProbePhase struct {
 	Network    string     `json:"network"`
@@ -31,7 +45,7 @@ func validProbe(p ProbeSnapshot) bool {
 	if p.Schema == 0 || p.Schema == 1 {
 		return len(p.Phases) == 0 && validLegacyProbe(p)
 	}
-	if p.Schema != 2 || p.Initiator != "local" || len(p.Rows) != 0 || len(p.Phases) < 1 || len(p.Phases) > 2 {
+	if p.Schema != 2 || len(p.Rows) != 0 || len(p.Phases) < 1 || len(p.Phases) > 2 {
 		return false
 	}
 	raw, e := json.Marshal(p)

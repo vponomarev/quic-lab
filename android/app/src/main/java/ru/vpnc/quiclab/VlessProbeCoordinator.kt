@@ -24,7 +24,7 @@ internal object VlessProbeCoordinator{
  fun busy()=lease!=null||sequence?.busy()==true
  fun results(c:Context):JSONObject{init(c);return store!!.all()}
  fun sources(c:Context)=VlessProbeSources.list(c)
- @Synchronized fun start(c:Context,id:String,action:String="start",previous:String="",initiator:String="local",runId:String=UUID.randomUUID().toString(),expected:String=""):String{
+ @Synchronized fun start(c:Context,id:String,action:String="start",previous:String="",initiator:String="local",runId:String=UUID.randomUUID().toString(),expected:String="",phased:Boolean=false,ownerState:MdmState?=null):String{
   init(c);if(busy()||engine!!.busy())return "busy"
   val prior=store!!.all();for(k in prior.keys())if(prior.getJSONObject(k).optString("runId")==runId)return "duplicate"
   val listed=sources(c)
@@ -40,7 +40,8 @@ internal object VlessProbeCoordinator{
    val failed=probeRetryIds(old);src.nodes.filter{it.id in failed}
   }else src.nodes
   if(nodes.isEmpty())return "nothing_to_retry"
-  if(initiator=="local")return startLocal(c,src,nodes,runId)
+  if(initiator=="local")return startSequence(c,src,nodes,runId)
+  if(phased){if(ownerState==null)return "permission_denied";return startSequence(c,src,nodes,runId,ownerState)}
   val selected=try{VlessProbeNetwork.acquire(c)}catch(_:Exception){return "no_network"}
   lease=selected;activeRun=runId;source=src;started=SystemClock.elapsedRealtime()
   val localGateway=src.nodes.firstOrNull()?.gateway
@@ -92,9 +93,12 @@ internal object VlessProbeCoordinator{
   val closing=natives.values.toList();val changed=engine?.cancel(id,reason)?:false
   if(changed){activeRun="";for(n in closing)runCatching{n.close()}};return changed
  }
- private fun startLocal(c:Context,src:ProbeSource,nodes:List<ProbeNode>,runId:String):String {
+ private fun startSequence(c:Context,src:ProbeSource,nodes:List<ProbeNode>,runId:String,owner:MdmState?=null):String {
   val first=VlessProbeNetwork.selectedKind(c)?:return "no_network"
-  val run=JSONObject().put("runId",runId).put("sourceId",src.id).put("fingerprint",src.fingerprint).put("initiator","local").put("startedAt",java.time.Instant.now().toString()).put("rows",JSONArray(nodes.map{it.publicRow()}))
+  val run=JSONObject().put("runId",runId).put("sourceId",src.id).put("fingerprint",src.fingerprint).put("initiator",if(owner==null)"local" else "mdm").put("startedAt",java.time.Instant.now().toString()).put("rows",JSONArray(nodes.map{it.publicRow()}))
+  if(owner!=null)run.put("ownerBinding",owner.binding?.id).put("ownerEpoch",owner.binding?.epoch).put("ownerGeneration",owner.localGeneration)
+  fun owns()=owner==null||VlessProbePolicy.owns(run,MdmStore(c).read())
+  if(!owns())return "permission_denied"
   activeRun=runId;started=SystemClock.elapsedRealtime()
   val serial=VlessProbeSequence{result->
    store!!.save(result)
@@ -108,6 +112,7 @@ internal object VlessProbeCoordinator{
    runCatching{
     if(!serial.active())return@runCatching
     val reason=when{
+     !owns()->"permission_denied"
      SystemClock.elapsedRealtime()-started>45*60*1000L->"interrupted"
      !foreground&&!LabVpnService.active&&!MdmService.foregroundReady->"interrupted"
      findProbeSource(sources(c),src.id)?.fingerprint!=src.fingerprint->"configuration_changed"
@@ -120,36 +125,36 @@ internal object VlessProbeCoordinator{
     }
    }
   },1,1,TimeUnit.SECONDS)}
-  serial.start(run,VlessProbePolicy.phasePlan(first)){kind->
+  serial.start(run,VlessProbePolicy.phasePlan(first),allowed=::owns){kind->
    block(kind).takeIf{it.isNotEmpty()}?.let{throw ProbePhaseSkipped(it)}
    val selected=try{VlessProbeNetwork.acquire(c,kind){
-    if(!serial.active())true else {block(kind).takeIf{it.isNotEmpty()}?.let{throw ProbePhaseSkipped(it)};false}
+    if(!serial.active()||!owns())true else {block(kind).takeIf{it.isNotEmpty()}?.let{throw ProbePhaseSkipped(it)};false}
    }}catch(e:ProbePhaseSkipped){throw e}catch(e:Exception){throw ProbePhaseSkipped(if(e.message=="budget")"budget" else "no_network")}
    lease=selected
    ProbePhase({index->
     val denied=block(kind,selected.budget).ifEmpty{if(VlessProbeNetwork.available(c,selected.network,kind))"" else "network_changed"}
     if(denied.isNotEmpty())JSONObject().put("outcome",denied)
-    else localProbe(c,runId,nodes[index],selected,index)
+    else localProbe(c,runId,nodes[index],selected,index,owner?.binding?.endpoint,::owns)
    },{try{selected.close()}finally{if(lease===selected)lease=null}})
   }
   return "queued"
  }
- private fun localProbe(c:Context,runId:String,n:ProbeNode,selected:ProbeNetworkLease,index:Int):JSONObject {
+ private fun localProbe(c:Context,runId:String,n:ProbeNode,selected:ProbeNetworkLease,index:Int,targetOrigin:String?=null,allowed:()->Boolean={true}):JSONObject {
   val deadline=SystemClock.elapsedRealtime()+20000
   var native:mobile.VLESSProbe?=null
   var alarm:java.util.concurrent.ScheduledFuture<*>?=null
   try {
-   if(activeRun!=runId)throw InterruptedException()
+   if(activeRun!=runId||!allowed())throw InterruptedException()
    val config=JSONObject(n.config.toString());val host=n.endpoint.substringBeforeLast(':').removeSurrounding("[","]");val port=n.endpoint.substringAfterLast(':')
-   val ip=selected.resolve(host,deadline);if(Thread.currentThread().isInterrupted)throw InterruptedException()
+   val ip=selected.resolve(host,deadline);if(Thread.currentThread().isInterrupted||!allowed())throw InterruptedException()
    config.put("Endpoint",if(ip.contains(':'))"[$ip]:$port" else "$ip:$port")
    native=mobile.Mobile.newVLESSProbe(config.toString(),selected.binder,selected.budget,selected.kind);natives["$runId:$index"]=native
-   if(activeRun!=runId||Thread.currentThread().isInterrupted)throw InterruptedException()
+   if(activeRun!=runId||Thread.currentThread().isInterrupted||!allowed())throw InterruptedException()
    alarm=timer?.schedule({native?.close()},(deadline-SystemClock.elapsedRealtime()).coerceAtLeast(1),TimeUnit.MILLISECONDS)
    val control=n.gateway?.optString("control_url").orEmpty()
-   val origin=if(control.startsWith("https://"))java.net.URI(control).let{"https://"+it.rawAuthority}else MdmStore(c).read().binding?.endpoint?:"https://quic-lab.vpnc.ru"
+   val origin=targetOrigin?:if(control.startsWith("https://"))java.net.URI(control).let{"https://"+it.rawAuthority}else MdmStore(c).read().binding?.endpoint?:"https://quic-lab.vpnc.ru"
    val options=JSONObject().put("target",origin.trimEnd('/')+"/api/v1/probe/echo")
-   if(control.startsWith("https://"))options.put("ca",n.gateway?.optString("ca").orEmpty())
+   if(targetOrigin==null&&control.startsWith("https://"))options.put("ca",n.gateway?.optString("ca").orEmpty())
    n.gateway?.let{options.put("gateway",it)}
    val result=JSONObject(native.run(options.toString()))
    if(SystemClock.elapsedRealtime()>=deadline)result.put("outcome","timeout")

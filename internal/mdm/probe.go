@@ -14,6 +14,7 @@ type ProbeSource struct {
 	Name        string `json:"name"`
 }
 type ProbeRequest struct {
+	Mode        string `json:"mode,omitempty"`
 	SourceID    string `json:"sourceId"`
 	Fingerprint string `json:"fingerprint"`
 	Action      string `json:"action"`
@@ -92,18 +93,17 @@ func (s *Store) QueueProbe(id, requestID string, r ProbeRequest, now time.Time) 
 	if !ok || !probeAllowed(b) {
 		return Command{}, ErrUnauthorized
 	}
+	if !oneOf(r.Mode, "", "phased") {
+		return Command{}, ErrInvalid
+	}
+	if r.Mode == "phased" && !probeSequenceAllowed(b) {
+		return Command{}, ErrUnauthorized
+	}
 	if !displayName(requestID, 128) || !oneOf(r.Action, "start", "retry", "cancel") || !probeSource(b, r.SourceID, r.Fingerprint) {
 		return Command{}, ErrInvalid
 	}
 	if r.Action != "start" && !displayName(r.RunID, 128) {
 		return Command{}, ErrInvalid
-	}
-	if r.Action != "start" {
-		for _, p := range b.Probes {
-			if p.RunID == r.RunID && p.Schema > 1 {
-				return Command{}, ErrInvalid
-			}
-		}
 	}
 	raw, _ := json.Marshal(r)
 	hash := digest(string(raw))
@@ -112,6 +112,19 @@ func (s *Store) QueueProbe(id, requestID string, r ProbeRequest, now time.Time) 
 			return Command{}, ErrConflict
 		}
 		return *old.Command, nil
+	}
+	if r.Action != "start" && r.Mode == "" {
+		for _, p := range b.Probes {
+			if p.RunID == r.RunID && p.Schema > 1 {
+				return Command{}, ErrInvalid
+			}
+		}
+	}
+	if r.Action != "start" && r.Mode == "phased" {
+		p, ok := b.Probes[r.SourceID]
+		if !ok || p.Schema != 2 || p.RunID != r.RunID || p.Fingerprint != r.Fingerprint {
+			return Command{}, ErrConflict
+		}
 	}
 	if len(b.Requests) >= 1000 || len(b.Audit) >= 10000 {
 		return Command{}, ErrLimit
@@ -123,6 +136,9 @@ func (s *Store) QueueProbe(id, requestID string, r ProbeRequest, now time.Time) 
 		return Command{}, ErrLimit
 	}
 	c := Command{ID: randomID(), BindingID: id, Epoch: b.Binding.Epoch, IssuedAt: now, ExpiresAt: now.Add(5 * time.Minute), Kind: "vless_probe", Probe: &r}
+	if r.Mode == "phased" {
+		c.Kind = ProbeSequenceKind
+	}
 	if b.Requests == nil {
 		b.Requests = map[string]requestRecord{}
 	}
@@ -181,9 +197,16 @@ func mergeProbe(b *bindingState, p ProbeSnapshot, now time.Time) error {
 		return ErrInvalid
 	}
 	if p.Initiator == "mdm" {
+		kind := "vless_probe"
+		if p.Schema == 2 {
+			if !probeSequenceAllowed(*b) {
+				return ErrUnauthorized
+			}
+			kind = ProbeSequenceKind
+		}
 		found := false
 		for _, record := range b.Requests {
-			if record.Command != nil && record.Command.ID == p.RunID && record.Command.Kind == "vless_probe" && record.Command.Epoch == b.Binding.Epoch && record.Command.Probe.SourceID == p.SourceID {
+			if record.Command != nil && record.Command.Probe != nil && record.Command.ID == p.RunID && record.Command.Kind == kind && record.Command.Epoch == b.Binding.Epoch && record.Command.Probe.SourceID == p.SourceID && record.Command.Probe.Fingerprint == p.Fingerprint && record.Command.Probe.Action != "cancel" {
 				found = true
 			}
 		}
@@ -239,6 +262,19 @@ func interruptRemoteProbes(b *bindingState, now time.Time) {
 		}
 		p.State = "interrupted"
 		p.FinishedAt = now
+		for kind, phase := range p.Phases {
+			if phase.State != "running" && phase.State != "queued" {
+				continue
+			}
+			phase.State = "interrupted"
+			phase.FinishedAt = &now
+			for i := range phase.Rows {
+				if phase.Rows[i].Outcome == "running" || phase.Rows[i].Outcome == "queued" {
+					phase.Rows[i].Outcome = "interrupted"
+				}
+			}
+			p.Phases[kind] = phase
+		}
 		for i := range p.Rows {
 			if p.Rows[i].Outcome == "running" || p.Rows[i].Outcome == "queued" {
 				p.Rows[i].Outcome = "interrupted"

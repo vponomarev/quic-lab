@@ -184,6 +184,24 @@ class MdmQuietTest {
   try{assertTrue(runCatching{session.sync()}.isFailure)}finally{session.close()}
   assertEquals("cancelled session registered and sent a new request",0,sends)
  }
+ @Test fun quietSequenceCommandsRejectStartButAllowCancellation()=fixture{c->
+  active(c);MdmStore(c).edit{it.put("rights",MdmRights(vpn=true,telemetry=true).json())}
+  VlessProbeStore(c).save(JSONObject("""{"schema":2,"runId":"local-sequence","sourceId":"source","fingerprint":"fp","initiator":"local","state":"finished","phases":{"wifi":{"network":"wifi","state":"finished","rows":[]}}}"""))
+  var polls=0
+  val controller=MdmController(MdmStore(c),{object:MdmGateway{
+   override fun post(b:MdmBinding,op:String,body:JSONObject,secret:String):JSONObject{
+    if(op=="report")return JSONObject().put("accepted",true)
+    polls++
+    val response=JSONObject("""{"version":1,"epoch":1,"serverTime":"2026-11-04T00:00:00Z","capabilities":["vless_probe_v1","vless_probe_phases_v2","vless_probe_sequence_v2"]}""")
+    if(polls==1){val commands=org.json.JSONArray();for(action in listOf("start","cancel"))commands.put(JSONObject().put("id","sequence-$action").put("bindingId","quiet-fixture").put("epoch",1).put("issuedAt","2026-11-04T00:00:00Z").put("expiresAt","2026-11-04T00:05:00Z").put("kind","vless_probe_sequence").put("probe",JSONObject().put("mode","phased").put("action",action).put("sourceId","source").put("fingerprint","fp").put("runId","local-sequence")));response.put("commands",commands)}
+    else {val events=body.getJSONArray("events").toString();assertTrue(events.contains("background_restricted"));assertTrue(events.contains("not_running"))}
+    return response
+   }
+   override fun close(){}
+  }},{})
+  val session=MdmRuntime.session(c,quiet=true,selectedController=controller)!!
+  try{session.sync()}finally{session.close()};assertEquals(2,polls)
+ }
  @Test fun quietPassAllowsAuthorizedProbeCancellation()=fixture{c->
   active(c);MdmStore(c).edit{it.put("rights",MdmRights(vpn=true,telemetry=true).json())}
   var polls=0

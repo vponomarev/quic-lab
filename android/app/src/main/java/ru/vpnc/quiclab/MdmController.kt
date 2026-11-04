@@ -150,6 +150,7 @@ internal class MdmController(
     store.edit{it.put("server_research_scope_v1",response.researchScopeSupported).put("server_vless_group_v1",response.vlessGroupSupported).put("server_vless_relay_v1",response.vlessRelaySupported).put("server_vless_probe_v1",response.vlessProbeSupported).put(MdmGroupCompatibility.SERVER_FLAG,response.automaticGroupsSupported)}
     store.edit{it.put(MdmBackground.SERVER_FLAG,response.quietModeSupported)}
     store.edit{it.put(MdmProbeReport.SERVER_FLAG,response.probePhasesSupported)}
+    store.edit{it.put(MdmProbeProtocol.SERVER_FLAG,response.probeSequenceSupported)}
     consume(permitted,response)
    }
   }

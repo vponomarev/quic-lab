@@ -2,6 +2,7 @@ package mdm
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 )
 
@@ -188,10 +189,10 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 			return SyncResponse{}, e
 		}
 	}
-	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1", "vless_relay_v1", "vless_probe_v1", AutomaticGroupsCapability, "mdm_quiet_v1", ProbePhasesCapability}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
+	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1", "vless_relay_v1", "vless_probe_v1", AutomaticGroupsCapability, "mdm_quiet_v1", ProbePhasesCapability, ProbeSequenceCapability}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
 	filtered := out.Commands[:0]
 	for _, c := range out.Commands {
-		if c.Kind != "vless_probe" || probeAllowed(b) {
+		if (c.Kind != "vless_probe" || probeAllowed(b)) && (c.Kind != ProbeSequenceKind || (probeSequenceAllowed(b) && slices.Contains(req.Capabilities, ProbeSequenceCapability))) {
 			filtered = append(filtered, c)
 		}
 	}

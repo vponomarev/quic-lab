@@ -13,31 +13,36 @@ internal class VlessProbeSequence(private val save:(JSONObject)->Unit) {
  fun busy()=running
  @Synchronized fun snapshot():JSONObject?=value?.let{JSONObject(it.toString())}
  @Synchronized fun active()=value?.optString("state")=="running"
- @Synchronized fun start(run:JSONObject,kinds:List<String>,acquire:(String)->ProbePhase):Boolean {
+ @Synchronized fun start(run:JSONObject,kinds:List<String>,allowed:()->Boolean={true},acquire:(String)->ProbePhase):Boolean {
   if(running||kinds.isEmpty()||kinds.size>2||kinds.distinct().size!=kinds.size||run.getJSONArray("rows").length() !in 1..256)return false
   value=JSONObject(run.toString()).put("schema",2).put("state","running").put("sequence",0)
   val phases=JSONObject()
   for(kind in kinds)phases.put(kind,JSONObject().put("network",kind).put("state","queued").put("rows",org.json.JSONArray(run.getJSONArray("rows").toString())))
   value!!.put("phases",phases);running=true;publish()
+  fun permitted():Boolean {
+   if(!active())return false
+   if(runCatching{allowed()}.getOrDefault(false))return true
+   cancel(run.getString("runId"),"permission_denied");return false
+  }
   Thread({
    try {
     for(kind in kinds) {
-     if(!active())break
+     if(!permitted())break
      var phase:ProbePhase?=null
      try {
       phase=acquire(kind)
-      if(!active())break
+      if(!permitted())break
       val phaseRun=synchronized(this){JSONObject(run.toString()).put("network",kind).put("state","running").put("rows",org.json.JSONArray(phases.getJSONObject(kind).getJSONArray("rows").toString()))}
       val current=VlessProbeEngine{result->synchronized(this){if(active()){
        phases.put(kind,JSONObject(result.toString()));value!!.put("network",kind).put("rows",result.getJSONArray("rows"));publish()
       }}}
       engine=current
-      current.start(phaseRun,phase.work)
+      current.start(phaseRun){index->if(!permitted())JSONObject().put("outcome","permission_denied")else phase.work(index).also{permitted()}}
       if(!active())current.cancel(run.getString("runId"))
       // Drain even workers which take time to honor cancellation before releasing the lease.
       while(current.busy())current.awaitStopped()
      } catch(e:Exception) {
-      synchronized(this){if(active()){
+      if(permitted())synchronized(this){if(active()){
        val reason=(e as? ProbePhaseSkipped)?.reason?:"no_network"
        val result=phases.getJSONObject(kind).put("state","skipped").put("reason",reason)
        val rows=result.getJSONArray("rows");for(i in 0 until rows.length())rows.getJSONObject(i).put("outcome",reason)
@@ -45,7 +50,7 @@ internal class VlessProbeSequence(private val save:(JSONObject)->Unit) {
       }}
      } finally {engine=null;runCatching{phase?.close()}}
     }
-   } finally {synchronized(this){try{if(active()){value!!.put("state","finished").put("finishedAt",java.time.Instant.now().toString());publish()}}finally{running=false}}}
+   } finally {permitted();synchronized(this){try{if(active()){value!!.put("state","finished").put("finishedAt",java.time.Instant.now().toString());publish()}}finally{running=false}}}
   },"probe-sequence").start()
   return true
  }

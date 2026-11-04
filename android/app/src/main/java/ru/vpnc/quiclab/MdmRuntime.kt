@@ -71,7 +71,7 @@ internal object MdmRuntime {
     if(desired!=null){val result=MdmApplyCoordinator(context).apply(state,desired);applyFailed=!result.configurationApplied;MdmVpnControl.event(context,"config_result",if(result.configurationApplied)"applied" else result.errorCode,result.revision);if(result.configurationApplied && result.errorCode.isNotEmpty())MdmVpnControl.event(context,"config_vpn_result",result.errorCode,result.revision)}
     for(command in response.commands){
      checkActive()
-     if(command.kind=="vless_probe")MdmProbeControl.execute(context,state,command,response.serverTime,allowStart=!quiet)
+     if(command.kind in listOf("vless_probe",MdmProbeProtocol.KIND))MdmProbeControl.execute(context,state,command,response.serverTime,allowStart=!quiet)
      else MdmVpnControl.execute(context,state,command,response.serverTime,received)
     }
     checkActive()

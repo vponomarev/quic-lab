@@ -11,8 +11,8 @@ const elements=Object.fromEntries([...html.matchAll(/<(\w+)[^>]*\sid=\x22([^\x22
 elements.probe.dataset={base:'/',id:'device',csrf:'fixture'};elements.filter.value='all';elements.sort.value='order';
 const row={id:'node',name:'Node',endpoint:'example.org:443',outcome:'success',relayOutcome:'not_applicable'};
 let state={binding:{active:true,grantedRights:{vpn:true,telemetry:true}},report:{capabilities:['vless_probe_v1','vless_probe_phases_v2'],probeSources:[{id:'source',name:'Source',fingerprint:'fp'}]},probes:{source:{schema:2,runId:'run',network:'cell',initiator:'local',state:'finished',startedAt:'2026-11-04T00:00:00Z',phases:{wifi:{network:'wifi',state:'finished',rows:[row]},cell:{network:'cell',state:'skipped',reason:'permission_denied',rows:[{...row,outcome:'permission_denied'}]}}}}};
-let reload;
-const context={document:{querySelector:s=>elements[s.slice(1)],createElement:t=>new Element(t),addEventListener(){},hidden:false},fetch:async()=>({ok:true,json:async()=>state}),setInterval:fn=>{reload=fn},URLSearchParams,crypto:{randomUUID:()=> 'request'},Date};
+let reload;const posted=[];
+const context={document:{querySelector:s=>elements[s.slice(1)],createElement:t=>new Element(t),addEventListener(){},hidden:false},fetch:async(url,options)=>{if(options?.body)posted.push(options.body);return {ok:true,json:async()=>state}},setInterval:fn=>{reload=fn},URLSearchParams,crypto:{randomUUID:()=> 'request'},Date};
 vm.runInNewContext(fs.readFileSync(__dirname+'/mdm_probe.js','utf8'),context);
 const text=e=>e.textContent+e.children.map(text).join(' ');
 (async()=>{
@@ -28,5 +28,11 @@ const text=e=>e.textContent+e.children.map(text).join(' ');
  elements.filter.value='pending';elements.filter.onchange();assert.equal(elements.rows.children.length,1,'permission skip is untested');
  state.probes.source.state='running';await reload();assert.equal(elements.cancel.disabled,true,'v1 cancel cannot address v2 local run');
  state.probes.source={runId:'legacy',state:'finished',network:'wifi',rows:[row]};elements.filter.value='all';await reload();assert.equal(elements.network.hidden,true);assert.equal(elements.retry.disabled,false);assert.match(text(elements.rows),/Работает/);
- console.log('PASS phase selection, refresh, neutral filters, command scope and legacy rendering');
+  assert.equal(elements['start-phased'].disabled,true,'old client cannot start sequence');
+ state.report.capabilities.push('vless_probe_sequence_v2');await reload();assert.equal(elements['start-phased'].disabled,false);
+ await elements['start-phased'].onclick();assert.equal(posted.at(-1).get('mode'),'phased');assert.equal(posted.at(-1).get('action'),'start');
+ state.probes.source={schema:2,runId:'local-v2',state:'running',network:'wifi',phases:{wifi:{network:'wifi',state:'running',rows:[row]}}};await reload();assert.equal(elements.cancel.disabled,false);
+ await elements.cancel.onclick();assert.equal(posted.at(-1).get('mode'),'phased');assert.equal(posted.at(-1).get('runId'),'local-v2');
+ state.probes.source.state='finished';await reload();assert.equal(elements.retry.disabled,false);await elements.retry.onclick();assert.equal(posted.at(-1).get('mode'),'phased');assert.equal(posted.at(-1).get('action'),'retry');
+ console.log('PASS phase view, negotiated start/retry/cancel payloads, legacy controls');
 })().catch(e=>{console.error(e);process.exitCode=1});
