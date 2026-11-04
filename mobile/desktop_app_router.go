@@ -20,7 +20,10 @@ import (
 type DesktopAppRouter struct {
 	root                                                          *Gateway
 	vpn, direct                                                   *multiProfile
-	policy                                                        *approuting.TUNCompiled
+	policy                                                        atomic.Pointer[approuting.TUNCompiled]
+	change                                                        sync.Mutex
+	retiring                                                      *multiProfile
+	retiredTx, retiredRx, retiredTCP, retiredUDP                  int64
 	owner                                                         approuting.OwnerResolver
 	ctx                                                           context.Context
 	cancel                                                        context.CancelFunc
@@ -39,7 +42,60 @@ func NewDesktopAppRouter(policy *approuting.TUNCompiled, owner approuting.OwnerR
 	ctx, cancel := context.WithCancel(context.Background())
 	direct := NewGateway(nil)
 	direct.direct = protectedDialer{binder}
-	return &DesktopAppRouter{root: NewGateway(sink), vpn: newMultiProfile(vpn), direct: newMultiProfile(direct), policy: policy, owner: owner, ctx: ctx, cancel: cancel, pending: make(chan struct{}, 64)}, nil
+	r := &DesktopAppRouter{root: NewGateway(sink), vpn: newMultiProfile(vpn), direct: newMultiProfile(direct), owner: owner, ctx: ctx, cancel: cancel, pending: make(chan struct{}, 64)}
+	r.policy.Store(policy)
+	return r, nil
+}
+
+// UpdatePolicy affects new flow selections. Existing handlers retain their exit.
+func (r *DesktopAppRouter) UpdatePolicy(p *approuting.TUNCompiled) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || p == nil {
+		return errors.New("router closed or invalid policy")
+	}
+	r.policy.Store(p)
+	return nil
+}
+
+// ReplaceVPN retires only VPN handlers. Nil blocks tunnel/DNS flows. Callers
+// own gateway lifetime; direct handlers and TUN survive replacement.
+func (r *DesktopAppRouter) ReplaceVPN(g *Gateway) error {
+	r.change.Lock()
+	defer r.change.Unlock()
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return errors.New("router closed")
+	}
+	old := r.vpn
+	r.vpn = nil
+	r.retiring = old
+	if g != nil {
+		r.vpn = newMultiProfile(g)
+	}
+	r.mu.Unlock()
+	if old != nil {
+		old.stop()
+	}
+	r.mu.Lock()
+	if old != nil {
+		r.retiredTx += old.h.tx.Load()
+		r.retiredRx += old.h.rx.Load()
+		r.retiredTCP += old.h.tcpFlows.Load()
+		r.retiredUDP += old.h.udpFlows.Load()
+	}
+	r.retiring = nil
+	r.mu.Unlock()
+	return nil
+}
+func (r *DesktopAppRouter) vpnHandler() *tunHandler {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.vpn == nil {
+		return nil
+	}
+	return r.vpn.h
 }
 
 func (r *DesktopAppRouter) Attach(link stack.LinkEndpoint) error {
@@ -97,7 +153,7 @@ func (r *DesktopAppRouter) dispatch(f approuting.FlowKey, forward func(*tunHandl
 		// Saturation is unknown ownership, not permission to silently change exit.
 		if f.Destination.Port() == 53 {
 			r.dns.Add(1)
-			forward(r.vpn.h)
+			forward(r.vpnHandler())
 			return
 		}
 		forward(r.choose(approuting.Attribution{Quality: approuting.Unknown, Reason: "overloaded"}))
@@ -115,7 +171,10 @@ func (r *DesktopAppRouter) selectFlow(f approuting.FlowKey) *tunHandler {
 	// Client may own the socket on behalf of an unrelated originating process.
 	if f.Destination.Port() == 53 {
 		r.dns.Add(1)
-		return r.vpn.h
+		return r.vpnHandler()
+	}
+	if !r.policy.Load().Enabled() {
+		return r.vpnHandler()
 	}
 	a := r.owner.Resolve(r.ctx, f)
 	if r.ctx.Err() != nil {
@@ -138,9 +197,9 @@ func (r *DesktopAppRouter) choose(a approuting.Attribution) *tunHandler {
 	if a.Reason == "timeout" {
 		r.timedOut.Add(1)
 	}
-	switch r.policy.Decide(a) {
+	switch r.policy.Load().Decide(a) {
 	case approuting.Tunnel:
-		return r.vpn.h
+		return r.vpnHandler()
 	case approuting.Direct:
 		return r.direct.h
 	default:
@@ -149,21 +208,39 @@ func (r *DesktopAppRouter) choose(a approuting.Attribution) *tunHandler {
 	}
 }
 func (r *DesktopAppRouter) Snapshot() approuting.Statistics {
-	return approuting.Statistics{Enabled: true, DirectTxBytes: uint64(r.direct.h.tx.Load()), DirectRxBytes: uint64(r.direct.h.rx.Load()), Resolved: r.resolved.Load(), Unknown: r.unknown.Load(), Shared: r.shared.Load(), Blocked: r.blocked.Load(), Overloaded: r.overloaded.Load(), TimedOut: r.timedOut.Load(), DNS: r.dns.Load()}
+	return approuting.Statistics{Enabled: r.policy.Load().Enabled(), DirectTxBytes: uint64(r.direct.h.tx.Load()), DirectRxBytes: uint64(r.direct.h.rx.Load()), Resolved: r.resolved.Load(), Unknown: r.unknown.Load(), Shared: r.shared.Load(), Blocked: r.blocked.Load(), Overloaded: r.overloaded.Load(), TimedOut: r.timedOut.Load(), DNS: r.dns.Load()}
 }
 func (r *DesktopAppRouter) emitTraffic() {
-	h := r.vpn.h
-	r.root.emit("traffic", map[string]any{"tx_bytes": h.tx.Load(), "rx_bytes": h.rx.Load(), "tcp_flows": h.tcpFlows.Load(), "udp_flows": h.udpFlows.Load()})
+	tx, rx, tcp, udp := r.vpnTotals()
+	r.root.emit("traffic", map[string]any{"tx_bytes": tx, "rx_bytes": rx, "tcp_flows": tcp, "udp_flows": udp})
+}
+func (r *DesktopAppRouter) vpnTotals() (tx, rx, tcp, udp int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, rx, tcp, udp = r.retiredTx, r.retiredRx, r.retiredTCP, r.retiredUDP
+	for _, p := range []*multiProfile{r.vpn, r.retiring} {
+		if p != nil {
+			tx += p.h.tx.Load()
+			rx += p.h.rx.Load()
+			tcp += p.h.tcpFlows.Load()
+			udp += p.h.udpFlows.Load()
+		}
+	}
+	return
 }
 func (r *DesktopAppRouter) Close() {
 	r.once.Do(func() {
+		r.change.Lock()
+		defer r.change.Unlock()
 		r.mu.Lock()
 		r.closed = true
 		r.cancel()
 		r.mu.Unlock()
 		r.wg.Wait()
 		r.direct.stop()
-		r.vpn.stop()
+		if r.vpn != nil {
+			r.vpn.stop()
+		}
 		r.emitTraffic()
 		r.root.Stop()
 	})

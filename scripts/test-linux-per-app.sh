@@ -12,7 +12,7 @@ before=$(ip route get "$peer")
 cleanup(){
  result=$?
  for p in "$ap" "$cp" "$sp" "$ep"; do
-  [ -z "$p" ] || { kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; }
+  [ -z "$p" ] || { kill -CONT "$p" 2>/dev/null || true; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; }
  done
  if [ "$result" != 0 ]; then
   for log in "$work"/*.log; do [ ! -f "$log" ] || cat "$log"; done
@@ -46,12 +46,13 @@ def tcp(s):
   c,peer=s.accept()
   def reply(c,peer):
    with c:
-    payload=b''
-    while len(payload)<750:
-     part=c.recv(750-len(payload))
-     if not part: break
-     payload+=part
-    c.sendall(peer[0].encode()+b'|'+payload)
+    while True:
+     payload=b''
+     while len(payload)<750:
+      part=c.recv(750-len(payload))
+      if not part:return
+      payload+=part
+     c.sendall(peer[0].encode()+b'|'+payload)
   threading.Thread(target=reply,args=(c,peer),daemon=True).start()
 def udp(s):
  while True:
@@ -99,6 +100,63 @@ for transport in ${VPN_PROBE_TRANSPORTS:-quic https awg vless vless-ws}; do
  for i in $(seq 1 100); do [ -f "$work/client.json" ] && break; sleep .1; done
  [ -f "$work/client.json" ]; cp "$work/client.json" "$work/base.json"
  vpn_source=192.0.2.2; [ "$transport" != awg ] || vpn_source=10.55.0.2
+ if [ "${VPN_PROBE_LIVE:-0}" = 1 ]; then
+  configure only_selected block; start_client
+  tun_before=$(ip -n "$client" -o link show | sed -n 's/.*: \(ql[0-9a-f]\{10\}\):.*/\1/p')
+  rm -f "$work/hold.count" "$work/hold.stop"
+  QUIC_APP_HOLD_DIR="$work" ip netns exec "$client" "$work/app-direct" -test.v -test.run '^TestLinuxPersistentDirectProbe$' -test.timeout=210s > "$work/hold.log" 2>&1 & ap=$!
+  for i in $(seq 1 100); do [ -s "$work/hold.count" ] && break; sleep .05; done
+  [ -s "$work/hold.count" ]
+  # New app-direct flows switch to VPN while its two old sockets stay direct.
+  python3 - "$work/client.json" "$work/app-direct" <<'PY'
+import json,sys
+p=sys.argv[1];d=json.load(open(p));d['app_routing']['only']=[sys.argv[2]];json.dump(d,open(p,'w'))
+PY
+  kill -HUP "$cp"
+  for i in $(seq 1 100); do grep -q '"status":"applied"' "$work/client.log" && break; sleep .05; done
+  grep -q '"status":"applied"' "$work/client.log"
+  probe app-direct "$vpn_source"
+  python3 - "$work/client.json" <<'PY'
+import json,sys
+p=sys.argv[1];d=json.load(open(p));d['targets']=['192.0.2.3/32'];json.dump(d,open(p,'w'))
+PY
+  kill -HUP "$cp"
+  for i in $(seq 1 100); do grep -q '"status":"rejected"' "$work/client.log" && break; sleep .05; done
+  grep -q '"status":"rejected"' "$work/client.log"
+  probe app-direct "$vpn_source"
+  applied=$(grep -c '"status":"applied"' "$work/client.log")
+  configure only_selected block; kill -HUP "$cp"
+  for i in $(seq 1 100); do [ "$(grep -c '"status":"applied"' "$work/client.log")" -gt "$applied" ] && break; sleep .05; done
+  [ "$(grep -c '"status":"applied"' "$work/client.log")" -gt "$applied" ]
+  case "$transport" in quic|https)
+   kill -STOP "$sp"
+   for i in $(seq 1 2200); do grep -q '"event":"network","state":"reconnecting"' "$work/client.log" && break; kill -0 "$ap"; sleep .05; done
+   grep -q '"event":"network","state":"reconnecting"' "$work/client.log"
+   before_count=$(cat "$work/hold.count");sleep .5
+   [ "$(cat "$work/hold.count")" -gt "$before_count" ]
+   probe app-vpn block
+   if [ "${VPN_PROBE_CANCEL_RECOVERY:-0}" = 1 ]; then
+    touch "$work/hold.stop";wait "$ap";ap=
+    stop_started=$SECONDS
+    stop_client
+    [ "$((SECONDS-stop_started))" -le 5 ]
+    echo "$transport: Stop during failed VPN recovery bounded, TUN/routes cleaned PASS"
+    kill -CONT "$sp";kill -TERM "$sp";wait "$sp";sp=
+    continue
+   fi
+   kill -CONT "$sp"
+   for i in $(seq 1 1200); do grep -q '"event":"network","state":"ready"' "$work/client.log" && break; kill -0 "$ap"; sleep .05; done
+   grep -q '"event":"network","state":"ready"' "$work/client.log"
+   probe app-vpn "$vpn_source"
+   echo "$transport: same direct TCP/UDP sockets survived VPN outage/recovery PASS";;
+  esac
+  [ "$tun_before" = "$(ip -n "$client" -o link show | sed -n 's/.*: \(ql[0-9a-f]\{10\}\):.*/\1/p')" ]
+  touch "$work/hold.stop";wait "$ap";ap=
+  stop_client
+  echo "$transport: hot policy, rejected non-policy reload, pinned flows and unchanged TUN PASS"
+  kill -TERM "$sp";wait "$sp";sp=
+  continue
+ fi
  for mode in only_selected all_except_selected; do
   configure "$mode" block
   start_client

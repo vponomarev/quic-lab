@@ -6,10 +6,13 @@ public partial class SettingsWindow {
  ApplicationSelection applications=new();
  AppRoutingPolicy? originalAppPolicy;
  bool appRoutingSupported,appsTouched;
+ bool liveRoutingSupported;
+ string originalConnection="";
  public void SelectApplicationsTab()=>ApplicationsTab.IsSelected=true;
  void LoadAppRouting(AppRoutingPolicy? policy,string[]? capabilities){
   originalAppPolicy=policy;applications=ApplicationSelection.FromPolicy(policy);appsTouched=false;
   appRoutingSupported=capabilities?.Contains("app-routing-tun-v2")==true;
+  liveRoutingSupported=capabilities?.Contains("app-routing-live-v1")==true;
   AppRoutingEnabled.IsEnabled=EditApplicationsButton.IsEnabled=UnknownAppChoice.IsEnabled=appRoutingSupported;
   AppRoutingEnabled.IsChecked=policy?.Enabled==true;
   UnknownAppChoice.SelectedIndex=policy?.Unknown switch {"direct"=>1,"block"=>2,_=>0};
@@ -27,7 +30,8 @@ public partial class SettingsWindow {
   var p=applications.ToPolicy(true,"tunnel");
   string mode=p.Mode==ApplicationSelection.OnlyMode?$"VPN только для выбранных ({p.Only.Length}); остальные — напрямую.":$"VPN для всех, кроме выбранных ({p.Except.Length}); исключённые — напрямую.";
   string capture=RoutingModeBox.SelectedIndex==0?"Область захвата: весь IPv4, кроме локальных сетей, специальных маршрутов и адреса VPN-сервера.":"Область захвата: только подсети из вкладки «Маршрутизация». Остальные адреса не зависят от списков приложений.";
-  AppRoutingPreview.Text=(AppRoutingEnabled.IsChecked==true?mode:"Маршрутизация по приложениям выключена; списки сохраняются.")+"\n"+capture+"\nDNS в захваченной области — через VPN для всех приложений. IPv6 не изменяется. Direct проходит через локальный движок. При переподключении службы прерываются и VPN-, и direct-потоки; при остановке обычная маршрутизация восстанавливается.";
+  string live=liveRoutingSupported?"Изменение только правил применяется к новым соединениям без разрыва открытых. При автоматическом выборе интерфейса восстановление VPN на прежней сети сохраняет direct. ":"";
+  AppRoutingPreview.Text=live+(AppRoutingEnabled.IsChecked==true?mode:"Маршрутизация по приложениям выключена; списки сохраняются.")+"\n"+capture+"\nDNS в захваченной области — через VPN для всех приложений. IPv6 не изменяется. Direct проходит через локальный движок. При явном переподключении или смене физической сети прерываются и VPN-, и direct-потоки; при остановке обычная маршрутизация восстанавливается.";
  }
  void EditApplicationsClick(object sender,RoutedEventArgs e){
   var editor=new ApplicationSelectionWindow(applications){Owner=this};editor.ShowDialog();

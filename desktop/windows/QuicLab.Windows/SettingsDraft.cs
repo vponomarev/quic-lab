@@ -26,6 +26,7 @@ public interface ISettingsClient {Task<SettingsReply> SendSettingsAsync(string c
 public static class SettingsDraft {
  public static readonly JsonSerializerOptions Json=new(){PropertyNamingPolicy=JsonNamingPolicy.CamelCase,PropertyNameCaseInsensitive=true};
  public static string Fingerprint(SettingsChange change)=>JsonSerializer.Serialize(change,Json);
+ public static string ConnectionFingerprint(SettingsChange change){var node=JsonSerializer.SerializeToNode(change.Settings,Json)!.AsObject();node.Remove("app_routing");return change.ReplaceKey+":"+node.ToJsonString();}
  public static string? ValidateRoutes(string[] rows,string endpoint){
   if(rows.Length is <1 or >256)return "Добавьте от 1 до 256 подсетей.";
   var nets=new List<(uint Net,uint Mask)>();

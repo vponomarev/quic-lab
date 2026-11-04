@@ -10,6 +10,7 @@ import (
 	"quiclab/internal/vpnmodel"
 	"reflect"
 	"strconv"
+	"sync/atomic"
 )
 
 // Settings supports selected subnets or full IPv4. Missing modes preserve legacy routing.
@@ -96,13 +97,17 @@ type Engine struct {
 	g       Gateway
 	link    Link
 	started bool
+	policy  atomic.Pointer[approuting.TUNPolicy]
 }
 
 func New(s Settings, p Platform, g Gateway) *Engine {
 	s.Targets = append([]string(nil), s.Targets...)
 	s.AppRouting = s.AppRouting.Clone()
-	return &Engine{s: s, p: p, g: g}
+	e := &Engine{s: s, p: p, g: g}
+	e.policy.Store(s.AppRouting.Clone())
+	return e
 }
+func (e *Engine) settings() Settings { s := e.s; s.AppRouting = e.policy.Load().Clone(); return s }
 func (e *Engine) Config() vpnclient.Config {
 	return vpnclient.Config{Revision: 1, Profiles: vpnmodel.Config{Version: 1, Exits: []vpnmodel.Exit{{ID: "windows", Name: "Windows MVP", Kind: "standalone"}}, Profiles: []vpnmodel.Profile{{ID: "windows", ExitID: "windows", Transport: e.s.Transport, Endpoint: e.s.Endpoint, Mode: "auto", PoolSize: 1}}}}
 }
@@ -110,18 +115,18 @@ func (e *Engine) Start(ctx context.Context, c vpnclient.Config) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := e.s.Validate(); err != nil {
+	if err := e.settings().Validate(); err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(c, e.Config()) || e.link != nil {
 		return errors.New("configuration mismatch or already running")
 	}
-	effective := e.s
+	effective := e.settings()
 	if resolver, ok := e.p.(interface {
 		Resolve(context.Context, Settings) (Settings, error)
 	}); ok {
 		var err error
-		effective, err = resolver.Resolve(ctx, e.s)
+		effective, err = resolver.Resolve(ctx, effective)
 		if err != nil {
 			return err
 		}
@@ -166,7 +171,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 
 func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
 	info := vpnclient.RuntimeInfo{RoutingMode: e.s.RoutingMode, Name: e.s.Name, Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
-	if e.s.AppRouting != nil && e.s.AppRouting.Enabled {
+	if p := e.policy.Load(); p != nil && p.Enabled {
 		info.AppRouting = &approuting.Statistics{Enabled: true}
 	}
 	if p, ok := e.g.(interface{ AppRoutingSnapshot() *approuting.Statistics }); ok {
@@ -181,7 +186,7 @@ func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
 }
 
 func (e *Engine) ValidateConfig(c vpnclient.Config) error {
-	if e.s.Validate() != nil || !reflect.DeepEqual(c, e.Config()) {
+	if e.settings().Validate() != nil || !reflect.DeepEqual(c, e.Config()) {
 		return vpnclient.ErrInvalidConfig
 	}
 	return nil

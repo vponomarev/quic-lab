@@ -3,6 +3,7 @@ package windowsclient
 import (
 	"context"
 	"errors"
+	"quiclab/internal/approuting"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/windowsengine"
 	"sync"
@@ -35,6 +36,7 @@ type SettingsManager struct {
 	factory    BackendFactory
 	validate   func(windowsengine.Settings) error
 	controller *vpnclient.Controller
+	backend    vpnclient.Backend
 	config     vpnclient.Config
 	active     uint64
 	cancel     context.CancelFunc
@@ -71,7 +73,7 @@ func NewSettingsManager(store SettingsStore, factory BackendFactory, validators 
 		return nil, errors.New("invalid_config")
 	}
 	d.Settings = cloneSettings(d.Settings)
-	return &SettingsManager{gate: make(chan struct{}, 1), doc: *d, store: store, factory: factory, validate: validate, controller: vpnclient.NewController(b), config: c}, nil
+	return &SettingsManager{gate: make(chan struct{}, 1), doc: *d, store: store, factory: factory, validate: validate, controller: vpnclient.NewController(b), backend: b, config: c}, nil
 }
 func (m *SettingsManager) Read() SettingsView {
 	m.mu.RLock()
@@ -212,6 +214,34 @@ func (m *SettingsManager) Apply(ctx context.Context, c SettingsChange) error {
 	ctrl := m.controller
 	m.mu.RUnlock()
 	state := ctrl.Snapshot().State
+	if state == vpnclient.Running && !c.Reconnect {
+		m.mu.RLock()
+		previous, backend := m.doc.Settings, m.backend
+		m.mu.RUnlock()
+		if windowsengine.SameConnectionSettings(previous, s) {
+			if updater, ok := backend.(interface {
+				ApplyAppRouting(context.Context, *approuting.TUNPolicy, func() error) error
+			}); ok {
+				d := SettingsDocument{Revision: c.ExpectedRevision + 1, Settings: s}
+				if d.Revision == 0 {
+					return errors.New("revision_conflict")
+				}
+				if err := updater.ApplyAppRouting(run, s.AppRouting, func() error {
+					if err := m.store.Save(run, d); err != nil {
+						return errors.New("config_store_failed")
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+				m.mu.Lock()
+				m.doc = d
+				m.active = d.Revision
+				m.mu.Unlock()
+				return nil
+			}
+		}
+	}
 	if state != vpnclient.Stopped && !c.Reconnect {
 		return errors.New("stop_before_apply")
 	}
@@ -228,6 +258,7 @@ func (m *SettingsManager) Apply(ctx context.Context, c SettingsChange) error {
 	m.mu.Lock()
 	m.doc = d
 	m.controller = vpnclient.NewController(b)
+	m.backend = b
 	m.config = cfg
 	m.active = 0
 	ctrl = m.controller

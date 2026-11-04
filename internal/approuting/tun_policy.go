@@ -31,6 +31,8 @@ type TUNCompiled struct {
 	unknown      Decision
 }
 
+func (c *TUNCompiled) Enabled() bool { return c != nil && c.enabled }
+
 func pathKey(s string) (string, bool) {
 	if len(s) < 7 || len(s) > 32760 || !((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z')) || s[1:3] != `:\` || !strings.EqualFold(s[len(s)-4:], ".exe") {
 		return "", false

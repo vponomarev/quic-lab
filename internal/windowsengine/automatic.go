@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"quiclab/internal/approuting"
 	"quiclab/internal/vpnclient"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,12 +39,17 @@ type Automatic struct {
 	info       vpnclient.RuntimeInfo
 	remaining  ManagedEngine
 	cleanupErr error
+	op         chan struct{}
+	current    ManagedEngine
+	policy     atomic.Pointer[approuting.TUNPolicy]
 }
 
 func NewAutomatic(s Settings, d func(context.Context, Settings) (Uplink, error), f func(Settings) ManagedEngine, w func(context.Context) (<-chan struct{}, func(), error), interval time.Duration) *Automatic {
 	s.Targets = append([]string(nil), s.Targets...)
 	s.AppRouting = s.AppRouting.Clone()
-	return &Automatic{s: s, discover: d, factory: f, watch: w, interval: interval, info: New(s, nil, nil).RuntimeInfo()}
+	b := &Automatic{s: s, discover: d, factory: f, watch: w, interval: interval, op: make(chan struct{}, 1), info: New(s, nil, nil).RuntimeInfo()}
+	b.policy.Store(s.AppRouting.Clone())
+	return b
 }
 func (b *Automatic) Config() vpnclient.Config { return New(b.s, nil, nil).Config() }
 func (b *Automatic) ValidateConfig(c vpnclient.Config) error {
@@ -63,7 +70,7 @@ func (b *Automatic) RuntimeInfo() vpnclient.RuntimeInfo {
 	return v
 }
 func (b *Automatic) set(state string, e ManagedEngine, index uint32) {
-	v := New(b.s, nil, nil).RuntimeInfo()
+	v := New(b.settings(), nil, nil).RuntimeInfo()
 	if e != nil {
 		v = e.RuntimeInfo()
 	}
@@ -146,9 +153,12 @@ func (b *Automatic) loop(ctx context.Context, done chan struct{}) {
 			return e
 		}
 		engine = nil
+		b.current = nil
 		return nil
 	}
 	defer func() {
+		b.op <- struct{}{}
+		defer func() { <-b.op }()
 		e := cleanup()
 		b.mu.Lock()
 		b.remaining = engine
@@ -159,13 +169,31 @@ func (b *Automatic) loop(ctx context.Context, done chan struct{}) {
 		}
 	}()
 	reconcile := func() bool {
+		if b.lockOperation(ctx) != nil {
+			return false
+		}
+		defer func() { <-b.op }()
 		query, cancel := context.WithTimeout(ctx, 10*time.Second)
 		u, err := b.discover(query, b.s)
 		cancel()
 		raw, _ := json.Marshal(u)
 		next := string(raw)
 		if err == nil && engine != nil && fingerprint == next && engineHealthy(engine) {
+			b.set("ready", engine, u.Index)
 			return true
+		}
+		if err == nil && engine != nil && fingerprint == next {
+			if recoverer, ok := engine.(interface {
+				RecoverVPN(context.Context) (bool, error)
+			}); ok {
+				b.set("reconnecting", engine, u.Index)
+				if handled, recoveryErr := recoverer.RecoverVPN(ctx); handled {
+					if recoveryErr == nil {
+						b.set("ready", engine, u.Index)
+					}
+					return ctx.Err() == nil
+				}
+			}
 		}
 		b.set("reconnecting", nil, u.Index)
 		if e := cleanup(); e != nil {
@@ -179,10 +207,11 @@ func (b *Automatic) loop(ctx context.Context, done chan struct{}) {
 			b.set("waiting_network", nil, 0)
 			return true
 		}
-		s := b.s
+		s := b.settings()
 		s.InterfaceIndex = u.Index
 		s.UplinkMode = "manual"
 		engine = b.factory(s)
+		b.current = engine
 		index = u.Index
 		u.Local = append([]string(nil), u.Local...)
 		start, cancel := context.WithCancel(context.WithValue(ctx, uplinkSnapshotKey{}, u))
@@ -246,7 +275,11 @@ func (b *Automatic) loop(ctx context.Context, done chan struct{}) {
 			}
 		case <-stats.C:
 			if engine != nil {
-				b.set("ready", engine, index)
+				state := "ready"
+				if !engineHealthy(engine) {
+					state = "reconnecting"
+				}
+				b.set(state, engine, index)
 			}
 		}
 	}

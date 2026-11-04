@@ -131,45 +131,55 @@ type ownedEndpoint struct {
 func (e *ownedEndpoint) Close() { e.link.Close() }
 
 type NativeGateway struct {
-	router   *mobile.DesktopAppRouter
-	appState appRoutingState
-	meter    vpnclient.TrafficMeter
-	g        *mobile.Gateway
-	Sink     mobile.EventSink
+	mu        sync.Mutex
+	recovery  bool
+	settings  Settings
+	vpnCancel context.CancelFunc
+	router    *mobile.DesktopAppRouter
+	appState  appRoutingState
+	meter     vpnclient.TrafficMeter
+	g         *mobile.Gateway
+	Sink      mobile.EventSink
 }
 
 func (g *NativeGateway) Start(ctx context.Context, s Settings) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	policy, err := approuting.CanonicalTUNPolicy(s.AppRouting)
 	if err != nil {
 		return &FieldError{Field: "app_routing", Code: "unavailable_executable"}
 	}
 	g.appState.Set(nil)
+	g.settings = s
 	g.meter.Reset(time.Now().UTC().Format(time.RFC3339Nano))
 	g.g = mobile.NewGateway(g)
 	if err = g.g.StartWindowsContext(ctx, s.GatewayJSON(), interfaceBinder(s.InterfaceIndex)); err != nil {
 		return err
 	}
-	if policy != nil && policy.Enabled {
-		compiled, err := approuting.CompileTUN(*policy)
+	{
+		compiled, err := compileAppPolicy(policy)
 		if err != nil {
 			return err
 		}
 		g.router, err = mobile.NewDesktopAppRouter(compiled, approuting.NewWindowsOwnerResolver(), interfaceBinder(s.InterfaceIndex), g.g, g)
 		if err == nil {
+			g.recovery = compiled.Enabled()
 			g.appState.Set(g.router)
 		}
 		return err
 	}
-	return nil
 }
 func (g *NativeGateway) Attach(l Link) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	t, ok := l.(*tunLink)
 	if !ok {
 		return errors.New("invalid Windows link")
 	}
+	gateway := g.g
 	t.echo = icmprelay.NewPacket(func(ctx context.Context, p []byte) ([]byte, error) {
 		g.meter.Add(uint64(len(p)-int(p[0]&15)*4), 0)
-		return g.g.EchoWindows(ctx, p)
+		return gateway.EchoWindows(ctx, p)
 	}, func(p []byte) error {
 		_, err := t.Write(p)
 		if err == nil {
@@ -183,6 +193,12 @@ func (g *NativeGateway) Attach(l Link) error {
 	return g.g.AttachWindowsLink(&ownedEndpoint{t.endpoint, t})
 }
 func (g *NativeGateway) Stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.vpnCancel != nil {
+		g.vpnCancel()
+		g.vpnCancel = nil
+	}
 	if g.router != nil {
 		g.router.Close()
 		s := g.router.Snapshot()
@@ -219,4 +235,8 @@ func (g *NativeGateway) AppRoutingSnapshot() *approuting.Statistics {
 	return g.appState.Snapshot()
 }
 
-func (g *NativeGateway) Healthy() bool { return g.g != nil && g.g.IsConnected() }
+func (g *NativeGateway) Healthy() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.g != nil && g.g.IsConnected()
+}

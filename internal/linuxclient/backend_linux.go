@@ -24,13 +24,17 @@ func (b Binder) Bind(fd int64) error {
 
 // A single foreground owner; callers serialize Start/Stop. TUN is nonpersistent.
 type Client struct {
-	mu       sync.Mutex
-	dev      *os.File
-	gateway  *mobile.Gateway
-	router   *mobile.DesktopAppRouter
-	appStats *approuting.Statistics
-	Name     string
-	Sink     mobile.EventSink
+	op                   sync.Mutex
+	requested, effective Config
+	recovery             bool
+	vpnCancel            context.CancelFunc
+	mu                   sync.Mutex
+	dev                  *os.File
+	gateway              *mobile.Gateway
+	router               *mobile.DesktopAppRouter
+	appStats             *approuting.Statistics
+	Name                 string
+	Sink                 mobile.EventSink
 }
 
 func command(ctx context.Context, args ...string) ([]byte, error) {
@@ -41,6 +45,8 @@ func command(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
+	c.op.Lock()
+	defer c.op.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.dev != nil {
@@ -54,6 +60,8 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 		return e
 	}
 	c.appStats = nil
+	c.requested = cloneConfig(cfg)
+	c.recovery = cfg.AppRouting != nil && cfg.AppRouting.Enabled
 	// Policy routing could redirect gateway sockets through unrelated tunnels.
 	raw, e := command(ctx, "-j", "-4", "rule", "show")
 	if e != nil {
@@ -130,13 +138,12 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if e = c.gateway.StartLinuxContext(ctx, payload, Binder(cfg.Interface)); e != nil {
 		return errors.New("VPN transport startup failed")
 	}
-	if policy != nil {
-		c.router, e = mobile.NewDesktopAppRouter(policy, approuting.NewLinuxOwnerResolver(), Binder(cfg.Interface), c.gateway, c.Sink)
-		if e == nil {
-			e = c.router.AttachLinuxFD(int(f.Fd()))
-		}
-	} else {
-		e = c.gateway.Attach(int(f.Fd()))
+	if policy == nil {
+		policy, _ = approuting.CompileLinuxTUN(approuting.TUNPolicy{Version: 2, Mode: approuting.OnlySelected})
+	}
+	c.router, e = mobile.NewDesktopAppRouter(policy, approuting.NewLinuxOwnerResolver(), Binder(cfg.Interface), c.gateway, c.Sink)
+	if e == nil {
+		e = c.router.AttachLinuxFD(int(f.Fd()))
 	}
 	if e != nil {
 		return errors.New("cannot attach packet engine")
@@ -146,9 +153,14 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 			return e
 		}
 	}
+	c.effective = cloneConfig(cfg)
 	return nil
 }
 func (c *Client) stopLocked() {
+	if c.vpnCancel != nil {
+		c.vpnCancel()
+		c.vpnCancel = nil
+	}
 	if c.router != nil {
 		c.router.Close()
 		s := c.router.Snapshot()
@@ -164,7 +176,13 @@ func (c *Client) stopLocked() {
 		c.dev = nil
 	}
 }
-func (c *Client) Stop() { c.mu.Lock(); defer c.mu.Unlock(); c.stopLocked() }
+func (c *Client) Stop() {
+	c.op.Lock()
+	defer c.op.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stopLocked()
+}
 
 func (c *Client) AppRoutingSnapshot() *approuting.Statistics {
 	c.mu.Lock()

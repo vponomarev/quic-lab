@@ -50,22 +50,7 @@ func run() int {
 	path := flag.String("config", "", "private JSON profile (0600)")
 	validate := flag.Bool("validate", false, "validate without network changes")
 	flag.Parse()
-	f, e := os.Open(*path)
-	if e != nil {
-		fmt.Fprintln(os.Stderr, "cannot read configuration")
-		return 2
-	}
-	defer f.Close()
-	st, e := f.Stat()
-	if e != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 {
-		fmt.Fprintln(os.Stderr, "configuration must be a regular private file (0600)")
-		return 2
-	}
-	raw, e := io.ReadAll(io.LimitReader(f, (1<<20)+1))
-	if e != nil {
-		return 2
-	}
-	cfg, e := linuxclient.Decode(raw)
+	cfg, e := readConfig(*path)
 	if e != nil {
 		fmt.Fprintln(os.Stderr, e)
 		return 2
@@ -81,7 +66,7 @@ func run() int {
 			if unknown == "" {
 				unknown = approuting.Tunnel
 			}
-			fmt.Printf("application routing: %s; unknown: %s; capture: %d selected IPv4 subnets; captured DNS: VPN; IPv6/system DNS unchanged; apply requires restart\n", cfg.AppRouting.Mode, unknown, len(cfg.Targets))
+			fmt.Printf("application routing: %s; unknown: %s; capture: %d selected IPv4 subnets; captured DNS: VPN; IPv6/system DNS unchanged; app-only reload: SIGHUP\n", cfg.AppRouting.Mode, unknown, len(cfg.Targets))
 		}
 		return 0
 	}
@@ -91,6 +76,9 @@ func run() int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
+	defer signal.Stop(reload)
 	output := &sink{}
 	client := &linuxclient.Client{Sink: output}
 	defer client.Stop()
@@ -104,13 +92,53 @@ func run() int {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	running := true
+	recovered := make(chan error, 1)
+	recovering := false
+	backoff := 3 * time.Second
+	var nextRetry time.Time
 	for running {
 		select {
 		case <-ctx.Done():
 			running = false
+		case <-reload:
+			next, err := readConfig(*path)
+			if err == nil {
+				err = client.ReloadApplications(next)
+			}
+			if err != nil {
+				output.write(map[string]string{"event": "reload", "status": "rejected", "reason": "invalid configuration or non-application settings changed"})
+			} else {
+				output.write(map[string]string{"event": "reload", "status": "applied"})
+			}
+		case err := <-recovered:
+			recovering = false
+			state := "ready"
+			if err != nil {
+				state = "reconnecting"
+				nextRetry = time.Now().Add(backoff)
+				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+			} else {
+				backoff = 3 * time.Second
+				nextRetry = time.Time{}
+			}
+			output.write(map[string]string{"event": "network", "state": state})
 		case <-ticker.C:
 			output.appRouting(client.AppRoutingSnapshot())
+			if recovering {
+				continue
+			}
 			if !client.Connected() {
+				if client.RecoveryEnabled() {
+					if !time.Now().Before(nextRetry) {
+						recovering = true
+						output.write(map[string]string{"event": "network", "state": "reconnecting"})
+						go func() { recovered <- client.RecoverVPN(ctx) }()
+					}
+					continue
+				}
 				client.Stop()
 				output.appRouting(client.AppRoutingSnapshot())
 				output.write(map[string]string{"state": "stopped", "reason": "transport disconnected"})
