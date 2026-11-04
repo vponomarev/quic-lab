@@ -40,6 +40,8 @@ type Automatic struct {
 }
 
 func NewAutomatic(s Settings, d func(context.Context, Settings) (Uplink, error), f func(Settings) ManagedEngine, w func(context.Context) (<-chan struct{}, func(), error), interval time.Duration) *Automatic {
+	s.Targets = append([]string(nil), s.Targets...)
+	s.AppRouting = s.AppRouting.Clone()
 	return &Automatic{s: s, discover: d, factory: f, watch: w, interval: interval, info: New(s, nil, nil).RuntimeInfo()}
 }
 func (b *Automatic) Config() vpnclient.Config { return New(b.s, nil, nil).Config() }
@@ -54,6 +56,10 @@ func (b *Automatic) RuntimeInfo() vpnclient.RuntimeInfo {
 	defer b.mu.Unlock()
 	v := b.info
 	v.Targets = append([]string(nil), v.Targets...)
+	if v.AppRouting != nil {
+		c := *v.AppRouting
+		v.AppRouting = &c
+	}
 	return v
 }
 func (b *Automatic) set(state string, e ManagedEngine, index uint32) {

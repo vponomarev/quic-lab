@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 namespace QuicLab.Windows;
 
-// UI draft only. The privileged service must resolve WFP identities before applying any rule.
+// Editing is local. The service revalidates canonical executable paths on apply/start.
 public sealed class ApplicationSelection
 {
     public const string OnlyMode="only_selected", ExceptMode="all_except_selected";
@@ -13,6 +13,12 @@ public sealed class ApplicationSelection
     public string Mode {get=>mode;set{if(value!=OnlyMode&&value!=ExceptMode)throw new InvalidDataException();mode=value;}}
     List<string> Active=>mode==OnlyMode?only:except;
     public IReadOnlyList<string> Current=>Active.AsReadOnly();
+    public AppRoutingPolicy ToPolicy(bool enabled,string unknown)=>new(){Enabled=enabled,Mode=mode,Only=only.ToArray(),Except=except.ToArray(),Unknown=unknown};
+    public static ApplicationSelection FromPolicy(AppRoutingPolicy? policy){
+        if(policy==null)return new();
+        if(policy.Version!=2||policy.Unknown is not ("" or "tunnel" or "direct" or "block"))throw new InvalidDataException();
+        return Parse(JsonSerializer.Serialize(new{version=1,mode=policy.Mode,only=policy.Only,except=policy.Except}));
+    }
     static string ValidatePath(string path){
         if(string.IsNullOrWhiteSpace(path)||path.Length>32760||path.Length<3||!char.IsAsciiLetter(path[0])||path[1]!=':'||path[2]!='\\'||path[2..].Contains(':')||path.IndexOfAny(Path.GetInvalidPathChars())>=0||!Path.GetExtension(path).Equals(".exe",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException();
         return Path.GetFullPath(path);

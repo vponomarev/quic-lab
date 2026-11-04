@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 	"net"
 	"net/netip"
 	"quiclab/internal/gateway"
@@ -17,6 +18,25 @@ import (
 type multiProfile struct {
 	h      *tunHandler
 	cancel context.CancelFunc
+}
+
+func (m *MultiRouter) routeTCP(c adapter.TCPConn) {
+	id := c.ID()
+	next := m.selectFlow(6, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+	if next == nil {
+		c.Close()
+	} else {
+		next.HandleTCP(c)
+	}
+}
+func (m *MultiRouter) routeUDP(c adapter.UDPConn) {
+	id := c.ID()
+	next := m.selectFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
+	if next == nil {
+		c.Close()
+	} else {
+		next.HandleUDP(c)
+	}
 }
 
 // MultiRouter owns one TUN, never the independent transport lifecycles.

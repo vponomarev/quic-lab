@@ -33,6 +33,7 @@ type SettingsManager struct {
 	doc        SettingsDocument
 	store      SettingsStore
 	factory    BackendFactory
+	validate   func(windowsengine.Settings) error
 	controller *vpnclient.Controller
 	config     vpnclient.Config
 	active     uint64
@@ -42,15 +43,23 @@ type SettingsManager struct {
 
 func cloneSettings(s windowsengine.Settings) windowsengine.Settings {
 	s.Targets = append([]string{}, s.Targets...)
+	s.AppRouting = s.AppRouting.Clone()
 	return s
 }
-func NewSettingsManager(store SettingsStore, factory BackendFactory) (*SettingsManager, error) {
+func NewSettingsManager(store SettingsStore, factory BackendFactory, validators ...func(windowsengine.Settings) error) (*SettingsManager, error) {
+	var validate func(windowsengine.Settings) error
+	if len(validators) > 1 {
+		return nil, errors.New("invalid_config")
+	}
+	if len(validators) == 1 {
+		validate = validators[0]
+	}
 	d, e := store.Load(context.Background())
 	if e != nil {
 		return nil, errors.New("config_store_failed")
 	}
 	if d == nil {
-		return &SettingsManager{gate: make(chan struct{}, 1), store: store, factory: factory,
+		return &SettingsManager{gate: make(chan struct{}, 1), store: store, factory: factory, validate: validate,
 			doc:        SettingsDocument{Settings: windowsengine.Settings{Transport: "quic", RoutingMode: "all_ipv4", UplinkMode: "auto", DNS: "1.1.1.1", Targets: []string{}}},
 			controller: vpnclient.NewController(unconfiguredBackend{})}, nil
 	}
@@ -62,7 +71,7 @@ func NewSettingsManager(store SettingsStore, factory BackendFactory) (*SettingsM
 		return nil, errors.New("invalid_config")
 	}
 	d.Settings = cloneSettings(d.Settings)
-	return &SettingsManager{gate: make(chan struct{}, 1), doc: *d, store: store, factory: factory, controller: vpnclient.NewController(b), config: c}, nil
+	return &SettingsManager{gate: make(chan struct{}, 1), doc: *d, store: store, factory: factory, validate: validate, controller: vpnclient.NewController(b), config: c}, nil
 }
 func (m *SettingsManager) Read() SettingsView {
 	m.mu.RLock()
@@ -119,6 +128,11 @@ func (m *SettingsManager) resolve(c SettingsChange) (windowsengine.Settings, err
 	if e := s.Validate(); e != nil {
 		return s, e
 	}
+	if m.validate != nil {
+		if e := m.validate(s); e != nil {
+			return s, e
+		}
+	}
 	return s, nil
 }
 func (m *SettingsManager) Validate(c SettingsChange) error {
@@ -147,6 +161,14 @@ func (m *SettingsManager) Start(ctx context.Context) error {
 		return errors.New("config_required")
 	}
 	ctrl, c := m.controller, m.config
+	s := cloneSettings(m.doc.Settings)
+	m.mu.Unlock()
+	if m.validate != nil {
+		if e := m.validate(s); e != nil {
+			return e
+		}
+	}
+	m.mu.Lock()
 	m.active = m.doc.Revision
 	m.mu.Unlock()
 	return ctrl.Start(run, c)

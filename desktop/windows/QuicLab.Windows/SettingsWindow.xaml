@@ -29,6 +29,15 @@
     <StackPanel x:Name="RouteEditPanel" DockPanel.Dock="Bottom" Margin="0,10,0,0"><TextBlock Text="Добавить CIDR — по одному на строку или через запятую"/><TextBox x:Name="RouteInput" Height="65" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/><WrapPanel><Button Content="Добавить" Click="AddRoutesClick"/><Button Content="Удалить выбранные" Click="RemoveRoutesClick"/></WrapPanel><TextBlock x:Name="RouteCount" Margin="0,8,0,0"/></StackPanel>
     <DataGrid x:Name="RouteGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Extended" HeadersVisibility="Column" RowHeight="30"><DataGrid.Columns><DataGridTextColumn Header="Подсеть / CIDR" Binding="{Binding Cidr, UpdateSourceTrigger=PropertyChanged}" Width="*"/></DataGrid.Columns></DataGrid>
    </DockPanel></TabItem>
+   <TabItem x:Name="ApplicationsTab" Header="Приложения"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
+    <CheckBox x:Name="AppRoutingEnabled" Content="Маршрутизировать IPv4 по приложениям" Checked="AppRoutingChanged" Unchecked="AppRoutingChanged" Margin="0,0,0,12"/>
+    <Button x:Name="EditApplicationsButton" Content="Режим и списки приложений…" Click="EditApplicationsClick" HorizontalAlignment="Left"/>
+    <Button Content="Загрузить сохранённый черновик списков" Click="ImportApplicationDraftClick" HorizontalAlignment="Left"/>
+    <TextBlock Text="Если владелец потока неизвестен или несколько владельцев требуют разных выходов" TextWrapping="Wrap" Margin="0,15,0,5"/>
+    <ComboBox x:Name="UnknownAppChoice" SelectedIndex="0" SelectionChanged="AppRoutingChanged" Padding="7"><ComboBoxItem Content="Через VPN (по умолчанию)"/><ComboBoxItem Content="Напрямую"/><ComboBoxItem Content="Блокировать поток"/></ComboBox>
+    <TextBlock x:Name="AppRoutingPreview" TextWrapping="Wrap" Margin="0,16,0,0"/>
+    <TextBlock Text="Первые тесты движка пройдены. Приёмка захвата трафика реальных Windows-приложений и игр ещё не завершена." TextWrapping="Wrap" Foreground="#607783" Margin="0,12,0,0"/>
+   </StackPanel></ScrollViewer></TabItem>
   </TabControl>
  </DockPanel>
 </Window>

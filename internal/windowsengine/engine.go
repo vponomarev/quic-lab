@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"quiclab/internal/approuting"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/vpnmodel"
 	"reflect"
@@ -15,23 +16,29 @@ import (
 const MaxTargets = 256
 
 type Settings struct {
-	RoutingMode    string   `json:"routing_mode,omitempty"`
-	UplinkMode     string   `json:"uplink_mode,omitempty"`
-	DNS            string   `json:"dns,omitempty"`
-	Name           string   `json:"name,omitempty"`
-	Transport      string   `json:"transport"`
-	Endpoint       string   `json:"endpoint"`
-	Hostname       string   `json:"hostname"`
-	Certificate    string   `json:"certificate"`
-	Key            string   `json:"key"`
-	CA             string   `json:"ca,omitempty"`
-	ServerName     string   `json:"server_name,omitempty"`
-	VerifyName     string   `json:"verify_name,omitempty"`
-	InterfaceIndex uint32   `json:"interface_index"`
-	Targets        []string `json:"targets"`
+	AppRouting     *approuting.TUNPolicy `json:"app_routing,omitempty"`
+	RoutingMode    string                `json:"routing_mode,omitempty"`
+	UplinkMode     string                `json:"uplink_mode,omitempty"`
+	DNS            string                `json:"dns,omitempty"`
+	Name           string                `json:"name,omitempty"`
+	Transport      string                `json:"transport"`
+	Endpoint       string                `json:"endpoint"`
+	Hostname       string                `json:"hostname"`
+	Certificate    string                `json:"certificate"`
+	Key            string                `json:"key"`
+	CA             string                `json:"ca,omitempty"`
+	ServerName     string                `json:"server_name,omitempty"`
+	VerifyName     string                `json:"verify_name,omitempty"`
+	InterfaceIndex uint32                `json:"interface_index"`
+	Targets        []string              `json:"targets"`
 }
 
 func (s Settings) Validate() error {
+	if s.AppRouting != nil {
+		if _, e := approuting.CompileTUN(*s.AppRouting); e != nil {
+			return &FieldError{Field: "app_routing", Code: "invalid_policy"}
+		}
+	}
 	if (s.RoutingMode != "" && s.RoutingMode != "subnets" && s.RoutingMode != "all_ipv4") || (s.UplinkMode != "" && s.UplinkMode != "manual" && s.UplinkMode != "auto") {
 		return &FieldError{Field: "routing_mode", Code: "invalid_mode"}
 	}
@@ -93,6 +100,7 @@ type Engine struct {
 
 func New(s Settings, p Platform, g Gateway) *Engine {
 	s.Targets = append([]string(nil), s.Targets...)
+	s.AppRouting = s.AppRouting.Clone()
 	return &Engine{s: s, p: p, g: g}
 }
 func (e *Engine) Config() vpnclient.Config {
@@ -158,6 +166,14 @@ func (e *Engine) Stop(ctx context.Context) error {
 
 func (e *Engine) RuntimeInfo() vpnclient.RuntimeInfo {
 	info := vpnclient.RuntimeInfo{RoutingMode: e.s.RoutingMode, Name: e.s.Name, Mode: "vpn", Transport: e.s.Transport, Endpoint: e.s.Endpoint, RouteCount: len(e.s.Targets), Targets: append([]string(nil), e.s.Targets...)}
+	if e.s.AppRouting != nil && e.s.AppRouting.Enabled {
+		info.AppRouting = &approuting.Statistics{Enabled: true}
+	}
+	if p, ok := e.g.(interface{ AppRoutingSnapshot() *approuting.Statistics }); ok {
+		if stats := p.AppRoutingSnapshot(); stats != nil {
+			info.AppRouting = stats
+		}
+	}
 	if p, ok := e.g.(interface{ TrafficSnapshot() vpnclient.Traffic }); ok {
 		info.Traffic = p.TrafficSnapshot()
 	}

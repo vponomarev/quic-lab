@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 namespace QuicLab.Windows;
 public sealed class EngineSettings {
+ [JsonPropertyName("app_routing"),JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public AppRoutingPolicy? AppRouting {get;set;}
  public string Name {get;set;}=""; public string Transport {get;set;}="quic"; public string Endpoint {get;set;}="";
  public string Hostname {get;set;}=""; public string Certificate {get;set;}=""; public string Key {get;set;}=""; public string CA {get;set;}="";
  [JsonPropertyName("server_name")] public string ServerName {get;set;}="";

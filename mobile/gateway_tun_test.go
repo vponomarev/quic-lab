@@ -27,10 +27,14 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"quiclab/internal/approuting"
 	"quiclab/internal/gateway"
+	"strings"
 )
 
 func TestMultipleTUNTCPAndUDP(t *testing.T)            { testTUNRoundTrip(t, "multiple") }
+func TestDesktopDirectTUNTCPAndUDP(t *testing.T)       { testTUNRoundTrip(t, "desktop-direct") }
+func TestDesktopVPNTUNTCPAndUDP(t *testing.T)          { testTUNRoundTrip(t, "desktop-vpn") }
 func TestTUNDNSRoundTripAndStop(t *testing.T)          { testTUNRoundTrip(t, "legacy") }
 func TestTUNQUICDatagramRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, "quic") }
 func TestTUNWebSocketUDPRoundTripAndStop(t *testing.T) { testTUNRoundTrip(t, "https") }
@@ -108,7 +112,35 @@ func testTUNRoundTrip(t *testing.T, mode string) {
 	defer unix.Close(fds[0])
 	defer unix.Close(fds[1])
 	stop := g.Stop
-	if mode == "multiple" {
+	var appRouter *DesktopAppRouter
+	if strings.HasPrefix(mode, "desktop-") {
+		policyMode := approuting.OnlySelected
+		if mode == "desktop-vpn" {
+			policyMode = approuting.AllExceptSelected
+		}
+		policy, err := approuting.CompileTUN(approuting.TUNPolicy{Version: 2, Enabled: true, Mode: policyMode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		appRouter, err = NewDesktopAppRouter(policy, &desktopOwner{}, &multipleBinder{}, g, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer appRouter.Close()
+		fd, err := unix.Dup(fds[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		dev, err := fdbased.Open(strconv.Itoa(fd), 1280, 0)
+		if err != nil {
+			unix.Close(fd)
+			t.Fatal(err)
+		}
+		if err = appRouter.Attach(dev); err != nil {
+			t.Fatal(err)
+		}
+		stop = func() { appRouter.Close(); g.Stop() }
+	} else if mode == "multiple" {
 		router, err := NewMultiRouter(`[{"id":"q","mode":"all"}]`, "q", nil, &multipleBinder{}, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -213,6 +245,14 @@ func testTUNRoundTrip(t *testing.T, mode string) {
 	}
 	if !bytes.Equal(result, body) {
 		t.Fatalf("TUN TCP response: %d/%d", len(result), len(body))
+	}
+	if appRouter != nil {
+		if mode == "desktop-direct" && (appRouter.Snapshot().DirectRxBytes < uint64(len(body)) || appRouter.vpn.h.rx.Load() != 0) {
+			t.Fatal("TUN direct exit accounting")
+		}
+		if mode == "desktop-vpn" && (appRouter.vpn.h.rx.Load() < int64(len(body)) || appRouter.Snapshot().DirectRxBytes != 0) {
+			t.Fatal("TUN VPN exit accounting")
+		}
 	}
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()

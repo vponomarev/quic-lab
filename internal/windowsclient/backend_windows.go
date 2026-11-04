@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"quiclab/internal/approuting"
 	"quiclab/internal/vpnclient"
 	"quiclab/internal/windowsengine"
 )
@@ -49,4 +50,13 @@ func newSettingsBackend(s windowsengine.Settings) (vpnclient.Backend, vpnclient.
 		b = windowsengine.New(s, windowsengine.WindowsPlatform{}, &windowsengine.NativeGateway{})
 	}
 	return b, b.Config(), nil
+}
+
+// Validate explicit apply/start, never loading the settings editor after an
+// application update removed an executable.
+func validateApplicationSettings(s windowsengine.Settings) error {
+	if _, err := approuting.CanonicalTUNPolicy(s.AppRouting); err != nil {
+		return &windowsengine.FieldError{Field: "app_routing", Code: "unavailable_executable"}
+	}
+	return nil
 }

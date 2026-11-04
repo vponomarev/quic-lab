@@ -15,6 +15,8 @@ partial class UiTests
                 if (args.Length == 2 && args[0] == "--live") { await LiveAcceptance(args[1]); exit = 0; return; }
                 await TransportSwitchAcceptance.Run();
                 if(args.Length==1&&args[0]=="--transport-switch"){exit=0;return;}
+                await AppRoutingAcceptance.Run();
+                if(args.Length==1&&args[0]=="--app-routing"){exit=0;return;}
                 await OnboardingAcceptance();
                 await ServiceRecoveryAcceptance();
                 await CompactLayoutAcceptance();

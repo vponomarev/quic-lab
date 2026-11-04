@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -47,6 +47,10 @@ public partial class MainWindow : Window
         ProfileText.Text = r.Runtime?.Mode == "vpn" ? $"{(string.IsNullOrWhiteSpace(r.Runtime.Name) ? "" : r.Runtime.Name+" · ")}{r.Runtime.Transport?.ToUpperInvariant()} · {r.Runtime.Endpoint}\n{(r.Runtime.RoutingMode=="all_ipv4"?"Весь IPv4-трафик":$"Подсетей через VPN: {r.Runtime.RouteCount}")}" : fixture ? "Проверка интерфейса · без VPN" : "Профиль службы";
         ModeBanner.Visibility = Visibility.Visible; ModeText.Text = vpn ? "IPv4: " + (r.Runtime?.Targets is { Length: >0 } targets ? string.Join(", ",targets) : "список подсетей служба не сообщает") + "\nОстальной трафик и системный DNS не перенастраиваются. В preview нет kill switch: после аварии службы выбранный трафик может пойти напрямую." : fixture ? "Тестовый движок: сеть не изменяется, трафик не передаётся." : "Служба не сообщает тип движка. Работа VPN не подтверждена.";
         if(vpn && r.Runtime?.RoutingMode=="all_ipv4") ModeText.Text="Весь IPv4 через VPN, кроме локальных сетей, специальных системных маршрутов и адреса сервера. DNS — через VPN. IPv6 не изменяется. При остановке туннеля трафик может идти напрямую.";
+        if(vpn && r.Runtime?.AppRouting is {Enabled:true} apps){
+            ModeText.Text="IPv4 в области захвата распределяется по приложениям между VPN и direct. DNS — через VPN в захваченной области. IPv6 не меняется. Остановка восстанавливает обычные маршруты; переподключение прерывает оба выхода.";
+            ModeText.Text+=$"\nDirect: ↑ {apps.DirectTxBytes:N0} Б · ↓ {apps.DirectRxBytes:N0} Б. Неизвестных: {apps.Unknown}; общих: {apps.Shared}; блокировано: {apps.Blocked}.";
+        }
         if(r.Runtime?.Mode=="unconfigured") {
             StateText.Text="Нужно настроить подключение";
             ProfileText.Text="Откройте настройки и загрузите ссылку-приглашение или введите параметры сервера.";
@@ -106,7 +110,10 @@ public partial class MainWindow : Window
         finally { cancelPending = false; if (!closed) UpdateButtons(); }
     }
     async void SettingsClick(object sender, RoutedEventArgs e) {if(client is ISettingsClient settings){new SettingsWindow(settings){Owner=this}.ShowDialog();await Command("status");}}
-    void ApplicationsClick(object sender, RoutedEventArgs e) => new ApplicationSelectionWindow { Owner = this }.ShowDialog();
+    async void ApplicationsClick(object sender, RoutedEventArgs e) {
+        if(client is ISettingsClient settings && latest?.Capabilities?.Contains("app-routing-tun-v2")==true){var window=new SettingsWindow(settings){Owner=this};window.SelectApplicationsTab();window.ShowDialog();await Command("status");}
+        else new ApplicationSelectionWindow { Owner = this }.ShowDialog();
+    }
     async void RefreshClick(object sender, RoutedEventArgs e) => await Command("status");
     async void ValidateClick(object sender, RoutedEventArgs e) => await Command("validate_config");
     async void ApplyClick(object sender, RoutedEventArgs e) => await Command("apply_config");

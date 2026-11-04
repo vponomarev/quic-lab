@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wintun"
 	"io"
+	"quiclab/internal/approuting"
 	"quiclab/internal/icmprelay"
 	"quiclab/internal/vpnclient"
 	"quiclab/mobile"
@@ -130,15 +131,36 @@ type ownedEndpoint struct {
 func (e *ownedEndpoint) Close() { e.link.Close() }
 
 type NativeGateway struct {
-	meter vpnclient.TrafficMeter
-	g     *mobile.Gateway
-	Sink  mobile.EventSink
+	router   *mobile.DesktopAppRouter
+	appState appRoutingState
+	meter    vpnclient.TrafficMeter
+	g        *mobile.Gateway
+	Sink     mobile.EventSink
 }
 
 func (g *NativeGateway) Start(ctx context.Context, s Settings) error {
+	policy, err := approuting.CanonicalTUNPolicy(s.AppRouting)
+	if err != nil {
+		return &FieldError{Field: "app_routing", Code: "unavailable_executable"}
+	}
+	g.appState.Set(nil)
 	g.meter.Reset(time.Now().UTC().Format(time.RFC3339Nano))
 	g.g = mobile.NewGateway(g)
-	return g.g.StartWindowsContext(ctx, s.GatewayJSON(), interfaceBinder(s.InterfaceIndex))
+	if err = g.g.StartWindowsContext(ctx, s.GatewayJSON(), interfaceBinder(s.InterfaceIndex)); err != nil {
+		return err
+	}
+	if policy != nil && policy.Enabled {
+		compiled, err := approuting.CompileTUN(*policy)
+		if err != nil {
+			return err
+		}
+		g.router, err = mobile.NewDesktopAppRouter(compiled, approuting.NewWindowsOwnerResolver(), interfaceBinder(s.InterfaceIndex), g.g, g)
+		if err == nil {
+			g.appState.Set(g.router)
+		}
+		return err
+	}
+	return nil
 }
 func (g *NativeGateway) Attach(l Link) error {
 	t, ok := l.(*tunLink)
@@ -155,9 +177,18 @@ func (g *NativeGateway) Attach(l Link) error {
 		}
 		return err
 	})
+	if g.router != nil {
+		return g.router.Attach(&ownedEndpoint{t.endpoint, t})
+	}
 	return g.g.AttachWindowsLink(&ownedEndpoint{t.endpoint, t})
 }
 func (g *NativeGateway) Stop() {
+	if g.router != nil {
+		g.router.Close()
+		s := g.router.Snapshot()
+		g.appState.Final(s)
+		g.router = nil
+	}
 	if g.g != nil {
 		g.g.Stop()
 		g.g = nil
@@ -183,5 +214,9 @@ func (g *NativeGateway) OnEvent(raw string) {
 	}
 }
 func (g *NativeGateway) TrafficSnapshot() vpnclient.Traffic { return g.meter.Snapshot() }
+
+func (g *NativeGateway) AppRoutingSnapshot() *approuting.Statistics {
+	return g.appState.Snapshot()
+}
 
 func (g *NativeGateway) Healthy() bool { return g.g != nil && g.g.IsConnected() }

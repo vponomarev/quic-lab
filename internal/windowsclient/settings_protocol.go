@@ -8,7 +8,7 @@ import (
 
 func NewSettingsHandler(m *SettingsManager) *Handler { return &Handler{settings: m} }
 func (h *Handler) handleSettings(ctx context.Context, q Request) Response {
-	r := Response{Version: 1, ID: q.ID, Capabilities: []string{"settings-v1"}}
+	r := Response{Version: 1, ID: q.ID, Capabilities: []string{"settings-v1", "app-routing-tun-v2"}}
 	var err error
 	switch q.Command {
 	case "status":

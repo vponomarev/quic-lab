@@ -19,6 +19,13 @@ public partial class ApplicationSelectionWindow:Window{
  ApplicationSelection draft=new();bool ready,closed;
 
  public Task InitializedDraft=>initialized.Task;
+ bool settingsMode;
+ public ApplicationSelection? SelectionResult {get;private set;}
+ public ApplicationSelectionWindow(ApplicationSelection selection):this(){
+  settingsMode=true;draft=ApplicationSelection.Parse(selection.Serialize());
+  SaveButton.Content="Использовать в настройках";
+  WarningText.Text="Списки изменят настройки только после сохранения в основном редакторе. Сейчас правила к сети не применяются.";
+ }
 
  public ApplicationSelectionWindow(string? file=null){
 
@@ -32,7 +39,7 @@ public partial class ApplicationSelectionWindow:Window{
 
  async void LoadDraft(object sender,RoutedEventArgs args){
 
-  try{draft=await ApplicationSelection.LoadAsync(file);if(closed)return;ModeChoice.SelectedIndex=draft.Mode==ApplicationSelection.OnlyMode?0:1;ready=true;SaveButton.IsEnabled=true;Render();}
+  try{if(!settingsMode)draft=await ApplicationSelection.LoadAsync(file);if(closed)return;ModeChoice.SelectedIndex=draft.Mode==ApplicationSelection.OnlyMode?0:1;ready=true;SaveButton.IsEnabled=true;Render();}
 
   catch(Exception){if(!closed)ResultText.Text="Не удалось прочитать черновик. Исходный файл сохранён; перезапись отключена.";}
 
@@ -61,6 +68,7 @@ public partial class ApplicationSelectionWindow:Window{
  async void SaveClick(object sender,RoutedEventArgs e){
 
   if(!ready)return;EditorRoot.IsEnabled=false;
+  if(settingsMode){SelectionResult=ApplicationSelection.Parse(draft.Serialize());Close();return;}
 
   try{await draft.SaveAsync(file);if(!closed)ResultText.Text="Черновик сохранён. Правила к сети не применяются.";}
 

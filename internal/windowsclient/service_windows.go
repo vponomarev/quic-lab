@@ -50,7 +50,7 @@ func (s *Service) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 			return false, 6
 		}
 
-		manager, err := NewSettingsManager(NewSettingsFileStore(store), newSettingsBackend)
+		manager, err := NewSettingsManager(NewSettingsFileStore(store), newSettingsBackend, validateApplicationSettings)
 		if err != nil {
 			return false, 5
 		}

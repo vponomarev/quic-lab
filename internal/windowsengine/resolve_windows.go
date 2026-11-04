@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"quiclab/internal/approuting"
 	"syscall"
 )
 
@@ -12,6 +13,11 @@ func (WindowsPlatform) Resolve(ctx context.Context, s Settings) (Settings, error
 	if err := ctx.Err(); err != nil {
 		return s, err
 	}
+	policy, err := approuting.CanonicalTUNPolicy(s.AppRouting)
+	if err != nil {
+		return s, &FieldError{Field: "app_routing", Code: "unavailable_executable"}
+	}
+	s.AppRouting = policy
 	var u Uplink
 	if s.FullIPv4() || s.UplinkMode == "auto" {
 		var ok bool

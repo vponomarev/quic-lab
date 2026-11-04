@@ -26,7 +26,13 @@ func (e *ownedLinkEndpoint) Close() { e.once.Do(e.LinkEndpoint.Close) }
 
 // attachLink takes ownership of a packet endpoint, including on failure.
 // OS adapters create the endpoint; forwarding never interprets native handles.
-func (g *Gateway) attachLink(dev stack.LinkEndpoint, router *MultiRouter) error {
+type tunRouter interface {
+	routeTCP(adapter.TCPConn)
+	routeUDP(adapter.UDPConn)
+	emitTraffic()
+}
+
+func (g *Gateway) attachLink(dev stack.LinkEndpoint, router tunRouter) error {
 	if dev == nil {
 		return fmt.Errorf("nil packet endpoint")
 	}
@@ -86,7 +92,7 @@ func (g *Gateway) attachLink(dev stack.LinkEndpoint, router *MultiRouter) error 
 }
 
 type tunHandler struct {
-	router                                        *MultiRouter
+	router                                        tunRouter
 	tcpFlows, udpFlows, udpRejected, udpTx, udpRx atomic.Int64
 	tx, rx                                        atomic.Int64
 	mu                                            sync.Mutex
@@ -99,13 +105,7 @@ type tunHandler struct {
 
 func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 	if h.router != nil {
-		id := c.ID()
-		next := h.router.selectFlow(6, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
-		if next == nil {
-			c.Close()
-		} else {
-			next.HandleTCP(c)
-		}
+		h.router.routeTCP(c)
 		return
 	}
 	h.mu.Lock()
@@ -149,13 +149,7 @@ func (h *tunHandler) HandleTCP(c adapter.TCPConn) {
 // Older servers retain DNS-only compatibility.
 func (h *tunHandler) HandleUDP(c adapter.UDPConn) {
 	if h.router != nil {
-		id := c.ID()
-		next := h.router.selectFlow(17, id.RemoteAddress.String(), int64(id.RemotePort), id.LocalAddress.String(), int64(id.LocalPort))
-		if next == nil {
-			c.Close()
-		} else {
-			next.HandleUDP(c)
-		}
+		h.router.routeUDP(c)
 		return
 	}
 	id := c.ID()

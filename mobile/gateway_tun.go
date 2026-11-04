@@ -21,5 +21,8 @@ func (g *Gateway) attachRouter(fd int, router *MultiRouter) error {
 		unix.Close(dup)
 		return err
 	}
+	if router == nil {
+		return g.attachLink(dev, nil)
+	}
 	return g.attachLink(dev, router)
 }
