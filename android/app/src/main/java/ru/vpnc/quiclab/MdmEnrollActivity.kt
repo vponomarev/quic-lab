@@ -58,9 +58,16 @@ class MdmEnrollActivity:Activity(){
       .setMessage("Сбор истории Wi-Fi и сот остановится. Все ещё не отправленные измерения будут удалены с телефона без возможности восстановления. Уже отправленная история останется на сервере. Привязка MDM сохранится.\n\nДля выбора разрешённого профиля или транспорта откройте «Подключения» — пауза MDM не нужна.")
       .setNegativeButton("Отмена",null)
       .setPositiveButton("Приостановить и удалить очередь"){_,_->work{if(controller.read().active){controller.pause();MdmService.stop(this)}}}.show()
-    }else work{if(!controller.read().active){controller.resume();MdmService.start(this)}}
+    }else work{if(!controller.read().active){controller.resume();MdmRuntime.restore(this,foreground=true)}}
    })
    panel.addView(ui.text("Пауза полностью отключает управление. Привязка сохранится; вы сможете возобновить её."))
+   panel.addView(ui.button("При выключенном VPN: "+if(MdmBackground.quiet(this))"тихий режим" else "постоянная связь"){
+    AlertDialog.Builder(this).setTitle("MDM при выключенном VPN")
+     .setSingleChoiceItems(arrayOf("Постоянная связь","Тихий режим"),if(MdmBackground.quiet(this))1 else 0){dialog,index->
+      MdmBackground.setQuiet(this,index==1);MdmRuntime.restore(this,foreground=true);dialog.dismiss();render()
+     }.setNegativeButton("Отмена",null).show()
+   })
+   panel.addView(ui.text("В тихом режиме нет постоянной службы и непрерывного сбора. Синхронизация — примерно раз в 2 часа и при открытии приложения; Android может отложить её дольше. При включённом VPN связь постоянная."))
    telemetryButton=ui.button("Данные Wi-Fi и сот"){startActivity(Intent(this,MdmTelemetryActivity::class.java))}
    panel.addView(telemetryButton);refreshTelemetryButton()
    rights(state.rights)
@@ -106,7 +113,7 @@ class MdmEnrollActivity:Activity(){
   rights(MdmRights())
   panel.addView(ui.button("Подтверждаю: подключить MDM",true){
    val selected=selectedRights()
-   work{controller.enroll(proposed,selected);MdmService.start(this)}
+   work{controller.enroll(proposed,selected);MdmRuntime.restore(this,foreground=true)}
   })
  }
  private fun refreshTelemetryButton(){

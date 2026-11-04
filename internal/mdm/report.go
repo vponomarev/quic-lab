@@ -39,6 +39,7 @@ type RelayStatus struct {
 	Paths        []RelayPathStatus `json:"paths"`
 }
 type DeviceReport struct {
+	BackgroundMode    string               `json:"backgroundMode,omitempty"`
 	ProbeSources      []ProbeSource        `json:"probeSources,omitempty"`
 	ProbeSnapshots    []ProbeSnapshot      `json:"probeSnapshots,omitempty"`
 	RelayStatus       *RelayStatus         `json:"relayStatus,omitempty"`
@@ -84,6 +85,9 @@ func supported(b bindingState) bool {
 	return false
 }
 func (s *Store) Report(id string, epoch int64, r DeviceReport, now time.Time) error {
+	if r.BackgroundMode != "" && !oneOf(r.BackgroundMode, "continuous", "quiet") {
+		return ErrInvalid
+	}
 	if len(r.ProbeSources) > 32 || len(r.ProbeSnapshots) > 1 {
 		return ErrInvalid
 	}

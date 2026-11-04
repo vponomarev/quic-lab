@@ -22,7 +22,7 @@ class MdmTelemetryService:Service(){
    }
    MdmTelemetry.stop(this,true);stopSelf();return START_NOT_STICKY
   }
-  if(!MdmTelemetry.wanted(this)){stopSelf();return START_NOT_STICKY}
+  if(!MdmTelemetry.wanted(this) || MdmBackground.mode(this)!="continuous"){stopSelf();return START_NOT_STICKY}
   if(worker!=null)return START_STICKY
   try{
    AppServiceNotification.start(this,"geo",ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
@@ -34,7 +34,7 @@ class MdmTelemetryService:Service(){
   worker=Thread({
    while(!ending.get()){
     try{
-     if(!MdmTelemetry.wanted(this)){stopSelf();break}
+     if(!MdmTelemetry.wanted(this) || MdmBackground.mode(this)!="continuous"){stopSelf();break}
      val generation=MdmStore(this).read().localGeneration
      MdmTelemetry.status="Сбор данных Wi-Fi и сот"
      val sample=MdmRadioSampler(this).sample()
@@ -48,7 +48,7 @@ class MdmTelemetryService:Service(){
   },"mdm-radio").also{it.start()}
   return START_STICKY
  }
- override fun onDestroy(){ending.set(true);worker?.interrupt();running=false;AppServiceNotification.stop(this);super.onDestroy()}
+ override fun onDestroy(){ending.set(true);worker?.interrupt();MdmTelemetry.cancelUpload();running=false;AppServiceNotification.stop(this);super.onDestroy()}
  companion object{
   @Volatile var running=false
   fun start(c:Context){c.startForegroundService(Intent(c,MdmTelemetryService::class.java))}

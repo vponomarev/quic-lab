@@ -17,7 +17,7 @@ import kotlin.random.Random
 internal interface MdmSession:Closeable { fun sync();fun pause();fun isActive():Boolean=true }
 
 class MdmService:Service(){
- private var session:MdmSession?=null
+ @Volatile private var session:MdmSession?=null
  private var worker:Thread?=null
  private val ending=AtomicBoolean(false)
  private var retained=false
@@ -36,11 +36,10 @@ class MdmService:Service(){
    try{val current=session;if(current!=null)current.pause() else MdmRuntime.controller(this).pause()}catch(_:Exception){status="Не удалось сохранить паузу MDM"}finally{stopSelf()}
    return START_NOT_STICKY
   }
-  if(session!=null)return START_STICKY
-  val selected=try{val factory=owner;if(factory!=null)factory(applicationContext) else MdmRuntime.session(applicationContext)}
+  if(worker!=null)return START_STICKY
+  val allowed=try{owner!=null || MdmBackground.mode(this)=="continuous"}
    catch(_:Exception){status="Хранилище MDM недоступно";stopSelf();return START_NOT_STICKY}
-  if(selected==null){stopSelf();return START_NOT_STICKY}
-  session=selected
+  if(!allowed){stopSelf();return START_NOT_STICKY}
   try{
    AppServiceNotification.start(this,"mdm",if(Build.VERSION.SDK_INT>=34)ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
    foregroundReady=true
@@ -53,7 +52,14 @@ class MdmService:Service(){
    worker=Thread({
     var delay=1000L
     while(!ending.get()){
-     try{if(!selected.isActive()){stopSelf();break};selected.sync();delay=1000;status="MDM подключено"}
+     try{
+      if(owner==null && MdmBackground.mode(this)!="continuous"){stopSelf();break}
+      val selected=session ?: (owner?.invoke(applicationContext) ?: MdmRuntime.session(applicationContext))
+      if(selected==null){Thread.sleep(250);continue}
+      session=selected
+      if(ending.get()){selected.close();break}
+      if(!selected.isActive()){stopSelf();break};selected.sync();delay=1000;status="MDM подключено"
+     }
      catch(_:InterruptedException){stopSelf();break}
      catch(_:Exception){
       if(ending.get())break

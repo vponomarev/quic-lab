@@ -3,7 +3,7 @@ import android.content.Context
 import org.json.JSONObject
 import java.time.Instant
 internal object MdmProbeControl{
- fun execute(c:Context,state:MdmState,command:MdmCommand,now:Instant):String{
+ fun execute(c:Context,state:MdmState,command:MdmCommand,now:Instant,allowStart:Boolean=true):String{
   val store=MdmStore(c);val latest=store.read()
   val error=when{
    !latest.active||latest.cleanupPending||!latest.rights.vpn||!latest.rights.telemetry||latest.localGeneration!=state.localGeneration->"permission_denied"
@@ -18,6 +18,7 @@ internal object MdmProbeControl{
   if(prior!=null)return record(prior.optString("result","interrupted"))
   val p=command.probe?:return record("invalid")
   val action=p.optString("action");if(action !in listOf("start","retry","cancel"))return record("invalid")
+  if(!allowStart && action!="cancel")return record("background_restricted")
   store.edit{j->val done=j.optJSONObject("probes_done")?:JSONObject();done.keys().asSequence().toList().forEach{if(done.getJSONObject(it).optLong("until")<now.epochSecond)done.remove(it)};check(done.length()<1000);done.put(command.id,JSONObject().put("result","interrupted").put("until",command.expiresAt.plusSeconds(86400).epochSecond));j.put("probes_done",done)}
   val result=try{if(action=="cancel"){if(VlessProbeCoordinator.cancel(p.optString("runId")))"canceled" else "not_running"}else VlessProbeCoordinator.start(c,p.getString("sourceId"),action,p.optString("runId"),"mdm",command.id,p.getString("fingerprint"))}catch(_:Exception){"probe_failed"}
   store.edit{it.getJSONObject("probes_done").getJSONObject(command.id).put("result",result)}

@@ -25,6 +25,11 @@ internal object MdmTelemetry {
  }
 
  fun reconcile(c:Context,foreground:Boolean=false){
+  if(MdmBackground.mode(c)=="quiet"){
+   MdmTelemetryService.stop(c)
+   if(wanted(c))status="Сбор включён · измерение при тихой синхронизации"
+   return
+  }
   if(!wanted(c)){if(MdmTelemetryService.running)MdmTelemetryService.stop(c);return}
   if(MdmTelemetryService.running)return
   val allowed=c.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED &&
@@ -34,6 +39,15 @@ internal object MdmTelemetry {
    .onFailure{status="Android запретил фоновый запуск · откройте экран телеметрии"}
  }
  fun wanted(c:Context)=MdmTelemetryPolicy.consented(MdmStore(c).read())&&(MdmStore(c).manualTelemetry()||serverEnabled(c))
+ fun sampleOnce(c:Context){
+  fun granted(p:String)=c.checkSelfPermission(p)==android.content.pm.PackageManager.PERMISSION_GRANTED
+  if(!MdmBackground.canSample(wanted(c),granted(android.Manifest.permission.ACCESS_FINE_LOCATION),
+    granted(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION),MdmBackground.visible))return
+  val generation=MdmStore(c).read().localGeneration
+  val sample=MdmRadioSampler(c).sample()
+  if(!Thread.currentThread().isInterrupted)append(c,generation,sample)
+ }
+ fun cancelUpload()=synchronized(lock){transfer?.close()}
  fun stop(c:Context,erase:Boolean){
   synchronized(lock){
    setManual(c,false);transfer?.close();transfer=null
@@ -51,11 +65,11 @@ internal object MdmTelemetry {
   val state=MdmStore(c).read()
   if(state.localGeneration==generation && wanted(c))MdmTelemetryStore(c).append(sample,System.currentTimeMillis())
  }
- fun upload(c:Context){
-  if(!uploading.compareAndSet(false,true))return
-  try{uploadOnce(c)}finally{uploading.set(false)}
+ fun upload(c:Context,allowed:()->Boolean={true}){
+  if(!allowed() || !uploading.compareAndSet(false,true))return
+  try{uploadOnce(c,allowed)}finally{uploading.set(false)}
  }
- private fun uploadOnce(c:Context){
+ private fun uploadOnce(c:Context,allowed:()->Boolean){
   val store=MdmStore(c)
   val state=store.read()
   if(!MdmTelemetryPolicy.consented(state))return
@@ -66,10 +80,11 @@ internal object MdmTelemetry {
   val transport=MdmTransport(c,{store.secret()},wifiOnly={wifiOnly(c)})
   synchronized(lock){
    val latest=store.read()
-   if(latest.localGeneration!=state.localGeneration || !MdmTelemetryPolicy.consented(latest)){transport.close();return}
+   if(!allowed() || latest.localGeneration!=state.localGeneration || !MdmTelemetryPolicy.consented(latest)){transport.close();return}
    transfer=transport
   }
   try{
+   check(allowed()){"Отправка телеметрии отменена"}
    val body=JSONObject().put("version",1).put("bindingId",binding.id).put("epoch",binding.epoch)
     .put("records",records).put("dropped",dropped)
    val response=JSONObject(transport.post(binding,"telemetry",body.toString()))

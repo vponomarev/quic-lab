@@ -54,7 +54,7 @@ class MdmTelemetryActivity:Activity(){
    if(!MdmTelemetryPolicy.consented(MdmStore(this).read())){
     Toast.makeText(this,"Включите MDM и разрешите отправку данных",Toast.LENGTH_LONG).show()
    }else if(ensurePermissions()){
-    runCatching{MdmTelemetry.setManual(this,true);MdmTelemetryService.start(this)}
+    runCatching{MdmTelemetry.setManual(this,true);MdmRuntime.restore(this,foreground=true)}
      .onFailure{MdmTelemetry.status="Не удалось запустить сбор · проверьте разрешения Android"}
    }
   })

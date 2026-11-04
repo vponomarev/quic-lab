@@ -320,6 +320,7 @@ class LabVpnService : VpnService() {
         rtt = 0.0
         AppServiceNotification.stop(this)
         if (!status.startsWith("Ошибка")) status = "VPN остановлен"
+        Handler(Looper.getMainLooper()).post{MdmRuntime.restore(applicationContext)}
     }
 
     override fun onDestroy() {

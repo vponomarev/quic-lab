@@ -188,7 +188,7 @@ func (s *Store) Sync(id string, req SyncRequest, now time.Time) (SyncResponse, e
 			return SyncResponse{}, e
 		}
 	}
-	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1", "vless_relay_v1", "vless_probe_v1", AutomaticGroupsCapability}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
+	out := SyncResponse{Capabilities: []string{"research_scope_v1", "vless_group_v1", "vless_relay_v1", "vless_probe_v1", AutomaticGroupsCapability, "mdm_quiet_v1"}, Version: 1, Epoch: b.Binding.Epoch, Commands: liveCommands(b.Commands, now), ServerTime: now, Telemetry: effectiveTelemetry(b.Telemetry)}
 	filtered := out.Commands[:0]
 	for _, c := range out.Commands {
 		if c.Kind != "vless_probe" || probeAllowed(b) {

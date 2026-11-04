@@ -130,17 +130,17 @@ internal class MdmController(
    MdmRight.RESEARCH->s.rights.research;MdmRight.RESEARCH_DIRECT->s.rights.researchDirect;MdmRight.GEO->s.rights.geo;MdmRight.COORDINATES->s.rights.coordinates;MdmRight.LAN->s.rights.lanMode!="deny"
   }
  }
- internal fun poll(wait:Boolean=true,consume:(MdmState,MdmSyncResponse)->Unit):Boolean{
+ internal fun poll(wait:Boolean=true,allowed:()->Boolean={true},consume:(MdmState,MdmSyncResponse)->Unit):Boolean{
   val state=store.read()
-  if(!state.active || state.cleanupPending)return false
+  if(!allowed() || !state.active || state.cleanupPending)return false
   val b=state.binding?:return false
   val events=store.document().optJSONArray("events")?:org.json.JSONArray()
   val sent=org.json.JSONArray();for(i in 0 until minOf(100,events.length()))sent.put(events.getJSONObject(i))
   val response=MdmSyncResponse.parse(send(b,"sync",
-   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,wait=wait,grantedRights=state.rights).json().also{if(!store.document().optBoolean("server_research_scope_v1"))it.optJSONObject("grantedRights")?.remove("researchDirect")},state.localGeneration,store.secret()).toString())
+   MdmSyncRequest(b.id,b.epoch,state.appliedRevision,events=sent,wait=wait,grantedRights=state.rights).json().also{if(!store.document().optBoolean("server_research_scope_v1"))it.optJSONObject("grantedRights")?.remove("researchDirect")},state.localGeneration,store.secret(),allowed).toString())
   synchronized(this){
    val latest=store.read()
-   if(!latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
+   if(!allowed() || !latest.active || latest.cleanupPending || latest.localGeneration!=state.localGeneration)return false
    check(response.epoch==b.epoch){"Эпоха ответа MDM не совпадает"}
    synchronized(MdmConfiguration.lock){
     val permitted=store.read()
@@ -148,17 +148,18 @@ internal class MdmController(
     val ids=(0 until sent.length()).map{sent.getJSONObject(it).getString("id")}.toSet()
     store.edit{j->val pending=j.optJSONArray("events")?:org.json.JSONArray();val keep=org.json.JSONArray();for(i in 0 until pending.length())if(pending.getJSONObject(i).optString("id") !in ids)keep.put(pending.getJSONObject(i));j.put("events",keep)}
     store.edit{it.put("server_research_scope_v1",response.researchScopeSupported).put("server_vless_group_v1",response.vlessGroupSupported).put("server_vless_relay_v1",response.vlessRelaySupported).put("server_vless_probe_v1",response.vlessProbeSupported).put(MdmGroupCompatibility.SERVER_FLAG,response.automaticGroupsSupported)}
+    store.edit{it.put(MdmBackground.SERVER_FLAG,response.quietModeSupported)}
     consume(permitted,response)
    }
   }
   return true
  }
- internal fun report(build:(MdmState)->JSONObject):Boolean {
-  val before=read();if(!before.active || before.cleanupPending)return false
+ internal fun report(allowed:()->Boolean={true},build:(MdmState)->JSONObject):Boolean {
+  val before=read();if(!allowed() || !before.active || before.cleanupPending)return false
   val b=before.binding?:return false
   val report=build(before)
-  val latest=read();if(!latest.active || latest.localGeneration!=before.localGeneration)return false
-  try{send(b,"report",JSONObject().put("bindingId",b.id).put("epoch",b.epoch).put("report",report),before.localGeneration,store.secret())}
+  val latest=read();if(!allowed() || !latest.active || latest.localGeneration!=before.localGeneration)return false
+  try{send(b,"report",JSONObject().put("bindingId",b.id).put("epoch",b.epoch).put("report",report),before.localGeneration,store.secret(),allowed)}
   catch(e:Exception){store.edit{it.remove("inventory_ack")};throw e}
   synchronized(this){if(read().localGeneration==before.localGeneration)store.edit{j->
    val hash=report.optJSONObject("inventory")?.optString("hash")
@@ -167,9 +168,13 @@ internal class MdmController(
   return true
  }
  internal fun cancelCalls(){calls.keys.forEach{runCatching{it.close()}}}
- private fun send(b:MdmBinding,op:String,body:JSONObject,generation:Long,secret:String):JSONObject{
+ private fun send(b:MdmBinding,op:String,body:JSONObject,generation:Long,secret:String,allowed:()->Boolean={true}):JSONObject{
+  check(allowed()){"Операция MDM отменена"}
   val gateway=gateways();calls[gateway]=true
   try{
+   // Register before checking: close() must either see this gateway or this
+   // guard must see cancellation, including cancellation during factory work.
+   check(allowed()){"Операция MDM отменена"}
    check(store.read().localGeneration==generation){"Операция MDM отменена"}
    return gateway.post(b,op,body,secret)
   }finally{calls.remove(gateway);gateway.close()}

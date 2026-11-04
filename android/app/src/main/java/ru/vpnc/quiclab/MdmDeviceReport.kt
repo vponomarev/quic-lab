@@ -18,8 +18,9 @@ internal object MdmDeviceReport {
   check(state.active && !state.cleanupPending)
   val store=MdmStore(context)
   val result=JSONObject().put("version",1).put("name",("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").take(100))
-   .put("appVersion",BuildConfig.VERSION_NAME).put("capabilities",JSONArray(listOf("web-control-v1","research_scope_v1","vless_group_v1","profile_selection_v1","vless_relay_v1","vless_probe_v1",MdmGroupCompatibility.CAPABILITY)))
+   .put("appVersion",BuildConfig.VERSION_NAME).put("capabilities",JSONArray(listOf("web-control-v1","research_scope_v1","vless_group_v1","profile_selection_v1","vless_relay_v1","vless_probe_v1",MdmGroupCompatibility.CAPABILITY,MdmBackground.CAPABILITY)))
    .put("appliedRevision",state.appliedRevision)
+  if(store.document().optBoolean(MdmBackground.SERVER_FLAG))result.put("backgroundMode",if(MdmBackground.quiet(context))"quiet" else "continuous")
   if(store.document().optBoolean("server_research_scope_v1")){
   val research=ResearchSettings.effectiveScope(context)
   val reason=when{!ResearchSettings.allowed(state)->"research_consent_missing";!ResearchSettings.directAllowed(state)->"direct_consent_missing";!ResearchSettings.supported(context)->"unsupported_transport";!LabVpnService.active->"vpn_stopped";else->""}
