@@ -6,6 +6,11 @@ Tracked-source archive SHA-256: `7c8527a9e24a7d9bee61e2c659edd61dfdc47122a15a29a
 Go tests ran only on the authorized Linux host in `/tmp/quic-release-pre13-20261105`.
 No field profiles, keys or device data entered source archives or release assets.
 
+Published [GitHub prerelease v0.9.5-pre.13](https://github.com/vponomarev/quic-lab/releases/tag/v0.9.5-pre.13),
+tag commit `0bad999`. APK, both server archives and SHA256SUMS.txt are uploaded;
+GitHub-reported SHA-256 digests for all four assets match the local files. Only
+the tag was pushed; existing shared branches were not merged or rewritten.
+
 ## Validation
 
 - `go test ./... -count=1`, `go vet ./...`: PASS.
