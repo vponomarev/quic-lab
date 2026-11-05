@@ -17,12 +17,13 @@
 - Publish preview only; retain documented physical acceptance limits. Windows binaries are outside this release.
 
 ## Tasks
-- [ ] Pin source/version and build native AAR/APK plus both Linux archives; check signatures, hashes and package contents.
-- [ ] Run Linux suite/vet/relevant race/installer checks and Android build/lint/device regressions; one release-specific review of packaging/rollback.
-- [ ] Back up production, preflight current config with new binary, replace all workers and publish APK/metadata; verify services and public download. Upgrade Note9 and verify installed version.
+- [x] Pin source/version and build native AAR/APK plus both Linux archives; check signatures, hashes and package contents.
+- [x] Run Linux suite/vet/relevant race/installer checks and Android build/lint/device regressions; one release-specific review of packaging/rollback.
+- [x] Back up production, preflight current config with new binary, replace all workers and publish APK/metadata; verify services and public download. Upgrade Note9 and verify installed version.
 - [ ] Publish matching source tag and GitHub prerelease with APK, archives and checksums; record deployment evidence and remaining limits.
 
 ## Ledger
 Ruling: release/deployment authorized by current user request; no extra confirmation menu. Production identity recovered from prior publisher and verified via SSH. Current server and phone metadata: pre.12/code77. Production data about 986 MiB, free disk 4.9 GiB.
 Ruling: connector lacks release/asset-upload tools; use authenticated gh CLI for the existing repository release workflow.
 Review focus: exact source provenance; certificate continuity; consistent workers; private-state backup and rollback; metadata/download hash agreement.
+Review: four updater Important issues fixed before deployment (durable-state preservation, temporary cleanup, partial-stop recovery, VLESS readiness). Four failure-injection tests passed; no rereview. Build/version f2bb0f9, final 98/98 Note9 regressions plus real AWG/transit echo, Linux suite/vet/race and 60 installer tests passed. Production and Note9 now pre.13; public download hash verified. [Evidence](../../testing/preview-release-2026-11-05.md).
