@@ -1,0 +1,18 @@
+# Persistent cell-location database — 2026-10-28
+
+Implemented and deployed SQLite at `/var/lib/quic-lab/cellgeo/cells.sqlite` (restricted directory/file, DELETE journal, FULL synchronous). Tables: sources, normalized cells, append-only history, durable jobs and backfill metadata. No observed-device/time/Wi-Fi identity is included in provider requests or cell identities.
+
+Map reads saved locations in batches; only missing cells create queue entries. Existing positive and negative answers survive reload and restart. UI polls database every 5 seconds while selected cells are pending. Stop affects polling only. Source/version/fetch time/history reference are shown for selected points; authenticated history endpoint returns latest100 records, while all results remain in SQLite. History records found/not-found/error outcomes. Selection uses enabled source preference first, latest successful result within that source; later errors do not destroy good coordinates. Initial adapter is Mylnikov only; Source/AddSource and ranking permit additional adapters without replacing prior observations. New external providers require explicit implementation/authorization.
+
+Queue runs inside server, roughly <=1 request/second, with timeout and exponential retry up to6hours. Pending/running jobs recover with a60second lease. Empty queue and known-cell map refresh do not mutate DB/publication epoch. Discovery resumes on context cancellation; bad telemetry marks discovery failed for explicit retry, without repeatedly resetting completed cells. Full backup copies SQLite under publication barrier instead of hard-linking mutable inode; regular immutable files retain existing behavior.
+
+Verification:
+- RED/GREEN: persistence, normalized identity, source preference, historical coordinate changes, last-good preservation, durable not-found, priority, exponential retry, interrupted lease, idle backup epoch, corrupt discovery, context-cancel recovery.
+- Full Linux `go test ./... -count=1 -timeout=300s` PASS; mobile78.672s. `go vet ./internal/cellgeo ./internal/admin ./internal/backup` PASS. Final narrow cancellation regression and final server build PASS after last fix.
+- Node syntax/test PASS. Browser actual Handler with synthetic history+mock provider: 5 cells queued, then 3 positions/2 negatives/pending0. Repeated Show immediately reads3/5,pending0 with unchanged fetchedAt; screenshot artifacts/cell-track/database-smoke.png.
+- Fresh-context review: discovery-reset loop, idle epoch writes, shutdown-recovery findings all corrected and rechecked; no remaining blockers.
+- Windows backup tests unsupported (Linux-only publication/restore); verified full backup suite successfully on Linux.
+
+Production binary SHA-256 `3a89dd2d8ad1a94be047204f92bb2b6c5a90b3ee5b4a87f3f2184f9823e2e990`; rollback `/opt/quic-lab/rollback/cell-database-20261028`. Configurations and Android version unchanged; all4services active; public authenticated map/assets/status API verified.
+
+User explicitly authorized sending MCC/MNC,TAC/LAC,CellID from all retained device history to api.mylnikov.org on2026-10-28 after automatic approval review requested broader scope. Rescan POST returned202. Priority interval Note12: 2026-10-14 00:00 to2026-10-19 00:00 Europe/Moscow. Discovery queued1323supported unique cells:859priority1000(trip),464priority10(other retained history). At first progress verification49results—all priority1000—0errors; quick_check=ok. Processing continues independently of chat/browser. Sources/queue/backfill status available at authenticated `/lab/mdm/cell-db/status`. Stored job does not require Codex automation.

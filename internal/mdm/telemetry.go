@@ -372,3 +372,44 @@ func (s *Store) PruneTelemetry(now time.Time) error {
 	}
 	return nil
 }
+
+// TelemetryRange returns all observations in [start,end), including equal timestamps.
+// Reject overflow explicitly: silently truncating a track would suggest false gaps.
+func (s *Store) TelemetryRange(id string, now, start, end time.Time, limit int) ([]TelemetryRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.state.Bindings[id]
+	if !ok {
+		return nil, ErrUnauthorized
+	}
+	if !end.After(start) || end.Sub(start) > 7*24*time.Hour || limit < 1 || limit > 25000 {
+		return nil, ErrInvalid
+	}
+	dir := filepath.Join(s.dir, "radio", id)
+	cutoff := now.Add(-time.Duration(effectiveTelemetry(b.Telemetry).RetentionDays) * 24 * time.Hour)
+	out := []TelemetryRecord{}
+	day := time.Date(start.UTC().Year(), start.UTC().Month(), start.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	for ; day.Before(end); day = day.AddDate(0, 0, 1) {
+		rows, e := readRadioDay(filepath.Join(dir, day.Format("2006-01-02")+".json"))
+		if e != nil {
+			return nil, e
+		}
+		for _, row := range rows {
+			at := row.Sample.MeasuredAt
+			if !at.Before(start) && at.Before(end) && !row.ReceivedAt.Before(cutoff) {
+				out = append(out, row)
+				if len(out) > limit {
+					return nil, ErrInvalid
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].Sample, out[j].Sample
+		if a.MeasuredAt.Equal(b.MeasuredAt) {
+			return a.ID < b.ID
+		}
+		return a.MeasuredAt.Before(b.MeasuredAt)
+	})
+	return out, nil
+}

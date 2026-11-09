@@ -217,6 +217,10 @@ func main() {
 			os.Exit(1)
 		}
 		researchReceiver.DirectAllowed = ui.MDM.ResearchDirectAllowed
+		if err = ui.StartCellWorker(ctx); err != nil {
+			log.Error("cellgeo_store", "error", err)
+			os.Exit(1)
+		}
 		ui.StartMDMMaintenance(ctx)
 		ui.StartDiagnosticsMaintenance(ctx)
 		if cfg.Capture != nil {

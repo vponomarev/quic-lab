@@ -26,14 +26,14 @@ type backupParticipant struct {
 // configuration on each snapshot; archive contents cannot select source paths.
 func NewBackupParticipant(cfg Config, sources map[string]string, validateServer ...func([]byte) error) backup.Participant {
 	p := &backupParticipant{config: cfg, sources: sources, validateServer: validateServer}
-	p.files = backup.FileParticipant{Root: cfg.DataDir, Prefix: "data", Required: []string{"identities.json"}, Include: func(rel string, kind backup.Kind) bool {
+	p.files = backup.FileParticipant{Root: cfg.DataDir, Prefix: "data", Copy: func(rel string) bool { return rel == "cellgeo/cells.sqlite" }, Required: []string{"identities.json"}, Include: func(rel string, kind backup.Kind) bool {
 		if rel == "identities.json" || rel == "mdm/state.json" || rel == "vless/vless-state.json" {
 			return true
 		}
 		if kind != backup.Full {
 			return false
 		}
-		return strings.HasPrefix(rel, "client-diagnostics/") && (strings.HasSuffix(rel, ".json") || strings.HasSuffix(rel, "/version.meta")) || strings.HasPrefix(rel, "mdm/radio/") && strings.HasSuffix(rel, ".json") || strings.HasPrefix(rel, "downloads/capture/") && (strings.HasSuffix(rel, ".pcapng") || strings.HasSuffix(rel, ".pcap"))
+		return rel == "cellgeo/cells.sqlite" || strings.HasPrefix(rel, "client-diagnostics/") && (strings.HasSuffix(rel, ".json") || strings.HasSuffix(rel, "/version.meta")) || strings.HasPrefix(rel, "mdm/radio/") && strings.HasSuffix(rel, ".json") || strings.HasPrefix(rel, "downloads/capture/") && (strings.HasSuffix(rel, ".pcapng") || strings.HasSuffix(rel, ".pcap"))
 	}}
 	return p
 }

@@ -23,3 +23,18 @@ with an explicit module replacement for tun2socks compatibility.
 
 Server backup encryption uses filippo.io/age v1.3.2 (BSD-3-Clause) and its
 filippo.io/hpke dependency (BSD-3-Clause). License texts are bundled in server archives.
+
+## Leaflet 1.9.4
+
+`internal/admin/vendor/leaflet/leaflet.js` and `leaflet.css` are the official Leaflet 1.9.4 distribution, vendored from https://unpkg.com/leaflet@1.9.4/dist/ . BSD-2-Clause license is included in that directory. Upstream: https://leafletjs.com/ and https://github.com/Leaflet/Leaflet/tree/v1.9.4 .
+
+SHA-256: JS `db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a`; CSS `a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6`. Matches upstream published SRI. Only circle/vector markers are used; default marker/layer-control images are not bundled.
+
+Map tiles are requested interactively from OpenStreetMap with visible attribution and origin referrer; no prefetch or bulk export. Policy: https://operations.osmfoundation.org/policies/tiles/ . Cell estimates use Mylnikov `data=open` API: https://www.mylnikov.org/archives/1056 . Provider source attribution/terms cover OpenCellID (CC-BY-SA 3.0), openBmap (ODbL), Mozilla Location Service (CC0); these data are not part of this source distribution. Exact cell matches are not verified and estimates may be area centroids.
+
+## SQLite cell location database
+
+Server-only Go driver: modernc.org/sqlite v1.39.1, BSD-3-Clause; embedded SQLite is public domain. Upstream documentation and license: https://pkg.go.dev/modernc.org/sqlite@v1.39.1 and https://gitlab.com/cznic/sqlite/-/blob/v1.39.1/LICENSE . Go module checksums are recorded in go.sum. The dependency is not imported by the mobile package.
+
+License texts for SQLite, modernc libc/mathutil/memory, go-humanize, bigfft and
+Leaflet are bundled in `licenses/server` and included in server release archives.

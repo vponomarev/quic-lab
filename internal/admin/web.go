@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"quiclab/internal/backup"
+	"quiclab/internal/cellgeo"
 	"quiclab/internal/debugcapture"
 	"quiclab/internal/editor"
 	"quiclab/internal/mdm"
@@ -30,6 +31,11 @@ type ticket struct {
 	Until time.Time
 }
 type Web struct {
+	cellDB         *cellgeo.Store
+	cellDBErr      error
+	cellDBOnce     sync.Once
+	cellScanMu     sync.Mutex
+	cellGeo        *cellResolver
 	ResearchOpen   func() (*research.Store, error)
 	Research       *research.Store
 	researchMu     sync.Mutex
@@ -56,6 +62,7 @@ type Web struct {
 func NewWeb(c Config, s *Store) *Web {
 	u, _ := url.Parse(c.PublicURL)
 	w := &Web{Config: c, Store: s, sessions: make(map[string]session), tickets: make(map[string]ticket), base: u.Path, origin: u.Scheme + "://" + u.Host}
+	w.cellGeo = newCellResolver()
 	w.Editor = editor.NewStore(nil)
 	w.Editor.EnableAudit(filepath.Join(c.DataDir, "editor-audit"))
 	w.loadSessions()
@@ -63,6 +70,7 @@ func NewWeb(c Config, s *Store) *Web {
 }
 func (w *Web) Handler() http.Handler {
 	m := http.NewServeMux()
+	w.trackRoutes(m)
 	w.serverExitRoutes(m)
 	w.editorRoutes(m)
 	w.backupRoutes(m)
@@ -143,13 +151,16 @@ func (w *Web) Handler() http.Handler {
 				http.Redirect(rw, r, w.base+"mdm", http.StatusSeeOther)
 				return
 			}
-			allowed := path == "/" || path == "/login" || path == "/logout" || path == "/download/quic-lab.apk" || path == "/ui.css" || path == "/ui.js" || path == "/editor" || strings.HasPrefix(path, "/editor/") || strings.HasPrefix(path, "/api/editor/v1/") || path == "/mdm-editor.js" || path == "/mdm" || strings.HasPrefix(path, "/mdm/") || path == "/backups" || strings.HasPrefix(path, "/backups/")
+			allowed := path == "/" || path == "/login" || path == "/logout" || path == "/download/quic-lab.apk" || path == "/ui.css" || path == "/ui.js" || path == "/editor" || strings.HasPrefix(path, "/editor/") || strings.HasPrefix(path, "/api/editor/v1/") || path == "/mdm-track.js" || strings.HasPrefix(path, "/vendor/leaflet/") || path == "/mdm-editor.js" || path == "/mdm" || strings.HasPrefix(path, "/mdm/") || path == "/backups" || strings.HasPrefix(path, "/backups/")
 			if !allowed {
 				http.NotFound(rw, r)
 				return
 			}
 		}
 		limit := int64(16384)
+		if r.URL.Path == "/mdm/cell-db/positions" {
+			limit = 256 << 10
+		}
 		if r.URL.Path == "/mdm/config" || r.URL.Path == "/editor/submit" || r.URL.Path == "/editor/transfer" {
 			limit = 4 << 20
 		}

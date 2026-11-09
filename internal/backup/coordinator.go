@@ -181,7 +181,9 @@ type FileParticipant struct {
 	Root, Prefix string
 	Required     []string
 	Include      func(string, Kind) bool
-	files        []string
+	// Copy selects mutable files copied under the publication barrier, never hard-linked.
+	Copy  func(string) bool
+	files []string
 }
 
 func (p *FileParticipant) Prepare(ctx context.Context, kind Kind) error {
@@ -255,6 +257,27 @@ func (p *FileParticipant) Pin(ctx context.Context, _ Kind, dir string) (func() e
 		dst := filepath.Join(dir, p.Prefix, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 			return nil, err
+		}
+		if p.Copy != nil && p.Copy(rel) {
+			src, e := os.Open(filepath.Join(p.Root, filepath.FromSlash(rel)))
+			if e != nil {
+				return nil, e
+			}
+			out, e := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if e != nil {
+				src.Close()
+				return nil, e
+			}
+			_, e = io.Copy(out, contextReader{ctx, src})
+			src.Close()
+			closeErr := out.Close()
+			if e != nil {
+				return nil, e
+			}
+			if closeErr != nil {
+				return nil, closeErr
+			}
+			continue
 		}
 		if err := os.Link(filepath.Join(p.Root, filepath.FromSlash(rel)), dst); err != nil {
 			return nil, err

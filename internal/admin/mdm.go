@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"quiclab/internal/mdm"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -138,6 +139,10 @@ func (w *Web) renderMDM(rw http.ResponseWriter, v mdmView) {
 	v.ManagementOnly = w.Config.ManagementOnly
 	rw.Header().Set("Cache-Control", "no-store")
 	rw.Header().Set("Referrer-Policy", "same-origin")
+	if v.Device != "" {
+		rw.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		rw.Header().Set("Content-Security-Policy", strings.Replace(rw.Header().Get("Content-Security-Policy"), "img-src data:", "img-src data: https://tile.openstreetmap.org", 1))
+	}
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = mdmTemplate.Execute(rw, v)
 }

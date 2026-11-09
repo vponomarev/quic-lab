@@ -5,7 +5,22 @@
 <section class="card"><strong>Устройство: {{printf "%.12s" .Device}}</strong><p>Данные Wi-Fi и сот: {{if .Consent}}согласие получено{{else}}нет согласия{{end}}. Координаты GPS не собираются.</p><p>Удалено на телефоне из-за срока или лимита очереди: <strong>{{.Dropped}}</strong> измерений.</p>
 <form method="post" action="{{.Base}}mdm/policy"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="id" value="{{.Device}}"><label><input type="checkbox" name="enabled" {{if .Policy.Enabled}}checked{{end}}> Запрашивать сбор на телефоне</label> · <label>Хранить <input type="number" min="1" max="365" name="days" value="{{.Policy.RetentionDays}}"> дней</label> <button>Применить</button></form>
 <p><small>Права выдаёт пользователь. Если Android запрещает фоновый запуск сбора, потребуется открыть экран телеметрии на телефоне. «Только Wi-Fi» на телефоне запрещает отправку через LTE.</small></p>
-<a class="button" href="{{.Base}}mdm?device={{.Device}}">Обновить</a> <a href="{{.Base}}mdm?device={{.Device}}&amp;format=json">JSON последних 200 измерений</a></section>
+<a class="button" id="mdm-refresh" href="{{.Base}}mdm?device={{.Device}}">Обновить</a> <a href="{{.Base}}mdm?device={{.Device}}&amp;format=json">JSON последних 200 измерений</a></section>
+<section class="card" id="cell-track" data-base="{{.Base}}" data-device="{{.Device}}" data-csrf="{{.CSRF}}">
+<link rel="stylesheet" href="{{.Base}}vendor/leaflet/leaflet.css">
+<h2>Точки по сотовым станциям</h2>
+<p>Приблизительные места наблюдений без соединительных линий. Совпадающие координаты отображаются одной точкой; все наблюдения доступны на шкале времени.</p>
+<form id="track-form" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+<label>Начало <input id="track-start" type="datetime-local" required></label><label>Конец (не включительно) <input id="track-end" type="datetime-local" required></label>
+<button id="track-build">Показать точки</button><button id="track-stop" type="button" disabled>Остановить обновление</button><button id="track-fit" type="button">Все точки</button>
+</form><small>Часовой пояс браузера: <span id="track-zone"></span>. До 7 суток за запрос.</small>
+<p id="track-status" role="status" aria-live="polite">Выберите период и нажмите «Показать точки».</p><p id="track-coverage"></p>
+<div id="track-map" style="height:460px;min-height:300px;background:#e8eff1;border-radius:8px;z-index:0" aria-label="Карта приблизительных перемещений"></div>
+<small id="track-tiles"></small><p><label>Время наблюдения <input id="track-time" type="range" min="0" max="0" value="0" disabled style="width:100%"></label></p><p><a id="track-history" hidden target="_blank" rel="noopener">История координат выбранной соты</a></p><p id="track-details">Выберите точку на карте или время на шкале.</p>
+<small>Круг показывает радиус оценки провайдера. Точное совпадение с базовой станцией не подтверждено: сервис может возвращать центр большой области. GPS и расчёт скорости не используются.</small>
+<small>Координаты читаются из постоянной базы. Неизвестные соты обрабатываются в фоне через <a href="https://www.mylnikov.org/archives/1056" target="_blank" rel="noopener noreferrer">Mylnikov (открытые данные)</a>, без имени устройства, времени и Wi-Fi. Подложка OpenStreetMap загружается браузером и раскрывает область просмотра. Источники базы: OpenCellID, openBmap, Mozilla Location Service — условия указаны у провайдера. <a href="{{.Base}}mdm/cell-db/status" target="_blank" rel="noopener">Состояние базы и фоновых задач</a></small>
+<script src="{{.Base}}vendor/leaflet/leaflet.js" defer></script><script src="{{.Base}}mdm-track.js" defer></script>
+</section>
 <section class="card table"><table><thead><tr><th>Измерено / получено</th><th>Wi-Fi</th><th>Обслуживающие соты</th><th>Клиент</th></tr></thead><tbody>
 {{range .Records}}<tr><td>{{stamp .Sample.MeasuredAt}}<small>Получено {{stamp .ReceivedAt}}</small></td><td>{{with .Sample.WiFi}}<span style="white-space:nowrap"><strong>{{.SSID}}</strong> · {{signal .DBM}} · {{.FrequencyMHz}} МГц</span><small>{{.BSSID}}</small>{{else}}{{.Sample.WiFiStatus}}{{end}}</td><td>{{range .Sample.Cells}}<div><strong>{{.Technology}} {{.MCC}}/{{.MNC}} · {{signal .DBM}}</strong><small>CI/NCI {{.CI}} · TAC/LAC {{.TAC}} · PCI/PSC {{.PCI}} · возраст {{.AgeMillis}} мс</small></div>{{else}}{{.Sample.CellStatus}}{{end}}</td><td>{{.Sample.DeviceName}}<small>{{.Sample.AppVersion}}</small></td></tr>{{else}}<tr><td colspan="4">Измерений пока нет. Разрешите отправку и начните сбор на телефоне.</td></tr>{{end}}
 </tbody></table>{{if .Next}}<p><a href="{{.Next}}">Более ранние измерения →</a></p>{{end}}</section>

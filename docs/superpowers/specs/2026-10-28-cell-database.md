@@ -1,0 +1,7 @@
+# Persistent cell-location database
+
+User delegates implementation details for the existing map. SQLite stores normalized cells, named/versioned sources with configurable preference, append-only lookup results (including errors/not-found), and durable per-cell/source jobs. Best location = latest successful result from highest-preference enabled source; source priority precedes claimed radius. Failed refresh never overwrites a good result. All selected results expose source, fetched time and history record ID. No device IDs or observation times sent to providers.
+
+Map track response includes saved positions in bulk, queues only absent supported cells, and never performs provider HTTP on request path. UI polls database while jobs pending; reload is database-only for known cells. Completed negative lookups are persistent too. Explicit rescan requeues cells, retaining history. One cancellable server worker uses rate limits and exponential retries; pending jobs survive restart.
+
+A persisted backfill request first enqueues Note12 trip 2026-10-14..19 Europe/Moscow with high priority, then scans all retained telemetry. Restart resumes idempotent discovery. New observations encountered by map are also queued. Status endpoint reports queued/done/error counts and history totals. Only authenticated admin with CSRF may start backfill. Existing MDM consent remains unchanged. SQLite file lives under admin DataDir/cellgeo with restricted permissions. No additional source contacted until an adapter is explicitly implemented/enabled; Mylnikov is the initial source.

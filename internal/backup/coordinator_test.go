@@ -130,3 +130,24 @@ func TestSnapshotSystemdStateDirectoryAlias(t *testing.T) {
 		t.Fatal("state alias not traversed")
 	}
 }
+
+func TestMutableSnapshotIsIndependent(t *testing.T) {
+	root := t.TempDir()
+	EnablePublication(root)
+	path := filepath.Join(root, "cells.sqlite")
+	os.WriteFile(path, []byte("old"), 0600)
+	p := &FileParticipant{Root: root, Prefix: "data", Include: func(string, Kind) bool { return true }, Copy: func(rel string) bool { return rel == "cells.sqlite" }}
+	c := NewCoordinator(root, []Participant{p}, "test")
+	s, e := c.Capture(context.Background(), Full)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Release()
+	if e = Publish(path, func() error { return os.WriteFile(path, []byte("new"), 0600) }); e != nil {
+		t.Fatal(e)
+	}
+	raw, e := os.ReadFile(filepath.Join(s.Dir, "data/cells.sqlite"))
+	if e != nil || string(raw) != "old" {
+		t.Fatal("snapshot changed", string(raw), e)
+	}
+}

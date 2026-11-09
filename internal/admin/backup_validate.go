@@ -12,6 +12,7 @@ import (
 	"quiclab/internal/awg"
 	"quiclab/internal/awgserver"
 	"quiclab/internal/backup"
+	"quiclab/internal/cellgeo"
 	"quiclab/internal/mdm"
 	"quiclab/internal/transit"
 	"quiclab/internal/vlessserver"
@@ -31,11 +32,15 @@ func ValidateBackup(v *backup.Verified, restoring bool, validateServer ...func([
 			ok = allowedConfig[strings.TrimPrefix(path, "config/")]
 		}
 		if v.Manifest.Kind == backup.Full {
-			ok = ok || strings.HasPrefix(path, "data/mdm/radio/") && strings.HasSuffix(path, ".json") || strings.HasPrefix(path, "data/client-diagnostics/") && (strings.HasSuffix(path, ".json") || strings.HasSuffix(path, "/version.meta")) || strings.HasPrefix(path, "data/downloads/capture/") && (strings.HasSuffix(path, ".pcapng") || strings.HasSuffix(path, ".pcap"))
+			ok = ok || path == "data/cellgeo/cells.sqlite" || strings.HasPrefix(path, "data/mdm/radio/") && strings.HasSuffix(path, ".json") || strings.HasPrefix(path, "data/client-diagnostics/") && (strings.HasSuffix(path, ".json") || strings.HasSuffix(path, "/version.meta")) || strings.HasPrefix(path, "data/downloads/capture/") && (strings.HasSuffix(path, ".pcapng") || strings.HasSuffix(path, ".pcap"))
 		}
 		if !ok {
 			return errors.New("unsupported backup component")
 		}
+	}
+	cellPath := filepath.Join(v.Dir, "data/cellgeo/cells.sqlite")
+	if err := cellgeo.ValidateBackup(cellPath); err != nil && !os.IsNotExist(err) {
+		return errors.New("invalid backup cell database")
 	}
 	read := func(name string) ([]byte, error) {
 		p := filepath.Join(v.Dir, name)

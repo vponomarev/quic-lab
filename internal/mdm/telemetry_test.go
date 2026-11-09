@@ -192,3 +192,29 @@ func TestTelemetryDroppedWithoutPendingRecords(t *testing.T) {
 		t.Fatal("counter not durable", e)
 	}
 }
+
+func TestTelemetryRangeBoundariesAndEqualTimestamps(t *testing.T) {
+	s, b, _ := radioFixture(t)
+	a := sample(testNow.Add(-time.Hour))
+	a.ID = "a"
+	z := sample(testNow)
+	z.ID = "z"
+	x := a
+	x.ID = "x"
+	if e := s.AppendTelemetry(TelemetryBatch{Version: 1, BindingID: b.ID, Epoch: b.Epoch, Records: []RadioSample{a, x, z}}, testNow); e != nil {
+		t.Fatal(e)
+	}
+	rows, e := s.TelemetryRange(b.ID, testNow, a.MeasuredAt, testNow, 10)
+	if e != nil || len(rows) != 2 {
+		t.Fatalf("half-open range/equal times: %d %v", len(rows), e)
+	}
+	if _, e = s.TelemetryRange(b.ID, testNow, a.MeasuredAt, testNow, 1); e == nil {
+		t.Fatal("silent truncation")
+	}
+	if _, e = s.TelemetryRange(b.ID, testNow, testNow.Add(-8*24*time.Hour), testNow, 10); e == nil {
+		t.Fatal("unbounded range")
+	}
+	if _, e = s.TelemetryRange("../unknown", testNow, a.MeasuredAt, testNow, 10); e == nil {
+		t.Fatal("unknown device")
+	}
+}
