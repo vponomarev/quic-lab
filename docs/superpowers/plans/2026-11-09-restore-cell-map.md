@@ -10,7 +10,7 @@ Base: 7734f63. Server release 0.9.5-pre.14; Android remains pre.13/code78.
 - [x] Port only related tracked diffs and allowlisted new source/vendor/docs from phase1-vpn; retain a hash manifest. Preserve current server-exit/MDM additions.
 - [x] Verify Go full suite/vet and cellgeo/admin/backup/MDM race, Node map/date/editor tests, synthetic browser fixture; one independent integration review/fix pass.
 - [x] Build both Linux archives from pinned source. Validate and back up existing production state, replace server binary with compatible rollback handling. Verify authenticated map/assets/database/read-only history without logging private data or initiating new rescans.
-- [ ] Publish source tag and GitHub server prerelease with checksums; update user navigation and release evidence.
+- [x] Publish source tag and GitHub server prerelease with checksums; update user navigation and release evidence.
 
 ## Constraints / ledger
 Use only source/synthetic fixtures on 192.168.5.214; Go tests never Windows. Production is existing vitaly@quic-lab.vpnc.ru. Preserve current data/config/APK and durable revocations. Backup stays on production. No automatic old-state restore after startup.
@@ -22,3 +22,7 @@ backup restore; regression reproduced and fixed. Existing first-response viewpor
 limitation is documented; the All Points control works. Build source pinned at
 0af7228. Deployment acceptance and rollback evidence are in
 `docs/testing/cell-map-restore-2026-11-09.md`.
+
+Published `codex/server-exits` and annotated tag `v0.9.5-pre.14` (build commit
+0af7228). GitHub prerelease assets' digests match local checksums. Final service
+check: all four active, NRestarts=0; production executable matches the release.
