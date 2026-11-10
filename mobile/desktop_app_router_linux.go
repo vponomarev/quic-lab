@@ -21,5 +21,5 @@ func (r *DesktopAppRouter) AttachLinuxFD(fd int) error {
 		unix.Close(duplicate)
 		return e
 	}
-	return r.Attach(dev)
+	return r.Attach(newLinuxICMPLink(dev, r.echoLinux, func(n int) { r.icmpRX.Add(int64(n)) }))
 }

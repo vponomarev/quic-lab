@@ -82,7 +82,11 @@ func TestNamespaceFixture(t *testing.T) {
 			udp.WriteTo(b[:n], a)
 		}
 	}()
-	srv, e := gateway.New("192.0.2.2/32", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	allowed := "192.0.2.2/32"
+	if os.Getenv("VPN_PROBE_ICMP") == "1" {
+		allowed = "192.0.2.0/24"
+	}
+	srv, e := gateway.New(allowed, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if e != nil {
 		t.Fatal(e)
 	}

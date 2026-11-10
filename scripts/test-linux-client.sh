@@ -6,7 +6,7 @@ command -v ip >/dev/null && command -v python3 >/dev/null
 [ -c /dev/net/tun ] || { echo 'SKIP: /dev/net/tun unavailable'; exit 77; }
 cd "$(dirname "$0")/.."
 work=$(mktemp -d /tmp/quic-linux-client.XXXXXX)
-client=qlc-$$; server=qls-$$; cmade=0; smade=0; cp=; sp=
+client=qlc-$$; server=qls-$$; router=qlr-$$; cmade=0; smade=0; rmade=0; cp=; sp=
 peer=${SSH_CONNECTION:-}; peer=${peer%% *}; peer=${peer:-127.0.0.1}
 before=$(ip route get "$peer")
 cleanup(){
@@ -15,6 +15,7 @@ cleanup(){
  [ -z "$sp" ] || { kill "$sp" 2>/dev/null || true; wait "$sp" 2>/dev/null || true; }
  [ "$cmade" = 0 ] || ip netns del "$client"
  [ "$smade" = 0 ] || ip netns del "$server"
+ [ "$rmade" = 0 ] || ip netns del "$router"
  if [ "$result" != 0 ]; then
   for log in "$work/fixture.log" "$work/probe.log" "$work/loss.log"; do [ ! -f "$log" ] || cat "$log"; done
  fi
@@ -47,6 +48,21 @@ if [ "${VPN_PROBE_FULL:-0}" = 1 ]; then
  fi
  ip -n "$client" address add 192.168.50.1/24 dev ql0
 fi
+if [ "${VPN_PROBE_ICMP:-0}" = 1 ]; then
+ ip netns add "$router"; rmade=1
+ ip -n "$server" link add qlr0 type veth peer name qlr1
+ ip -n "$server" link set qlr1 netns "$router"
+ ip -n "$server" address add 203.0.113.1/30 dev qlr0
+ ip -n "$router" address add 203.0.113.2/30 dev qlr1
+ ip -n "$server" link set qlr0 up
+ ip -n "$router" link set qlr1 up
+ ip -n "$router" link set lo up
+ ip -n "$router" link add blackhole0 type dummy
+ ip -n "$router" link set blackhole0 up
+ ip -n "$router" route add 192.0.2.3/32 dev blackhole0
+ ip netns exec "$router" sysctl -q -w net.ipv4.ip_forward=1
+ ip -n "$server" route add 192.0.2.3/32 via 203.0.113.2
+fi
 baseline=$(ip -n "$client" -4 route show)
 baseline_default=$(ip -n "$client" -4 route show default)
 for transport in ${VPN_PROBE_TRANSPORTS:-quic https awg vless vless-ws}; do
@@ -60,6 +76,7 @@ for transport in ${VPN_PROBE_TRANSPORTS:-quic https awg vless vless-ws}; do
  python3 - "$work/client.json" <<'PYCONFIG'
 import json,sys,os
 p=sys.argv[1];d=json.load(open(p));d['targets']=['192.0.2.2/32']
+if os.getenv('VPN_PROBE_ICMP')=='1' and d['transport'] in ('quic','https'):d['targets'].append('192.0.2.3/32')
 if os.getenv('VPN_PROBE_FULL')=='1':
  d['targets']=['0.0.0.0/0']
  if 'awg_config' in d:d['awg_config']=d['awg_config'].replace('AllowedIPs=192.0.2.2/32','AllowedIPs=0.0.0.0/0')
@@ -105,6 +122,9 @@ PYTUN
  fi
  # Wait beyond the former startup-deadline regression boundary.
  sleep 32
+ if [ "${VPN_PROBE_ICMP:-0}" = 1 ]; then
+  ip netns exec "$client" python3 scripts/probe-linux-icmp.py "$transport"
+ fi
  ip netns exec "$client" python3 - <<'PY'
 import socket
 for kind,port in [(socket.SOCK_STREAM,9001),(socket.SOCK_DGRAM,9002)]:

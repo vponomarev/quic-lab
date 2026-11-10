@@ -32,6 +32,7 @@ type DesktopAppRouter struct {
 	pending                                                       chan struct{}
 	wg                                                            sync.WaitGroup
 	once                                                          sync.Once
+	icmpTX, icmpRX                                                atomic.Int64
 	resolved, unknown, shared, blocked, overloaded, timedOut, dns atomic.Uint64
 }
 
@@ -218,6 +219,8 @@ func (r *DesktopAppRouter) vpnTotals() (tx, rx, tcp, udp int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	tx, rx, tcp, udp = r.retiredTx, r.retiredRx, r.retiredTCP, r.retiredUDP
+	tx += r.icmpTX.Load()
+	rx += r.icmpRX.Load()
 	for _, p := range []*multiProfile{r.vpn, r.retiring} {
 		if p != nil {
 			tx += p.h.tx.Load()

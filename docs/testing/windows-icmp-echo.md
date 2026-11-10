@@ -14,7 +14,7 @@ The Linux server process requires CAP_NET_RAW. The production service already ha
 
 New servers retain `icmp-echo-v1` for old Windows clients. A new client falls back to v1 only after explicit `unsupported network` rejection and request TTL >=64 (conventional ping). V1 cannot preserve TTL and reconstructs the reply TTL as 64. Low-TTL probes never fall back, so old servers cannot produce a misleading one-hop trace. Authentication failures, timeouts and unsupported custom exits do not trigger fallback. Servers predating ICMP entirely cannot answer Echo.
 
-TCP/UDP protocol and Android builds are unchanged; the ICMP TUN hook is Windows-only. Android does not gain this TTL extension automatically.
+TCP/UDP protocol and Android builds are unchanged. Linux now also has an ICMP TUN hook using the same transport path; see [Linux acceptance](linux-icmp-2026-11-10.md). Android does not gain this TTL extension automatically.
 
 ## Verification — 2026-10-14
 

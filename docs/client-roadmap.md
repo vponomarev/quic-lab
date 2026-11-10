@@ -27,6 +27,8 @@
   QUIC оставлен с автозапуском. Смена физической сети и аварийная очистка
   endpoint pin после SIGKILL остаются ограничениями.
 
+- Linux: [ICMP Echo и TTL для ping/traceroute -I](testing/linux-icmp-2026-11-10.md), QUIC/HTTPS/AWG; VLESS и UDP/TCP traceroute остаются вне поддержки.
+
 - Серверный [pre.14](release-server-0.9.5-pre.14.md) восстанавливает карту MDM,
   постоянную базу координат и сохранение дат, выпавшие из pre.13. Действующий
   сервер обновлён 2026-11-09; Android остаётся pre.13.
