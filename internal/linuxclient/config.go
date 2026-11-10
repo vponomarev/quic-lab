@@ -75,8 +75,12 @@ func (c Config) Validate() error {
 	var prefixes []netip.Prefix
 	for _, s := range c.Targets {
 		p, e := netip.ParsePrefix(s)
-		if e != nil || !p.Addr().Is4() || p != p.Masked() || p.Bits() == 0 {
+		if e != nil || !p.Addr().Is4() || p != p.Masked() {
 			return fail
+		}
+		if c.FullIPv4() {
+			prefixes = append(prefixes, p)
+			continue
 		}
 		if p.Contains(ep.Addr()) || p.Contains(netip.MustParseAddr("10.254.254.2")) {
 			return fail
@@ -109,6 +113,7 @@ func (c Config) Validate() error {
 	return c.validateTransport()
 }
 func CheckRoutes(targets []string, raw []byte) error {
+	full := (Config{Targets: targets}).FullIPv4()
 	var rows []struct {
 		Dst   string `json:"dst"`
 		Table any    `json:"table"`
@@ -120,7 +125,7 @@ func CheckRoutes(targets []string, raw []byte) error {
 		if r.Table != nil && r.Table != "main" && r.Table != float64(254) {
 			return errors.New("foreign routing table")
 		}
-		if r.Dst == "default" || r.Dst == "" {
+		if r.Dst == "default" || r.Dst == "0.0.0.0/0" || r.Dst == "" {
 			continue
 		}
 		p, e := netip.ParsePrefix(r.Dst)
@@ -131,13 +136,19 @@ func CheckRoutes(targets []string, raw []byte) error {
 			}
 			p = netip.PrefixFrom(a, 32)
 		}
+		if full && p.Bits() <= 1 {
+			return errors.New("full IPv4 conflicts with existing /1 route")
+		}
 		for _, s := range targets {
 			t, _ := netip.ParsePrefix(s)
-			if p.Overlaps(t) {
+			if !full && p.Overlaps(t) {
 				return errors.New("selected subnet overlaps existing route")
 			}
 		}
 	}
 	return nil
 }
+
+// FullIPv4 captures IPv4 using two /1 routes, preserving more-specific routes.
+func (c Config) FullIPv4() bool     { return len(c.Targets) == 1 && c.Targets[0] == "0.0.0.0/0" }
 func (c Config) endpointIP() string { host, _, _ := net.SplitHostPort(c.Endpoint); return host }

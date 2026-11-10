@@ -14,6 +14,7 @@ import (
 	"quiclab/internal/approuting"
 	"quiclab/mobile"
 	"sync"
+	"time"
 )
 
 type Binder string
@@ -34,6 +35,7 @@ type Client struct {
 	gateway              *mobile.Gateway
 	router               *mobile.DesktopAppRouter
 	appStats             *approuting.Statistics
+	endpointPin          []string
 	Name                 string
 	Sink                 mobile.EventSink
 }
@@ -87,6 +89,7 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if e = CheckRoutes(cfg.Targets, raw); e != nil {
 		return e
 	}
+	mainRoutes := raw
 	raw, e = command(ctx, "-j", "-4", "route", "get", cfg.endpointIP())
 	if e != nil {
 		return e
@@ -104,6 +107,13 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	}
 	if e = cfg.Validate(); e != nil {
 		return e
+	}
+	var fullPlan defaultRoutePlan
+	if cfg.FullIPv4() {
+		fullPlan, e = planDefaultRoute(cfg.endpointIP(), mainRoutes, raw)
+		if e != nil {
+			return e
+		}
 	}
 	nonce := make([]byte, 5)
 	if _, e = rand.Read(nonce); e != nil {
@@ -149,9 +159,23 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if e != nil {
 		return errors.New("cannot attach packet engine")
 	}
-	for _, target := range cfg.Targets {
-		if _, e = command(ctx, "-4", "route", "add", target, "dev", c.Name); e != nil {
-			return e
+	if cfg.FullIPv4() {
+		if len(fullPlan.pin) != 0 {
+			if _, e = command(ctx, append([]string{"-4", "route", "add"}, fullPlan.pin...)...); e != nil {
+				return e
+			}
+			c.endpointPin = fullPlan.pin
+		}
+		for _, args := range fullPlan.captureArgs(c.Name) {
+			if _, e = command(ctx, args...); e != nil {
+				return e
+			}
+		}
+	} else {
+		for _, target := range cfg.Targets {
+			if _, e = command(ctx, "-4", "route", "add", target, "dev", c.Name); e != nil {
+				return e
+			}
 		}
 	}
 	c.effective = cloneConfig(cfg)
@@ -180,6 +204,14 @@ func (c *Client) stopLocked() {
 	if c.dev != nil {
 		c.dev.Close()
 		c.dev = nil
+	}
+	if len(c.endpointPin) != 0 {
+		// The TUN/default is gone first. Match every attribute so an externally
+		// replaced endpoint route is never removed by our cleanup.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		command(ctx, append([]string{"-4", "route", "del"}, c.endpointPin...)...)
+		cancel()
+		c.endpointPin = nil
 	}
 }
 func (c *Client) Stop() {

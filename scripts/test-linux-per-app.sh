@@ -75,6 +75,9 @@ configure(){
 import json,sys,os
 w,mode,unknown=sys.argv[1:];d=json.load(open(w+'/base.json'))
 d['targets']=['192.0.2.2/32']
+if os.getenv('VPN_PROBE_FULL')=='1':
+ d['targets']=['0.0.0.0/0']
+ if 'awg_config' in d:d['awg_config']=d['awg_config'].replace('AllowedIPs=192.0.2.2/32','AllowedIPs=0.0.0.0/0')
 d['app_routing']={'version':2,'enabled':True,'mode':mode,'only':[w+'/app-vpn'],'except':[w+'/app-direct'],'unknown':unknown}
 if os.getenv('VPN_PROBE_HEALTH')=='1' and d['transport'] in ('awg','vless'):d['health_dns']='192.0.2.2'
 json.dump(d,open(w+'/client.json','w'))

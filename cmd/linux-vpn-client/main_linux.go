@@ -65,12 +65,19 @@ func run() int {
 			return 2
 		}
 		fmt.Println("configuration valid (server reachability and authentication not tested)")
+		if cfg.FullIPv4() {
+			fmt.Println("capture: full IPv4 via two /1 routes; existing specific routes preserved; IPv6/system DNS unchanged")
+		}
 		if cfg.AppRouting != nil && cfg.AppRouting.Enabled {
 			unknown := cfg.AppRouting.Unknown
 			if unknown == "" {
 				unknown = approuting.Tunnel
 			}
-			fmt.Printf("application routing: %s; unknown: %s; capture: %d selected IPv4 subnets; captured DNS: VPN; IPv6/system DNS unchanged; app-only reload: SIGHUP\n", cfg.AppRouting.Mode, unknown, len(cfg.Targets))
+			capture := fmt.Sprintf("%d selected IPv4 subnets", len(cfg.Targets))
+			if cfg.FullIPv4() {
+				capture = "full IPv4 with existing route exceptions"
+			}
+			fmt.Printf("application routing: %s; unknown: %s; capture: %s; captured DNS: VPN; IPv6/system DNS unchanged; app-only reload: SIGHUP\n", cfg.AppRouting.Mode, unknown, capture)
 		}
 		return 0
 	}

@@ -31,11 +31,24 @@ ip netns add "$client"; cmade=1
 ip netns add "$server"; smade=1
 ip -n "$client" link add ql0 type veth peer name ql1
 ip -n "$client" link set ql1 netns "$server"
-ip -n "$client" address add 198.18.0.1/30 dev ql0
+prefix=30; [ "${VPN_PROBE_FULL:-0}" != 1 ] || prefix=32
+ip -n "$client" address add 198.18.0.1/$prefix dev ql0
 ip -n "$server" address add 198.18.0.2/30 dev ql1
 ip -n "$server" address add 192.0.2.2/32 dev lo
 ip -n "$client" link set lo up; ip -n "$client" link set ql0 up
 ip -n "$server" link set lo up; ip -n "$server" link set ql1 up
+if [ "${VPN_PROBE_FULL:-0}" = 1 ]; then
+ ip -n "$server" address add 198.18.0.6/32 dev ql1
+ if [ "${VPN_PROBE_ONLINK:-0}" = 1 ]; then
+  ip -n "$client" route add default via 198.18.0.6 dev ql0 onlink
+ else
+  ip -n "$client" route add 198.18.0.6/32 dev ql0
+  ip -n "$client" route add default via 198.18.0.6 dev ql0 metric 600
+ fi
+ ip -n "$client" address add 192.168.50.1/24 dev ql0
+fi
+baseline=$(ip -n "$client" -4 route show)
+baseline_default=$(ip -n "$client" -4 route show default)
 for transport in ${VPN_PROBE_TRANSPORTS:-quic https awg vless vless-ws}; do
  case "$transport" in quic|https|awg|vless|vless-ws) ;; *) echo 'Unsupported fixture transport'; exit 1;; esac
  rm -f "$work/client.json"
@@ -45,10 +58,31 @@ for transport in ${VPN_PROBE_TRANSPORTS:-quic https awg vless vless-ws}; do
  for i in $(seq 1 100); do [ -f "$work/client.json" ] && break; sleep .1; done
  [ -f "$work/client.json" ] || { cat "$work/fixture.log"; exit 1; }
  python3 - "$work/client.json" <<'PYCONFIG'
-import json,sys
-p=sys.argv[1];d=json.load(open(p));d['targets']=['192.0.2.2/32'];json.dump(d,open(p,'w'))
+import json,sys,os
+p=sys.argv[1];d=json.load(open(p));d['targets']=['192.0.2.2/32']
+if os.getenv('VPN_PROBE_FULL')=='1':
+ d['targets']=['0.0.0.0/0']
+ if 'awg_config' in d:d['awg_config']=d['awg_config'].replace('AllowedIPs=192.0.2.2/32','AllowedIPs=0.0.0.0/0')
+json.dump(d,open(p,'w'))
 PYCONFIG
  ip netns exec "$client" "$work/probe" -validate -config "$work/client.json"
+ if [ "${VPN_PROBE_FULL:-0}" = 1 ]; then
+  # Fail after the endpoint pin and first /1 were installed; rollback must
+  # remove both without touching the physical default or connected routes.
+  mkdir -p "$work/fail-bin"
+  cat > "$work/fail-bin/ip" <<'FAILIP'
+#!/bin/sh
+if [ "$1 $2 $3 $4" = '-4 route add 128.0.0.0/1' ]; then exit 42; fi
+exec "$QUIC_REAL_IP" "$@"
+FAILIP
+  chmod 755 "$work/fail-bin/ip"
+  if QUIC_REAL_IP="$(command -v ip)" ip netns exec "$client" env PATH="$work/fail-bin:$PATH" "$work/probe" -config "$work/client.json" > "$work/partial.log" 2>&1; then
+   echo 'FAIL: injected route error accepted'; exit 1
+  fi
+  grep -q 'iproute2 operation failed' "$work/partial.log"
+  [ "$baseline" = "$(ip -n "$client" -4 route show)" ]
+  echo "$transport: partial-start rollback PASS"
+ fi
  ip netns exec "$client" "$work/probe" -config "$work/client.json" > "$work/probe.log" 2>&1 & cp=$!
  for i in $(seq 1 100); do grep -q '"state":"running"' "$work/probe.log" && break; kill -0 "$cp" || break; sleep .1; done
  grep -q '"state":"running"' "$work/probe.log" || { cat "$work/probe.log"; exit 1; }
@@ -61,6 +95,14 @@ for line in open(sys.argv[1]):
 PYTUN
 )
  ip -n "$client" -4 -j address show dev "$tun" | python3 -c 'import json,sys;assert not any(x["addr_info"] for x in json.load(sys.stdin))'
+ if [ "${VPN_PROBE_FULL:-0}" = 1 ]; then
+  ip -n "$client" -4 route get 1.1.1.1 | grep -q "dev $tun"
+  ip -n "$client" -4 route get 192.0.2.2 | grep -q "dev $tun"
+  ip -n "$client" -4 route get 198.18.0.2 | grep -q 'via 198.18.0.6 dev ql0'
+  ip -n "$client" -4 route get 192.168.50.2 | grep -q 'dev ql0'
+  [ "$(ip -n "$client" -4 route show dev "$tun" | wc -l)" = 2 ]
+  [ "$(ip -n "$client" -4 route show default)" = "$baseline_default" ]
+ fi
  # Wait beyond the former startup-deadline regression boundary.
  sleep 32
  ip netns exec "$client" python3 - <<'PY'
@@ -80,6 +122,7 @@ PY
  kill -TERM "$cp"; wait "$cp"; cp=
  grep -q '"state":"stopped"' "$work/probe.log"
  if ip -n "$client" link show "$tun" >/dev/null 2>&1; then echo 'FAIL: TUN leaked'; exit 1; fi
+ [ "$baseline" = "$(ip -n "$client" -4 route show)" ]
  case "$transport" in awg|vless|vless-ws)
   kill -TERM "$sp"; wait "$sp"; sp=
   echo "$transport: real TUN TCP/UDP and Stop cleanup PASS (engine readiness, no server-loss detection claim)"
@@ -96,6 +139,7 @@ PY
  [ "$result" = 1 ]
  grep -q 'transport disconnected' "$work/loss.log"
  if ip -n "$client" -o link show | grep -Eq ': ql[0-9a-f]{10}[:@]' ; then echo 'FAIL: disconnected TUN leaked'; exit 1; fi
+ [ "$baseline" = "$(ip -n "$client" -4 route show)" ]
  echo "$transport: transport loss cleanup PASS"
  echo "$transport: real TUN TCP/UDP and Stop cleanup PASS"
 done
