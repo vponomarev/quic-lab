@@ -38,3 +38,14 @@ Server-only Go driver: modernc.org/sqlite v1.39.1, BSD-3-Clause; embedded SQLite
 
 License texts for SQLite, modernc libc/mathutil/memory, go-humanize, bigfft and
 Leaflet are bundled in `licenses/server` and included in server release archives.
+
+## Linux desktop GUI
+
+Linux desktop uses Fyne v2.8.2 (Apache-2.0), with pinned Go dependencies in
+`go.mod`/`go.sum`. Its embedded fonts include Inter, EmojiOne Color and
+DejaVu/Powerline; their original license notices are retained in the upstream
+module. `scripts/build-linux-client-release.py` collects runtime-module license
+texts recursively, including Fyne font notices, into `licenses/` in the client
+archive and records module versions in `licenses/MODULES.json`. Go's license
+and the local netstack adapter's license are included as well. System graphics
+libraries are dynamically linked and supplied by the Linux distribution.

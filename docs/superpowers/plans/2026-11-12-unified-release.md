@@ -13,10 +13,13 @@ Use currentcheckout, preserve otherdirtyworktrees. GitHub connector has no
 release/upload API; use authenticated gh CLI. User publication authorization
 covers final verified uploads and normal fast-forward branch updates.
 
-- [ ] Audit complete tracked sources and independent checkout build inputs.
-- [ ] Build Android AAR/APK with certificate continuity and Gradle checks.
-- [ ] Build self-contained Windows installer, verify signed Wintun and tests.
-- [ ] Build Linux client package/licenses and both complete server archives.
-- [ ] Verify archives, source provenance, checksums and relevant tests.
-- [ ] Publish source and prerelease only after four components are present;
-      verify remote asset digests and record final URL/evidence.
+- [x] Audit complete tracked sources and independent checkout build inputs.
+- [x] Build Android AAR/APK with certificate continuity and Gradle checks.
+- [x] Build self-contained Windows installer, verify signed Wintun and tests.
+- [x] Build Linux client package/licenses and both complete server archives.
+- [x] Verify archives, source provenance, checksums and relevant tests.
+
+Publication gate after this source snapshot is committed: publish source and
+prerelease only with all four components present; verify remote asset digests.
+Build evidence: docs/testing/unified-release-2026-11-12.md.
+Release URL: https://github.com/vponomarev/quic-lab/releases/tag/v0.9.5-pre.15

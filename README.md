@@ -2,12 +2,14 @@
 
 Текущая разработка: [первая фаза VPN MVP](docs/superpowers/plans/2026-09-30-phase1-00-roadmap.md), [проверенные изменения](docs/phase1-progress.md), [обновление сервера](docs/phase1-upgrade.md). Отметки разработки не означают публикацию новой версии.
 
-Android-клиент и Go-сервер для лабораторных работ по QUIC и самостоятельного
+Клиенты Android, Linux и Windows и Go-сервер для лабораторных работ по QUIC и самостоятельного
 использования как IPv4 VPN. Android 11+ (API 30), ARM64 и x86_64.
 Интерфейс на русском языке.
 
-**Релиз v0.7.4:** восстановление VPN, захват Wireshark и единый серверный конфиг.
-[Изменения релиза](docs/release-v0.7.4.md) · [Конфигурация сервера](docs/server-config.md).
+**Предварительный релиз v0.9.5-pre.15:** Android APK, Linux-клиент с Go GUI,
+Windows-установщик и Linux-сервер для amd64/arm64.
+[Скачать](https://github.com/vponomarev/quic-lab/releases/tag/v0.9.5-pre.15) ·
+[Состав и проверки](docs/release-0.9.5-pre.15.md) · [Конфигурация сервера](docs/server-config.md).
 
 Echo и VPN сосуществуют в одном приложении и на одном сервере.
 [Состав вехи и проверки](docs/milestone-v0.7.0.md) ·
@@ -58,7 +60,8 @@ IPv6 не поддерживается. Multiple имеет один DNS-про�
 
 Графическое управление подключением на Go/Fyne: один исполняемый файл для окна,
 VPN-движка и локального контроллера, без Python/GTK. Профили QUIC/HTTPS/AWG/VLESS,
-автозапуск, статус и RTT. [Установка и использование](docs/linux-client-gui.md).
+автозапуск, статус и RTT. [Установка из релиза](docs/linux-client-release.md) ·
+[Использование](docs/linux-client-gui.md).
 
 ## Сервер на готовом Linux
 
