@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Privileged, local-only control of one installed VPN service. No profile editing."""
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -107,6 +108,45 @@ def public_events(raw, invocation):
     return result
 
 
+def public_probe(raw, invocation, now=None):
+    now = time.monotonic() if now is None else now
+    empty = {'transport_state': 'unknown', 'rtt_ms': None, 'probe_at': None,
+             'probe_interval_ms': 1000, 'probe': 'echo'}
+    result = dict(empty)
+    if not re.fullmatch('[0-9a-f]{32}', invocation or ''):
+        return result
+    states = {'echo': 'ready', 'health': 'ready', 'connected': 'checking',
+              'disconnected': 'unavailable', 'probe_unavailable': 'unavailable'}
+    for line in raw.splitlines()[-100:]:
+        try:
+            entry = json.loads(line)
+            if not isinstance(entry, dict) or entry.get('_SYSTEMD_INVOCATION_ID') != invocation:
+                continue
+            event = json.loads(entry.get('MESSAGE', ''))
+            if not isinstance(event, dict) or event.get('event') not in states:
+                continue
+            # A newer failure/connection replaces any previous successful RTT.
+            result = dict(empty)
+            at = int(entry.get('__MONOTONIC_TIMESTAMP', '')) / 1000000
+            if not math.isfinite(at) or not 0 <= at <= now:
+                continue
+            interval = event.get('probe_interval_ms', 1000)
+            if type(interval) is not int or interval not in (1000, 5000):
+                continue
+            kind = event['event']
+            rtt = event.get('rtt_ms') if kind == 'echo' else None
+            if kind == 'echo' and (type(rtt) not in (int, float) or not math.isfinite(rtt) or not 0 <= rtt <= 60000):
+                continue
+            result.update(transport_state=states[kind], probe_at=at, probe_interval_ms=interval,
+                          probe=event.get('probe') if event.get('probe') in ('echo', 'icmp', 'https') else 'echo',
+                          rtt_ms=rtt)
+            if now - at > max(3 * interval / 1000, 5) and states[kind] in ('ready', 'checking'):
+                result.update(transport_state='stale', rtt_ms=None)
+        except (ValueError, TypeError, OverflowError):
+            continue
+    return result
+
+
 class Controller:
     def __init__(self, root=Path('/etc/quic-lab'), run=run_command):
         self.root, self.run = Path(root), run
@@ -162,6 +202,7 @@ class Controller:
         raw = self.run([JOURNALCTL, '-u', UNIT, '-n', '80', '-o', 'json', '--no-pager',
             '--output-fields=MESSAGE,_SYSTEMD_INVOCATION_ID'])
         events = public_events(raw, invocation)
+        probe = public_probe('', '')
         if re.fullmatch('[0-9a-f]{32}', invocation or ''):
             transitions = self.run([JOURNALCTL, '-u', UNIT, '-n', '30', '-o', 'json', '--no-pager',
                 '_SYSTEMD_INVOCATION_ID=' + invocation,
@@ -173,11 +214,19 @@ class Controller:
             for key in ('started', 'session_state', 'readiness', 'events'):
                 events[key] = state[key]
             events['events'] = (events['events'] + errors)[-20:]
+            diagnostic = self.run([JOURNALCTL, '-u', UNIT, '-n', '1', '-o', 'json', '--no-pager',
+                '_SYSTEMD_INVOCATION_ID=' + invocation, '--reverse',
+                '--grep="event"[[:space:]]*:[[:space:]]*"(echo|health|connected|disconnected|probe_unavailable)"',
+                '--output-fields=MESSAGE,_SYSTEMD_INVOCATION_ID,__MONOTONIC_TIMESTAMP'])
+            probe = public_probe(diagnostic, invocation)
         # Check again: a restart between show and journal must not mix sessions.
         after = self._system()
         if after.get('InvocationID', '') != invocation:
             events = public_events('', '')
-            system, invocation = after, after.get('InvocationID', '')
+            probe = public_probe('', '')
+        system, invocation = after, after.get('InvocationID', '')
+        if system['ActiveState'] != 'active':
+            probe = public_probe('', '')
         profiles = []
         for name, label in PROFILES.items():
             try:
@@ -188,7 +237,7 @@ class Controller:
         return {'selected': self._selected(), 'profiles': profiles,
             'active': system['ActiveState'], 'autostart': system.get('UnitFileState') == 'enabled',
             'invocation': invocation if re.fullmatch('[0-9a-f]{32}', invocation) else '',
-            'failed': system.get('Result', 'success') != 'success', **events}
+            'failed': system.get('Result', 'success') != 'success', **events, **probe}
 
     def _replace(self, target):
         temporary = self.root / ('.gui-link-' + uuid.uuid4().hex)

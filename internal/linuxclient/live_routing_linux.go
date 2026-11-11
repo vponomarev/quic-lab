@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"quiclab/internal/approuting"
-	"quiclab/mobile"
 	"reflect"
 	"time"
 )
@@ -67,6 +66,7 @@ func (c *Client) RecoverVPN(ctx context.Context) error {
 	if !enabled || r == nil || old == nil {
 		return errors.New("VPN recovery unavailable")
 	}
+	c.gatewayEvents.retire()
 	if health != nil {
 		health.retire()
 	}
@@ -82,7 +82,7 @@ func (c *Client) RecoverVPN(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	next := mobile.NewGateway(c.Sink)
+	next := c.newGateway()
 	run, cancel := context.WithCancel(ctx)
 	timer := time.AfterFunc(25*time.Second, cancel)
 	err = next.StartLinuxContext(run, payload, Binder(cfg.Interface))
@@ -96,11 +96,13 @@ func (c *Client) RecoverVPN(ctx context.Context) error {
 		err = run.Err()
 	}
 	if err != nil {
+		c.gatewayEvents.retire()
 		cancel()
 		next.Stop()
 		return errors.New("VPN recovery failed")
 	}
 	if err = r.ReplaceVPN(next); err != nil {
+		c.gatewayEvents.retire()
 		cancel()
 		next.Stop()
 		return err

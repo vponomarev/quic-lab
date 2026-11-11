@@ -19,8 +19,9 @@ import (
 )
 
 type sink struct {
-	mu     sync.Mutex
-	writer io.Writer
+	mu        sync.Mutex
+	writer    io.Writer
+	transport string
 }
 
 func (s *sink) write(v any) {
@@ -44,6 +45,8 @@ func (s *sink) OnEvent(raw string) {
 	}
 	if v["event"] == "traffic" {
 		s.write(map[string]any{"event": "traffic", "tx_bytes": v["tx_bytes"], "rx_bytes": v["rx_bytes"]})
+	} else {
+		s.diagnostic(v)
 	}
 }
 func main() { os.Exit(run()) }
@@ -107,7 +110,7 @@ func run() int {
 	reload := make(chan os.Signal, 1)
 	signal.Notify(reload, syscall.SIGHUP)
 	defer signal.Stop(reload)
-	output := &sink{}
+	output := &sink{transport: cfg.Transport}
 	client := &linuxclient.Client{Sink: output}
 	defer client.Stop()
 	// Gateway dial timeouts are bounded internally; the session follows process lifetime.

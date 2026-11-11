@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from control import Controller, ControlError, public_events
+from control import Controller, ControlError, public_events, public_probe
 
 
 class FakeSystem:
@@ -34,6 +34,31 @@ class FakeSystem:
 
 
 class ControlTests(unittest.TestCase):
+    def test_probe_freshness_failures_and_invocation(self):
+        def line(event, at=100, token='a'*32):
+            return json.dumps({'_SYSTEMD_INVOCATION_ID': token,
+                '__MONOTONIC_TIMESTAMP': str(int(at*1000000)), 'MESSAGE': json.dumps(event)})
+        sample = {'event':'echo','rtt_ms':12.5,'probe':'echo','probe_interval_ms':1000,'key':'PRIVATE'}
+        raw = line(sample)
+        value = public_probe(raw, 'a'*32, now=104)
+        self.assertEqual(value['transport_state'], 'ready')
+        self.assertEqual(value['rtt_ms'], 12.5)
+        self.assertNotIn('PRIVATE', json.dumps(value))
+        self.assertEqual(public_probe(raw, 'a'*32, now=106)['transport_state'], 'stale')
+        self.assertIsNone(public_probe(raw, 'a'*32, now=106)['rtt_ms'])
+        self.assertIsNone(public_probe(raw, 'b'*32, now=104)['rtt_ms'])
+        self.assertIsNone(public_probe(raw, 'a'*32, now=99)['rtt_ms'])
+        for event, expected in [('connected','checking'), ('disconnected','unavailable'), ('probe_unavailable','unavailable')]:
+            value = public_probe(raw+'\n'+line({'event':event}, at=101), 'a'*32, now=102)
+            self.assertEqual(value['transport_state'], expected)
+            self.assertIsNone(value['rtt_ms'])
+        sample.update(probe='https', probe_interval_ms=5000)
+        self.assertEqual(public_probe(line(sample), 'a'*32, now=114)['transport_state'], 'ready')
+        self.assertEqual(public_probe(line(sample), 'a'*32, now=116)['transport_state'], 'stale')
+        for invalid in (-1, float('nan'), float('inf'), True, '3', None):
+            sample['rtt_ms'] = invalid
+            self.assertIsNone(public_probe(line(sample), 'a'*32, now=101)['rtt_ms'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

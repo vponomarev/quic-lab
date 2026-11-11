@@ -1,8 +1,19 @@
 import unittest
-from model import Traffic, describe, human_bytes
+from model import Traffic, describe, human_bytes, latency
 
 
 class ModelTests(unittest.TestCase):
+    def test_transport_health_and_rtt_expire_together(self):
+        status = {'active':'active', 'readiness':'vpn_dns_ready', 'transport_state':'ready',
+                  'rtt_ms':12.5, 'probe_at':100, 'probe_interval_ms':1000, 'probe':'echo'}
+        self.assertIn('12.5', latency(status, now=104))
+        self.assertIn('подключён', describe(status, now=104)[0])
+        self.assertNotIn('12.5', latency(status, now=106))
+        self.assertIn('свежих', describe(status, now=106)[0])
+        for key, value in [('active','inactive'), ('session_state','reconnecting'),
+                           ('transport_state','unavailable'), ('readiness','unavailable')]:
+            self.assertNotIn('12.5', latency(dict(status, **{key:value}), now=104))
+
     def test_rates_reset_on_reconnect_and_counter_reset(self):
         rate = Traffic()
         self.assertEqual(rate.update('a', 100, 200, 1), (0, 0))

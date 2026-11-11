@@ -33,6 +33,7 @@ type Client struct {
 	mu                   sync.Mutex
 	dev                  *os.File
 	gateway              *mobile.Gateway
+	gatewayEvents        *gatewayEvents
 	router               *mobile.DesktopAppRouter
 	appStats             *approuting.Statistics
 	endpointPin          []string
@@ -145,7 +146,7 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	if e != nil {
 		return e
 	}
-	c.gateway = mobile.NewGateway(c.Sink)
+	c.gateway = c.newGateway()
 	if e = c.gateway.StartLinuxContext(ctx, payload, Binder(cfg.Interface)); e != nil {
 		return errors.New("VPN transport startup failed")
 	}
@@ -183,6 +184,7 @@ func (c *Client) Start(ctx context.Context, cfg Config) (err error) {
 	return nil
 }
 func (c *Client) stopLocked() {
+	c.gatewayEvents.retire()
 	if c.health != nil {
 		c.health.stop()
 		c.health = nil

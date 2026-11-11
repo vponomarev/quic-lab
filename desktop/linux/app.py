@@ -6,7 +6,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib, Gio
 from client import request, ClientError, ERRORS
-from model import Traffic, describe, human_bytes, EVENTS
+from model import Traffic, describe, human_bytes, latency, EVENTS
 
 
 class Window(Gtk.ApplicationWindow):
@@ -16,6 +16,9 @@ class Window(Gtk.ApplicationWindow):
         self.set_position(Gtk.WindowPosition.CENTER)
         self.status = None
         self.inflight = False
+        self.busy = False
+        self.connection_changing = False
+        self.pending_command = None
         self.closed = False
         self.confirming = False
         self.updating = False
@@ -38,6 +41,8 @@ class Window(Gtk.ApplicationWindow):
         outer.pack_start(self.detail, False, False, 0)
         self.current = self.label('Текущий профиль: —')
         outer.pack_start(self.current, False, False, 0)
+        self.rtt = self.label('RTT: —')
+        outer.pack_start(self.rtt, False, False, 0)
         row = Gtk.Box(spacing=12)
         row.pack_start(Gtk.Label(label='Подключение', xalign=0), False, False, 0)
         self.profiles = Gtk.ComboBoxText()
@@ -97,7 +102,7 @@ class Window(Gtk.ApplicationWindow):
         # No disconnect request: systemd owns the running connection.
 
     def controls(self):
-        ready = self.status is not None and not self.inflight
+        ready = self.status is not None and not self.busy
         active = self.status and self.status.get('active') == 'active'
         selected = self.profiles.get_active_id()
         current = self.status and self.status.get('selected')
@@ -137,13 +142,26 @@ class Window(Gtk.ApplicationWindow):
             self.execute({'op': 'autostart', 'enabled': button.get_active()})
 
     def execute(self, command):
-        if self.inflight or self.closed:
+        if self.closed or self.busy:
             return
-        self.inflight = True
-        self.controls()
-        if command['op'] != 'status':
+        if command['op'] == 'status':
+            if self.inflight:
+                return
+        else:
+            self.busy = True
+            self.connection_changing = command['op'] in ('connect', 'disconnect', 'reconnect')
+            if self.connection_changing:
+                self.rtt.set_text('RTT: —')
+                self.title.set_text('Отключение…' if command['op'] == 'disconnect' else 'Подключение…')
             self.detail.set_text('Применение команды…')
             self.error.hide()
+        self.controls()
+        if self.inflight:
+            # A click during a status poll must not be lost. Keep requests
+            # serialized and block controls only for the pending user action.
+            self.pending_command = dict(command)
+            return
+        self.inflight = True
         def work():
             try:
                 result, error = request(command), None
@@ -153,30 +171,48 @@ class Window(Gtk.ApplicationWindow):
         threading.Thread(target=work, daemon=True).start()
 
     def poll(self):
+        if not self.closed and self.status is not None:
+            self.render_health()
         if not self.closed and not self.confirming:
             self.execute({'op': 'status'})
         return not self.closed
+
+    def render_health(self):
+        if self.connection_changing:
+            return
+        title, detail = describe(self.status)
+        self.title.set_markup('<span size="x-large" weight="bold">'+GLib.markup_escape_text(title)+'</span>')
+        if not self.busy:
+            self.detail.set_text(detail)
+        self.rtt.set_text(latency(self.status))
 
     def finished(self, result, error, op):
         if self.closed:
             return False
         self.inflight = False
+        self.busy = False
+        self.connection_changing = False
+        if self.pending_command is not None:
+            command, self.pending_command = self.pending_command, None
+            # The poll predates the user's change (notably the checkbox).
+            # Let the action's response update the UI instead of reverting it.
+            self.execute(command)
+            return False
         if error:
             self.error.set_text(ERRORS.get(error, ERRORS['service_unavailable']))
             self.error.show()
-            if op == 'status':
+            if op in ('status', 'connect', 'disconnect', 'reconnect'):
                 self.status = None
                 self.rate = Traffic()
                 self.title.set_text('Состояние VPN неизвестно')
                 self.detail.set_text('Проверьте локальную службу управления. VPN мог продолжить работу.')
                 self.traffic.set_text('Получено: —    Отправлено: —')
                 self.speed.set_text('↓ — /с    ↑ — /с')
+                self.rtt.set_text('RTT: —')
         else:
             previous = self.status and self.status.get('selected')
             self.status = result
-            title, detail = describe(result)
-            self.title.set_markup('<span size="x-large" weight="bold">'+GLib.markup_escape_text(title)+'</span>')
-            self.detail.set_text(detail)
+            self.render_health()
             entries = result.get('profiles', [])
             ids = [p['id'] for p in entries]
             choice = self.profiles.get_active_id()

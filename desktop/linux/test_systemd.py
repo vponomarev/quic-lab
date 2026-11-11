@@ -46,6 +46,19 @@ class SystemdTests(unittest.TestCase):
                 connected=c.handle(65534,{'op':'connect','profile':'quic'})
                 self.assertEqual(connected['active'],'active')
                 self.assertEqual(connected['readiness'],'engine_ready')
+                for event,expected in [({'event':'echo','rtt_ms':23.4,'probe':'echo','probe_interval_ms':1000},'ready'),
+                        ({'event':'probe_unavailable'},'unavailable'),
+                        ({'event':'echo','rtt_ms':23.4,'probe':'echo','probe_interval_ms':1000},'ready')]:
+                    (root/'transition.json').write_text(json.dumps(event))
+                    until=time.monotonic()+3
+                    while time.monotonic()<until:
+                        observed=c.handle(65534,{'op':'status'})
+                        if observed['transport_state']==expected: break
+                        time.sleep(.1)
+                    self.assertEqual(observed['transport_state'],expected)
+                    self.assertEqual(observed['rtt_ms'],23.4 if expected=='ready' else None)
+                    self.assertEqual(observed['readiness'],'engine_ready')
+                    self.assertGreater(observed['probe_at'],0)
                 for event,key,expected in [({'event':'readiness','state':'degraded'},'readiness','degraded'),
                         ({'event':'network','state':'reconnecting'},'session_state','reconnecting')]:
                     (root/'transition.json').write_text(json.dumps(event))
@@ -59,6 +72,7 @@ class SystemdTests(unittest.TestCase):
                 switched=c.handle(65534,{'op':'connect','profile':'https'})
                 self.assertEqual(switched['selected'],'https')
                 self.assertNotEqual(switched['invocation'],before)
+                self.assertIsNone(switched['rtt_ms'], 'old invocation RTT must not survive restart')
                 with self.assertRaisesRegex(control.ControlError,'switch_failed_rolled_back'):
                     c.handle(65534,{'op':'connect','profile':'vless'})
                 restored=c.handle(65534,{'op':'status'})
