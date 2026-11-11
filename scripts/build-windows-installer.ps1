@@ -23,7 +23,7 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Service build failed'}
  & go build -trimpath -buildvcs=false -ldflags='-s -w' -o (Join-Path $payload 'quic-windows-engine.exe') ./cmd/windows-vpn-engine
  if($LASTEXITCODE -ne 0){throw 'Engine build failed'}
- & $DotNet publish desktop/windows/QuicLab.Windows -c Release -r win-x64 --self-contained true -p:Version=0.1.0 -p:InformationalVersion=$Version -o (Join-Path $payload 'ui')
+ & $DotNet publish desktop/windows/QuicLab.Windows -c Release -r win-x64 --self-contained true -p:Version=$($Version.Split('-')[0]) -p:InformationalVersion=$Version -o (Join-Path $payload 'ui')
  if($LASTEXITCODE -ne 0){throw 'UI publish failed'}
  $sig=Get-AuthenticodeSignature -LiteralPath $Wintun
  if($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'WireGuard'){throw 'Wintun signature invalid'}
