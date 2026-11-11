@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=QUIC Lab
+Comment=Manage VPN connections
+Comment[ru]=Управление VPN-подключениями
+Exec=/usr/local/bin/quic-lab-gui
+Icon=network-vpn
+Terminal=false
+Categories=Network;
+StartupNotify=true
+StartupWMClass=ru.vpnc.QuicLab

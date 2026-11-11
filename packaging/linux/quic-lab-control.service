@@ -1,0 +1,28 @@
+[Unit]
+Description=QUIC Lab local desktop control
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /usr/local/lib/quic-lab-gui/control.py
+User=root
+UMask=0077
+RuntimeDirectory=quic-lab-control
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=180
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/etc/quic-lab /etc/systemd/system
+
+[Install]
+WantedBy=multi-user.target
