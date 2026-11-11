@@ -1,6 +1,6 @@
 //go:build linux && !android
 
-package main
+package linuxcli
 
 import (
 	"bytes"

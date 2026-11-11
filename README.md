@@ -54,6 +54,12 @@ IPv6 не поддерживается. Multiple имеет один DNS-про�
 
 [Памятка для опыта](docs/student-quickstart.md) · [Архитектура](docs/architecture.md)
 
+## Linux-клиент
+
+Графическое управление подключением на Go/Fyne: один исполняемый файл для окна,
+VPN-движка и локального контроллера, без Python/GTK. Профили QUIC/HTTPS/AWG/VLESS,
+автозапуск, статус и RTT. [Установка и использование](docs/linux-client-gui.md).
+
 ## Сервер на готовом Linux
 
 **Быстрая установка echo + VPN + админки:** [архив с установщиком](docs/install-server.md).

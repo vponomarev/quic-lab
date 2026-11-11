@@ -4,7 +4,7 @@ After=local-fs.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 -I /usr/local/lib/quic-lab-gui/control.py
+ExecStart=/usr/local/bin/quic-lab control
 User=root
 UMask=0077
 RuntimeDirectory=quic-lab-control
