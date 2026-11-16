@@ -13,6 +13,7 @@ class LabVpnService : VpnService() {
     internal class UpdateConsentRequired: IllegalStateException("Нужно разрешение на служебную загрузку сверх LTE-бюджета")
     internal val budgetRun by lazy { VpnBudgetRun.sharedForContext(this) }
     private var session: VpnSession? = null
+    private var underlyingNetworks: VpnUnderlyingNetworks? = null
     private var exits: VpnExitController<VpnSession>? = null
     private var multiple: MultipleVpnController? = null
     private var singleRouter: mobile.MultiRouter? = null
@@ -88,6 +89,9 @@ class LabVpnService : VpnService() {
         handler.post { MdmRuntime.restore(applicationContext) }
         handler.postDelayed(notificationTick, 1000)
         try {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            val underlying = VpnUnderlyingNetworks(cm) { setUnderlyingNetworks(it) }
+            underlyingNetworks = underlying
             // One shared meter survives every exit reconnect in this VPN run.
             val runBudget = budgetRun.start(VpnBudgetSettings.limitBytes(this))
             if(budgetRun.restored)Diagnostics.event("vpn",JSONObject().put("event","budget_restored").put("snapshot",JSONObject(runBudget.snapshot())))
@@ -100,7 +104,7 @@ class LabVpnService : VpnService() {
                     .setBlocking(true).setConfigureIntent(open).establish() ?: error("VPN не разрешён")
                 budgetRun.setResumeEligible(true)
                 active=true; multipleMode=true;transport="multiple";exitEnabled=false;status="Несколько VPN · ${plan.profiles.size} профилей"
-                multiple=MultipleVpnController(this,plan,tun!!.fd,runBudget)
+                multiple=MultipleVpnController(this,plan,tun!!.fd,runBudget,underlying::update)
                 updateRuntime=VpnProfileUpdateRuntime(plan.dnsProfile,runBudget,requireNotNull(tun)) {id-> handler.post {runCatching {multiple?.restart(id)}.onFailure {MultipleVpnState.record(id,JSONObject().put("event","operation_failed"))}}}
                 return restartPolicy()
             }
@@ -158,7 +162,6 @@ class LabVpnService : VpnService() {
                     .put("dns", prefs.getString("dns", "1.1.1.1"))
             val endpoint = prefs.getString("endpoint", "")!!
             val hostname = prefs.getString("hostname", "")!!
-            val cm = getSystemService(ConnectivityManager::class.java)
             val exitId = VpnProfiles.current(this).id
             VpnDashboardEvents.beginRun(dashboardRunId,mapOf(exitId to VpnProfiles.current(this).name)) {runBudget.snapshot()}
             VpnProfiles.configuration(this)
@@ -215,7 +218,10 @@ class LabVpnService : VpnService() {
                     cfg,
                     -1,
                     budget = runBudget,
-                    selected = { n, kind -> handler.post { controller.withCurrent(id, token) { if(!cfg.optBoolean("max_availability")) setUnderlyingNetworks(arrayOf(n)); dnsOwner.selected(n,kind) } } },
+                    underlyingNetworks = { networks -> handler.post {
+                        controller.withCurrent(id, token) { underlying.update(networks) }
+                    } },
+                    selected = { n, kind -> handler.post { controller.withCurrent(id, token) { if(!cfg.optBoolean("max_availability") && !cfg.has("_exit_runtime")) underlying.update(arrayOf(n)); dnsOwner.selected(n,kind) } } },
                     availability = { _, kind, up ->
                         if (up)
                             handler.post {
@@ -295,6 +301,8 @@ class LabVpnService : VpnService() {
     private fun shutdown(clearBudget:Boolean=false) {
         if (active) Diagnostics.event("vpn", JSONObject().put("event","stopped"))
         updateRuntime=null
+        underlyingNetworks?.close()
+        underlyingNetworks=null
         active = false
         exitState = "VPN остановлен"
         handler.removeCallbacksAndMessages(null)

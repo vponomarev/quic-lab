@@ -15,6 +15,7 @@ internal class MultipleVpnController(
     private val plan: MultipleVpnPlan,
     fd: Int,
     private val budget: TrafficBudget,
+    private val underlyingNetworks: (Array<Network>?) -> Unit,
 ) {
     private val cm = service.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -26,7 +27,7 @@ internal class MultipleVpnController(
         createSession(currentProfiles.getValue(id), token)
     }
     private var researchScopeSubscription:AutoCloseable?=null
-    private val networks = mutableMapOf<String, Network>()
+    private val networks = mutableMapOf<String, List<Network>?>()
     private val starting = mutableSetOf<String>()
     private val paused = mutableSetOf<String>()
     @Volatile private var closed = false
@@ -128,12 +129,19 @@ internal class MultipleVpnController(
                 JSONObject(p.config.toString()),
                 -1,
                 budget = budget,
+                underlyingNetworks = { paths -> handler.post {
+                    if (!closed && exits.current(p.id, token)) {
+                        networks[p.id] = paths?.toList()
+                        publishUnderlyingNetworks()
+                    }
+                } },
                 selected = { n, kind ->
                     handler.post {
                         if (!closed && exits.current(p.id, token)) {
-                            networks[p.id] = n
+                            if (!p.config.optBoolean("max_availability") && !p.config.has("_exit_runtime"))
+                                networks[p.id] = listOf(n)
                             if(p.id==plan.dnsProfile) dnsPolicy.selected(n,kind)
-                            service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
+                            publishUnderlyingNetworks()
                         }
                     }
                 },
@@ -181,6 +189,13 @@ internal class MultipleVpnController(
         return session
     }
 
+    private fun publishUnderlyingNetworks() {
+        val paths = networks.values.filterNotNull().flatten().distinct()
+        // Empty is reserved for an intentional pause, never transport recovery.
+        val active = currentProfiles.keys.any { it !in paused }
+        underlyingNetworks(if (paths.isEmpty() && active) null else paths.toTypedArray())
+    }
+
     fun restart(id:String) {
         if(closed || id !in currentProfiles) return
         val fresh=MultipleVpnPlan.load(service).profiles.firstOrNull {it.id==id} ?: error("Выход удалён")
@@ -189,7 +204,7 @@ internal class MultipleVpnController(
             router.blockExit(id)
             starting.remove(id);available.remove(id);networks.remove(id)
         }
-        service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
+        publishUnderlyingNetworks()
     }
     fun toggle(id: String) {
         if (closed) return
@@ -197,6 +212,7 @@ internal class MultipleVpnController(
         if (paused.remove(id)) {
             router.setProfileEnabled(id, true)
             starting.remove(id)
+            publishUnderlyingNetworks()
             exits.start(p.id)
         } else {
             paused.add(id)
@@ -208,7 +224,7 @@ internal class MultipleVpnController(
 
             if(id==plan.dnsProfile) dnsPolicy.selected(null,VpnSession.WIFI)
             networks.remove(id)
-            service.setUnderlyingNetworks(networks.values.distinct().toTypedArray())
+            publishUnderlyingNetworks()
             MultipleVpnState.record(id, JSONObject().put("event", "stopped"))
         }
     }

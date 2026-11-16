@@ -27,6 +27,7 @@ internal class VpnSession(
     private val output: (JSONObject) -> Unit,
     private val attached: ((Gateway) -> Unit)? = null,
     private val detached: ((Gateway) -> Unit)? = null,
+    private val underlyingNetworks: (Array<Network>?) -> Unit = {},
 ) : AutoCloseable {
     private val isDemux = config.has("_exit_runtime")
     private val isBond = isDemux || config.optBoolean("max_availability")
@@ -48,7 +49,7 @@ internal class VpnSession(
     private fun refreshBondPaths() {
         if (!alive || !isBond) return
         if (demuxRuntime != null) { refreshDemuxNetworks(); refreshRelayStatus(); return }
-        service?.setUnderlyingNetworks(networks.values.toTypedArray())
+        underlyingNetworks(networks.values.takeIf { it.isNotEmpty() }?.toTypedArray())
         for ((kind, network) in networks) {
             val name = if (kind == WIFI) "wifi" else "cell"
             if (kind == CELLULAR && (!cellAllowed() || client?.bondCellAllowed() == false)) {
@@ -579,7 +580,7 @@ internal class VpnSession(
             runtime.updateNetwork(update.toString(),network?.let {binder(it)})
             runtimeGenerations[kind]=generation;runtimeNetworks[kind]=state;relayAddresses[kind]=resolved
         }
-        service?.setUnderlyingNetworks(networks.values.toTypedArray())
+        underlyingNetworks(networks.values.takeIf { it.isNotEmpty() }?.toTypedArray())
     }
 
     private fun startDemux(kind:Int,network:Network,name:String) {
