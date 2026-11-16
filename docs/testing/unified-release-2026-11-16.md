@@ -54,4 +54,16 @@ checks pass for ordinary rollback, restoration write failure and concurrent
 config modification: safe files are restored; incomplete recovery leaves the
 main service stopped and reports the retained backup. Success requires public
 metadata and downloaded APK hash equality as well as worker PID continuity.
-Actual publication results are recorded after deployment.
+Publication completed: [GitHub prerelease](https://github.com/vponomarev/quic-lab/releases/tag/v0.9.5-pre.16),
+seven assets. GitHub-reported sizes and SHA256 digests match all local files.
+Tag source commit: `264391611f755dfcc224e69790bb1709b9ff4476`.
+Both main and codex/server-exits were advanced without force; this post-publication
+record follows the immutable release tag.
+
+Production public capabilities report code81 / 0.9.5-pre.16. An independent
+external download of the 60,819,385-byte APK matches both the release file and
+metadata SHA256 `102fafe84214599d877183bda9fa60393b2a569e854036f1f92e484f0cfdae4a`.
+All four services are active/running with NRestarts=0; AWG/transit/VLESS PIDs
+are unchanged. The main process restarted successfully to reload metadata.
+A protected rollback copy of the previous APK and both configuration files is
+retained on the server. No server runtime binary or routing setting was changed.
